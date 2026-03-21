@@ -4,9 +4,12 @@
 """
 
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.core.config import get_settings
 from app.core.database import Base, engine
@@ -42,6 +45,17 @@ async def startup():
     """앱 시작 시 DB 테이블 생성."""
     Base.metadata.create_all(bind=engine)
     logger.info(f"{settings.app_name} started")
+
+
+# 정적 파일 (로그인 페이지 등)
+static_dir = Path(__file__).parent / "static"
+app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+
+@app.get("/")
+async def root():
+    """루트 → 로그인 페이지."""
+    return FileResponse(str(static_dir / "login.html"))
 
 
 @app.get("/health")

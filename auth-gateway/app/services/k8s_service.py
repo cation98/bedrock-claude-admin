@@ -45,12 +45,13 @@ class K8sService:
         safe_name = username.lower().replace("_", "-")
         return f"claude-terminal-{safe_name}"
 
-    def create_pod(self, username: str, session_type: str = "workshop") -> str:
+    def create_pod(self, username: str, session_type: str = "workshop", user_display_name: str = "") -> str:
         """사용자용 Claude Code 터미널 Pod 생성.
 
         Args:
             username: 사번 (e.g. N1102359)
             session_type: workshop | daily
+            user_display_name: 표시 이름 (SSO에서 조회, 없으면 사번 사용)
 
         Returns:
             pod_name: 생성된 Pod 이름
@@ -93,8 +94,13 @@ class K8sService:
                                 name="ANTHROPIC_DEFAULT_HAIKU_MODEL",
                                 value=self.settings.bedrock_haiku_model,
                             ),
-                            client.V1EnvVar(name="GIT_USER_NAME", value=username),
+                            client.V1EnvVar(name="GIT_USER_NAME", value=user_display_name or username),
                             client.V1EnvVar(name="GIT_USER_EMAIL", value=f"{username}@skons.net"),
+                            client.V1EnvVar(name="USER_ID", value=username),
+                            client.V1EnvVar(name="USER_DISPLAY_NAME", value=user_display_name or username),
+                            # TODO: 직책, 부서 정보 추가 (SSO userinfo 확장 시)
+                            # client.V1EnvVar(name="USER_POSITION", value=position),
+                            # client.V1EnvVar(name="USER_DEPARTMENT", value=department),
                             client.V1EnvVar(
                                 name="DATABASE_URL",
                                 value=self.settings.workshop_database_url,

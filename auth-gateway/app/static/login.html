@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claude Code Terminal — 로그인</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .container {
+            width: 100%;
+            max-width: 420px;
+            padding: 2rem;
+        }
+        .logo {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        .logo h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: #f8fafc;
+            margin-bottom: 0.5rem;
+        }
+        .logo p {
+            font-size: 0.875rem;
+            color: #94a3b8;
+        }
+        .card {
+            background: #1e293b;
+            border-radius: 12px;
+            padding: 2rem;
+            border: 1px solid #334155;
+        }
+        .form-group {
+            margin-bottom: 1.25rem;
+        }
+        label {
+            display: block;
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: #cbd5e1;
+            margin-bottom: 0.5rem;
+        }
+        input {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            background: #0f172a;
+            border: 1px solid #475569;
+            border-radius: 8px;
+            color: #f1f5f9;
+            font-size: 1rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        input:focus {
+            border-color: #6366f1;
+        }
+        input::placeholder {
+            color: #64748b;
+        }
+        .btn {
+            width: 100%;
+            padding: 0.75rem;
+            background: #6366f1;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+            margin-top: 0.5rem;
+        }
+        .btn:hover { background: #4f46e5; }
+        .btn:disabled {
+            background: #475569;
+            cursor: not-allowed;
+        }
+        .btn.loading::after {
+            content: '';
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid transparent;
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            margin-left: 8px;
+            vertical-align: middle;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .error {
+            background: #450a0a;
+            border: 1px solid #dc2626;
+            color: #fca5a5;
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            font-size: 0.875rem;
+            margin-bottom: 1rem;
+            display: none;
+        }
+        .status {
+            background: #052e16;
+            border: 1px solid #16a34a;
+            color: #86efac;
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            font-size: 0.875rem;
+            margin-bottom: 1rem;
+            display: none;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 1.5rem;
+            font-size: 0.75rem;
+            color: #64748b;
+        }
+        /* TODO: 2FA 입력 UI (향후 구현) */
+        .twofa-section { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">
+            <h1>Claude Code Terminal</h1>
+            <p>SKO 사내 AI 코딩 어시스턴트</p>
+        </div>
+
+        <div class="card">
+            <div class="error" id="error"></div>
+            <div class="status" id="status"></div>
+
+            <!-- 로그인 폼 -->
+            <form id="loginForm" onsubmit="handleLogin(event)">
+                <div class="form-group">
+                    <label for="username">사번</label>
+                    <input type="text" id="username" name="username"
+                           placeholder="예: N1102359" required autocomplete="username">
+                </div>
+                <div class="form-group">
+                    <label for="password">비밀번호</label>
+                    <input type="password" id="password" name="password"
+                           placeholder="SSO 비밀번호" required autocomplete="current-password">
+                </div>
+                <button type="submit" class="btn" id="loginBtn">로그인</button>
+            </form>
+
+            <!-- TODO: 2FA 섹션 (향후 구현) -->
+            <div class="twofa-section" id="tfaSection">
+                <div class="form-group">
+                    <label for="tfaCode">인증 코드 (SMS)</label>
+                    <input type="text" id="tfaCode" placeholder="6자리 코드 입력"
+                           maxlength="6" pattern="[0-9]{6}">
+                </div>
+                <button class="btn" onclick="handleTFA()">인증 확인</button>
+            </div>
+        </div>
+
+        <div class="footer">
+            Powered by AWS Bedrock + Claude Code
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin;
+
+        async function handleLogin(e) {
+            e.preventDefault();
+            const btn = document.getElementById('loginBtn');
+            const errorEl = document.getElementById('error');
+            const statusEl = document.getElementById('status');
+
+            errorEl.style.display = 'none';
+            statusEl.style.display = 'none';
+            btn.disabled = true;
+            btn.classList.add('loading');
+            btn.textContent = '인증 중';
+
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value;
+
+            try {
+                // Step 1: SSO 로그인
+                const loginRes = await fetch(`${API_BASE}/api/v1/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+
+                if (!loginRes.ok) {
+                    const err = await loginRes.json();
+                    throw new Error(err.detail || '인증에 실패했습니다.');
+                }
+
+                const loginData = await loginRes.json();
+                const token = loginData.access_token;
+
+                // Step 2: 터미널 세션 생성 (Pod 생성)
+                statusEl.textContent = '터미널 환경을 준비하고 있습니다...';
+                statusEl.style.display = 'block';
+                btn.textContent = '환경 준비 중';
+
+                const sessionRes = await fetch(`${API_BASE}/api/v1/sessions/`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ session_type: 'workshop' })
+                });
+
+                if (!sessionRes.ok) {
+                    const err = await sessionRes.json();
+                    throw new Error(err.detail || '터미널 생성에 실패했습니다.');
+                }
+
+                const sessionData = await sessionRes.json();
+
+                // Step 3: Pod이 Ready될 때까지 대기
+                statusEl.textContent = '터미널이 시작되고 있습니다... (최대 60초)';
+                await waitForTerminal(token, sessionData.id);
+
+                // Step 4: 터미널로 리다이렉트
+                statusEl.textContent = '터미널에 접속합니다...';
+                const terminalUrl = sessionData.terminal_url || `/terminal/${sessionData.pod_name}/`;
+                window.location.href = terminalUrl;
+
+            } catch (err) {
+                errorEl.textContent = err.message;
+                errorEl.style.display = 'block';
+                btn.disabled = false;
+                btn.classList.remove('loading');
+                btn.textContent = '로그인';
+                statusEl.style.display = 'none';
+            }
+        }
+
+        async function waitForTerminal(token, sessionId) {
+            const maxWait = 60;
+            for (let i = 0; i < maxWait; i += 3) {
+                await new Promise(r => setTimeout(r, 3000));
+
+                try {
+                    const res = await fetch(`${API_BASE}/api/v1/sessions/`, {
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    });
+                    const data = await res.json();
+                    const session = data.sessions.find(s => s.id === sessionId);
+                    if (session && session.pod_status === 'running') {
+                        return;
+                    }
+                } catch (e) {
+                    // retry
+                }
+            }
+            throw new Error('터미널 시작 시간이 초과되었습니다. 다시 시도해주세요.');
+        }
+
+        // TODO: 2FA 핸들러 (향후 구현)
+        async function handleTFA() {
+            // const code = document.getElementById('tfaCode').value;
+            // await fetch(`${API_BASE}/api/v1/auth/verify-2fa`, ...);
+        }
+    </script>
+</body>
+</html>

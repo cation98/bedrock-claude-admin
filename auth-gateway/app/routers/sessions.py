@@ -80,9 +80,14 @@ async def create_session(
     if existing:
         return _to_response(existing, settings)
 
-    # K8s Pod 생성
+    # 사용자 표시 이름 조회
+    from app.models.user import User
+    user = db.query(User).filter(User.username == username).first()
+    user_display_name = user.name if user and user.name else username
+
+    # K8s Pod 생성 (사용자 프로필 주입)
     try:
-        pod_name = k8s.create_pod(username, request.session_type)
+        pod_name = k8s.create_pod(username, request.session_type, user_display_name)
     except K8sServiceError as e:
         raise HTTPException(status_code=500, detail=str(e))
 

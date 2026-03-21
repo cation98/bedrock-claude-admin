@@ -49,3 +49,5 @@ description: DB 데이터를 분석하여 한국어 보고서를 생성합니다
 ## 출력
 - 보고서 파일: `~/workspace/reports/YYYY-MM-DD_[주제].md`
 - 차트 코드: 필요 시 Python 스크립트 포함
+- 다운로드 안내: "파일 다운로드: http://[현재호스트]:8080/reports/파일명.md"
+  (포트 8080에서 파일 서버가 ~/workspace/ 를 서빙합니다)

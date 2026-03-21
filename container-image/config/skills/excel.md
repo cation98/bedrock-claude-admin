@@ -96,3 +96,5 @@ print(f"엑셀 파일 생성 완료: {filename}")
 ## 출력
 - 엑셀 파일: `~/workspace/exports/YYYYMMDD_HHMMSS_[주제].xlsx`
 - 사용자에게 파일 경로와 내용 요약 제공
+- 다운로드 안내: "파일 다운로드: http://[현재호스트]:8080/exports/파일명.xlsx"
+  (포트 8080에서 파일 서버가 ~/workspace/ 를 서빙합니다)

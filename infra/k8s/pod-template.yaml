@@ -31,6 +31,8 @@ spec:
       ports:
         - containerPort: 7681  # ttyd 웹 터미널
           name: ttyd
+        - containerPort: 8080  # 파일 다운로드 + 웹앱 서버
+          name: files
 
       env:
         # ----- Claude Code 초기 설정 건너뛰기 -----
