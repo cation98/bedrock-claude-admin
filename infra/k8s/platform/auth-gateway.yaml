@@ -1,0 +1,167 @@
+# =============================================================================
+# Auth Gateway — K8s Deployment + Service
+# EKS 클러스터 내에서 SSO 인증 + Pod 관리 + 로그인 페이지 서빙
+# =============================================================================
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform
+  labels:
+    app: bedrock-claude-platform
+
+---
+# Platform DB (PostgreSQL) — in-cluster 간이 DB
+# 프로덕션에서는 RDS로 교체 권장
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: platform-db
+  namespace: platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: platform-db
+  template:
+    metadata:
+      labels:
+        app: platform-db
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: bedrock_claude
+            - name: POSTGRES_USER
+              value: postgres
+            - name: POSTGRES_PASSWORD
+              value: postgres
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: pgdata
+          emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: platform-db
+  namespace: platform
+spec:
+  selector:
+    app: platform-db
+  ports:
+    - port: 5432
+      targetPort: 5432
+
+---
+# Auth Gateway Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-gateway
+  namespace: platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auth-gateway
+  template:
+    metadata:
+      labels:
+        app: auth-gateway
+    spec:
+      serviceAccountName: default
+      containers:
+        - name: auth-gateway
+          image: 680877507363.dkr.ecr.ap-northeast-2.amazonaws.com/bedrock-claude/auth-gateway:latest
+          ports:
+            - containerPort: 8000
+          env:
+            # Database
+            - name: DATABASE_URL
+              value: postgresql://postgres:postgres@platform-db:5432/bedrock_claude
+
+            # JWT
+            - name: JWT_SECRET_KEY
+              value: prod-secret-change-me-to-random-256bit
+
+            # SSO
+            - name: SSO_AUTH_URL
+              value: https://authsvc.networkons.com/OAuthM.WSL/service.svc/RequestToken
+            - name: SSO_AUTH_URL2
+              value: https://authsvc.networkons.com/OAuthM.WSL/service.svc/AccessProtectedResource
+            - name: SSO_CLIENT_ID
+              value: SmartworksMobile
+            - name: SSO_CLIENT_SECRET
+              value: OAuthSKey
+            - name: SSO_AUTH_METHOD
+              value: "4302010"
+            - name: SSO_SCOPES
+              value: NeosOAuth
+            - name: SSO_TOKEN_KEY
+              value: RequestTokenResult
+            - name: PW_ENCODING_SALT
+              value: 1o1sqhmHcREdoi+137Rnug==
+
+            # Kubernetes (EKS 내부에서 실행)
+            - name: K8S_IN_CLUSTER
+              value: "true"
+            - name: K8S_NAMESPACE
+              value: claude-sessions
+            - name: K8S_POD_IMAGE
+              value: 680877507363.dkr.ecr.ap-northeast-2.amazonaws.com/bedrock-claude/claude-code-terminal:latest
+            - name: K8S_SERVICE_ACCOUNT
+              value: claude-terminal-sa
+
+            # Bedrock
+            - name: BEDROCK_REGION
+              value: ap-northeast-2
+            - name: BEDROCK_SONNET_MODEL
+              value: global.anthropic.claude-sonnet-4-6
+            - name: BEDROCK_HAIKU_MODEL
+              value: global.anthropic.claude-haiku-4-5-20251001-v1:0
+
+            # RDS
+            - name: WORKSHOP_DATABASE_URL
+              value: postgresql://claude_readonly:ClaudeReadOnly2026!@safety-prod-db-readonly.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com:5432/safety
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-gateway
+  namespace: platform
+spec:
+  selector:
+    app: auth-gateway
+  ports:
+    - port: 80
+      targetPort: 8000
