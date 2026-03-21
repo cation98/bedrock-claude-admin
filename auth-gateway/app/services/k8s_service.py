@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
+from kubernetes.client import NetworkingV1Api
 
 from app.core.config import Settings
 
@@ -39,6 +40,7 @@ class K8sService:
             config.load_kube_config()
 
         self.v1 = client.CoreV1Api()
+        self.networking = NetworkingV1Api()
 
     def _pod_name(self, username: str) -> str:
         """사용자별 고유 Pod 이름 생성."""
@@ -134,7 +136,6 @@ class K8sService:
         try:
             self.v1.create_namespaced_pod(namespace=self.namespace, body=pod_manifest)
             logger.info(f"Pod {pod_name} created for user {username}")
-            return pod_name
         except ApiException as e:
             if e.status == 409:  # Already exists
                 logger.info(f"Pod {pod_name} already exists")
@@ -142,21 +143,112 @@ class K8sService:
             logger.error(f"Failed to create pod {pod_name}: {e}")
             raise K8sServiceError(f"Failed to create pod: {e.reason}")
 
-    def delete_pod(self, pod_name: str) -> bool:
-        """Pod 삭제."""
-        try:
-            self.v1.delete_namespaced_pod(
+        # Pod에 대한 Service + Ingress 생성 (터미널 + 파일 서버 접근)
+        self._create_pod_service(pod_name, username)
+        self._create_pod_ingress(pod_name, username)
+        return pod_name
+
+    def _create_pod_service(self, pod_name: str, username: str):
+        """Pod을 위한 K8s Service 생성."""
+        svc = client.V1Service(
+            metadata=client.V1ObjectMeta(
                 name=pod_name,
                 namespace=self.namespace,
-                grace_period_seconds=10,
-            )
-            logger.info(f"Pod {pod_name} deleted")
-            return True
+                labels={"app": "claude-terminal", "user": username.lower()},
+            ),
+            spec=client.V1ServiceSpec(
+                selector={"app": "claude-terminal", "user": username.lower()},
+                ports=[
+                    client.V1ServicePort(name="ttyd", port=7681, target_port=7681),
+                    client.V1ServicePort(name="files", port=8080, target_port=8080),
+                ],
+            ),
+        )
+        try:
+            self.v1.create_namespaced_service(namespace=self.namespace, body=svc)
+            logger.info(f"Service {pod_name} created")
         except ApiException as e:
-            if e.status == 404:
-                return True  # 이미 삭제됨
-            logger.error(f"Failed to delete pod {pod_name}: {e}")
-            raise K8sServiceError(f"Failed to delete pod: {e.reason}")
+            if e.status != 409:
+                logger.error(f"Failed to create service: {e}")
+
+    def _create_pod_ingress(self, pod_name: str, username: str):
+        """Pod을 위한 Ingress 규칙 생성 (터미널 + 파일 서버)."""
+        ingress = client.V1Ingress(
+            metadata=client.V1ObjectMeta(
+                name=pod_name,
+                namespace=self.namespace,
+                annotations={
+                    "nginx.ingress.kubernetes.io/proxy-read-timeout": "3600",
+                    "nginx.ingress.kubernetes.io/proxy-send-timeout": "3600",
+                    "nginx.ingress.kubernetes.io/proxy-http-version": "1.1",
+                    "nginx.ingress.kubernetes.io/enable-websocket": "true",
+                    "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
+                },
+            ),
+            spec=client.V1IngressSpec(
+                ingress_class_name="nginx",
+                rules=[
+                    client.V1IngressRule(
+                        host="claude.skons.net",
+                        http=client.V1HTTPIngressRuleValue(
+                            paths=[
+                                client.V1HTTPIngressPath(
+                                    path=f"/terminal/{pod_name}(/|$)(.*)",
+                                    path_type="ImplementationSpecific",
+                                    backend=client.V1IngressBackend(
+                                        service=client.V1IngressServiceBackend(
+                                            name=pod_name,
+                                            port=client.V1ServiceBackendPort(number=7681),
+                                        )
+                                    ),
+                                ),
+                                client.V1HTTPIngressPath(
+                                    path=f"/files/{pod_name}(/|$)(.*)",
+                                    path_type="ImplementationSpecific",
+                                    backend=client.V1IngressBackend(
+                                        service=client.V1IngressServiceBackend(
+                                            name=pod_name,
+                                            port=client.V1ServiceBackendPort(number=8080),
+                                        )
+                                    ),
+                                ),
+                            ]
+                        ),
+                    )
+                ],
+            ),
+        )
+        try:
+            self.networking.create_namespaced_ingress(namespace=self.namespace, body=ingress)
+            logger.info(f"Ingress {pod_name} created")
+        except ApiException as e:
+            if e.status != 409:
+                logger.error(f"Failed to create ingress: {e}")
+
+    def delete_pod(self, pod_name: str) -> bool:
+        """Pod + Service + Ingress 삭제."""
+        # Pod 삭제
+        try:
+            self.v1.delete_namespaced_pod(name=pod_name, namespace=self.namespace, grace_period_seconds=10)
+            logger.info(f"Pod {pod_name} deleted")
+        except ApiException as e:
+            if e.status != 404:
+                logger.error(f"Failed to delete pod {pod_name}: {e}")
+                raise K8sServiceError(f"Failed to delete pod: {e.reason}")
+
+        # Service 삭제
+        try:
+            self.v1.delete_namespaced_service(name=pod_name, namespace=self.namespace)
+        except ApiException:
+            pass
+
+        # Ingress 삭제
+        try:
+            self.networking.delete_namespaced_ingress(name=pod_name, namespace=self.namespace)
+        except ApiException:
+            pass
+
+        return True
 
     def get_pod_status(self, pod_name: str) -> dict | None:
         """Pod 상태 조회."""

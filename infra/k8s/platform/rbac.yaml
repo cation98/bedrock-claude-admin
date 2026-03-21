@@ -5,7 +5,10 @@ metadata:
   name: auth-gateway-pod-manager
 rules:
   - apiGroups: [""]
-    resources: ["pods"]
+    resources: ["pods", "services"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
     verbs: ["get", "list", "create", "delete"]
 
 ---
