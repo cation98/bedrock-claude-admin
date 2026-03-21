@@ -1,0 +1,61 @@
+# =============================================================================
+# NetworkPolicy: Pod 간 통신 차단
+#
+# NetworkPolicy = K8s에서 Pod 간 네트워크 트래픽을 제어하는 방화벽 규칙
+#
+# 이 정책의 목적:
+# - 사용자 A의 터미널에서 사용자 B의 터미널로 접근 불가
+# - 각 Pod은 외부(인터넷, RDS, Bedrock)로만 통신 가능
+# - Pod 간 격리로 보안 강화
+# =============================================================================
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: isolate-terminal-pods
+  namespace: claude-sessions
+spec:
+  # 이 정책이 적용될 Pod 선택
+  podSelector:
+    matchLabels:
+      app: claude-terminal
+
+  policyTypes:
+    - Ingress   # 들어오는 트래픽 제어
+    - Egress    # 나가는 트래픽 제어
+
+  ingress:
+    # Ingress Controller(ALB)에서 오는 트래픽만 허용
+    # 다른 claude-terminal Pod에서 오는 트래픽은 차단됨
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - port: 7681
+          protocol: TCP
+
+  egress:
+    # DNS 조회 허용 (K8s 내부 DNS)
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+    # 외부 인터넷 허용 (Bedrock API, RDS, npm 등)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/16  # VPC 내부 Pod 간 통신은 차단 (RDS는 아래서 별도 허용)
+
+    # RDS ReadOnly Replica 접근 허용 (Private Subnet 내)
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/16
+      ports:
+        - port: 5432
+          protocol: TCP

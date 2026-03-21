@@ -1,0 +1,88 @@
+# =============================================================================
+# Pod Template: claude-terminal
+#
+# 이 파일은 직접 배포하는 것이 아닌 "템플릿"입니다.
+# Auth Gateway가 사용자 로그인 시 이 템플릿을 기반으로
+# 사용자별 Pod을 동적으로 생성합니다.
+#
+# 수동 테스트 시에는 이 파일을 직접 kubectl apply 할 수 있습니다:
+#   kubectl apply -f pod-template.yaml
+#
+# Pod = K8s에서 컨테이너를 실행하는 가장 작은 단위
+# 1개 Pod = 1명의 사용자 터미널 환경
+# =============================================================================
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: claude-terminal-test  # 실제 운영 시 Auth Gateway가 동적으로 이름 부여
+  namespace: claude-sessions
+  labels:
+    app: claude-terminal
+    # Auth Gateway가 사용자별로 아래 레이블 추가:
+    # user: "N1102359"
+    # session-type: "workshop" | "daily"
+spec:
+  serviceAccountName: claude-terminal-sa  # IRSA로 Bedrock 권한 자동 주입
+
+  containers:
+    - name: terminal
+      image: ACCOUNT_ID.dkr.ecr.ap-northeast-2.amazonaws.com/bedrock-claude/claude-code-terminal:latest
+      ports:
+        - containerPort: 7681  # ttyd 웹 터미널
+          name: ttyd
+
+      env:
+        # ----- Bedrock 설정 -----
+        - name: CLAUDE_CODE_USE_BEDROCK
+          value: "1"
+        - name: AWS_REGION
+          value: "us-east-1"  # Bedrock 리전
+        - name: ANTHROPIC_DEFAULT_SONNET_MODEL
+          value: "us.anthropic.claude-sonnet-4-6"
+        - name: ANTHROPIC_DEFAULT_HAIKU_MODEL
+          value: "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+
+        # ----- RDS 접속 (ReadOnly Replica) -----
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: rds-credentials
+              key: database-url
+
+        # ----- 사용자 정보 (Auth Gateway가 동적 설정) -----
+        - name: GIT_USER_NAME
+          value: "Workshop User"
+        - name: GIT_USER_EMAIL
+          value: "workshop@skons.net"
+
+      # 리소스 제한: 사용자당 최대 CPU 1코어, 메모리 1GB
+      resources:
+        requests:
+          cpu: "250m"       # 0.25 코어 (보장)
+          memory: "256Mi"   # 256MB (보장)
+        limits:
+          cpu: "1000m"      # 1 코어 (최대)
+          memory: "1Gi"     # 1GB (최대)
+
+      # 헬스체크: ttyd가 살아있는지 확인
+      readinessProbe:
+        httpGet:
+          path: /
+          port: 7681
+        initialDelaySeconds: 5
+        periodSeconds: 10
+
+      livenessProbe:
+        httpGet:
+          path: /
+          port: 7681
+        initialDelaySeconds: 10
+        periodSeconds: 30
+
+  # Pod 자동 종료: 4시간 (14400초) 후 자동 삭제
+  # 실습 시간 초과 방지 + 리소스 낭비 방지
+  activeDeadlineSeconds: 14400
+
+  # Pod이 종료되면 재시작하지 않음 (일회성 세션)
+  restartPolicy: Never

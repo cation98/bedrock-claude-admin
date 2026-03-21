@@ -1,0 +1,14 @@
+# =============================================================================
+# Namespace: claude-sessions
+#
+# Namespace = K8s에서 리소스를 논리적으로 분리하는 단위 (폴더 같은 개념)
+# 사용자 터미널 Pod들은 모두 이 namespace에서 실행됨
+# =============================================================================
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: claude-sessions
+  labels:
+    app: bedrock-claude
+    purpose: user-terminals
