@@ -27,7 +27,7 @@ spec:
 
   containers:
     - name: terminal
-      image: ACCOUNT_ID.dkr.ecr.ap-northeast-2.amazonaws.com/bedrock-claude/claude-code-terminal:latest
+      image: 680877507363.dkr.ecr.ap-northeast-2.amazonaws.com/bedrock-claude/claude-code-terminal:latest
       ports:
         - containerPort: 7681  # ttyd 웹 터미널
           name: ttyd
@@ -44,11 +44,14 @@ spec:
           value: "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
         # ----- RDS 접속 (ReadOnly Replica) -----
+        # Secret이 생성되면 아래 secretKeyRef로 전환
+        # - name: DATABASE_URL
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: rds-credentials
+        #       key: database-url
         - name: DATABASE_URL
-          valueFrom:
-            secretKeyRef:
-              name: rds-credentials
-              key: database-url
+          value: ""  # 실제 RDS URL은 Secret 또는 Auth Gateway에서 주입
 
         # ----- 사용자 정보 (Auth Gateway가 동적 설정) -----
         - name: GIT_USER_NAME
