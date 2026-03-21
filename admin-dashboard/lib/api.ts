@@ -69,11 +69,13 @@ export function getMe(): Promise<MeResponse> {
 // ---------- Sessions ----------
 
 export interface Session {
+  id: number;
   username: string;
   pod_name: string;
-  status: string;
+  pod_status: string;
   session_type: string;
   started_at: string;
+  terminal_url: string | null;
 }
 
 export interface ActiveSessionsResponse {
@@ -110,6 +112,12 @@ export interface BulkDeleteResponse {
 
 export function bulkDeleteSessions(): Promise<BulkDeleteResponse> {
   return request<BulkDeleteResponse>("/api/v1/sessions/bulk", {
+    method: "DELETE",
+  });
+}
+
+export function adminTerminateSession(sessionId: number): Promise<Session> {
+  return request<Session>(`/api/v1/sessions/admin/${sessionId}`, {
     method: "DELETE",
   });
 }

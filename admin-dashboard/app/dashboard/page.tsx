@@ -42,7 +42,7 @@ export default function DashboardPage() {
 
   const user = getUser();
 
-  const runningSessions = sessions.filter((s) => s.status === "running").length;
+  const runningSessions = sessions.filter((s) => s.pod_status === "running").length;
   const uniqueUsers = new Set(sessions.map((s) => s.username)).size;
 
   const today = new Date().toISOString().slice(0, 10);

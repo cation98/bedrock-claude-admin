@@ -7,6 +7,7 @@ import {
   getActiveSessions,
   bulkCreateSessions,
   bulkDeleteSessions,
+  adminTerminateSession,
   type Session,
 } from "@/lib/api";
 import { isAuthenticated, logout, getUser } from "@/lib/auth";
@@ -240,7 +241,16 @@ export default function WorkshopPage() {
             </h2>
             <span className="text-xs text-gray-400">10초마다 자동 갱신</span>
           </div>
-          <SessionTable sessions={sessions} loading={loading} />
+          <SessionTable sessions={sessions} loading={loading} onTerminate={async (sessionId) => {
+            if (confirm('이 세션을 종료하시겠습니까?')) {
+              try {
+                await adminTerminateSession(sessionId);
+                fetchSessions();
+              } catch (e: unknown) {
+                setError(e instanceof Error ? e.message : String(e));
+              }
+            }
+          }} />
         </div>
       </main>
     </div>

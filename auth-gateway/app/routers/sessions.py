@@ -145,40 +145,7 @@ async def list_my_sessions(
     )
 
 
-@router.delete("/{session_id}", response_model=SessionResponse)
-async def terminate_session(
-    session_id: int,
-    current_user: dict = Depends(get_current_user),
-    settings: Settings = Depends(get_settings),
-    k8s: K8sService = Depends(_get_k8s_service),
-    db: Session = Depends(get_db),
-):
-    """내 세션 종료 (Pod 삭제)."""
-    session = (
-        db.query(TerminalSession)
-        .filter(
-            TerminalSession.id == session_id,
-            TerminalSession.username == current_user["sub"],
-        )
-        .first()
-    )
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    if session.pod_name and session.pod_status != "terminated":
-        try:
-            k8s.delete_pod(session.pod_name)
-        except K8sServiceError as e:
-            logger.error(f"Failed to delete pod: {e}")
-
-    session.pod_status = "terminated"
-    session.terminated_at = datetime.now(timezone.utc)
-    db.commit()
-
-    return _to_response(session, settings)
-
-
-# ==================== 관리자 API ====================
+# ==================== 관리자 API (/{session_id} 보다 먼저 선언) ====================
 
 
 def _require_admin(current_user: dict = Depends(get_current_user)) -> dict:
@@ -280,3 +247,65 @@ async def bulk_terminate_sessions(
     db.commit()
 
     return {"terminated": deleted_count, "message": f"{deleted_count} sessions terminated"}
+
+
+@router.delete("/admin/{session_id}")
+async def admin_terminate_session(
+    session_id: int,
+    _admin: dict = Depends(_require_admin),
+    settings: Settings = Depends(get_settings),
+    k8s: K8sService = Depends(_get_k8s_service),
+    db: Session = Depends(get_db),
+):
+    """관리자용 개별 세션 종료."""
+    session = db.query(TerminalSession).filter(TerminalSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    if session.pod_name and session.pod_status != "terminated":
+        try:
+            k8s.delete_pod(session.pod_name)
+        except K8sServiceError as e:
+            logger.error(f"Failed to delete pod: {e}")
+
+    session.pod_status = "terminated"
+    session.terminated_at = datetime.now(timezone.utc)
+    db.commit()
+
+    return _to_response(session, settings)
+
+
+# ==================== 사용자 API (동적 경로는 마지막에) ====================
+
+
+@router.delete("/{session_id}", response_model=SessionResponse)
+async def terminate_session(
+    session_id: int,
+    current_user: dict = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+    k8s: K8sService = Depends(_get_k8s_service),
+    db: Session = Depends(get_db),
+):
+    """내 세션 종료 (Pod 삭제)."""
+    session = (
+        db.query(TerminalSession)
+        .filter(
+            TerminalSession.id == session_id,
+            TerminalSession.username == current_user["sub"],
+        )
+        .first()
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    if session.pod_name and session.pod_status != "terminated":
+        try:
+            k8s.delete_pod(session.pod_name)
+        except K8sServiceError as e:
+            logger.error(f"Failed to delete pod: {e}")
+
+    session.pod_status = "terminated"
+    session.terminated_at = datetime.now(timezone.utc)
+    db.commit()
+
+    return _to_response(session, settings)

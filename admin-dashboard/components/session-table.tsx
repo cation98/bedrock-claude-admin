@@ -4,7 +4,7 @@ import type { Session } from "@/lib/api";
 
 interface SessionTableProps {
   sessions: Session[];
-  onTerminate?: (podName: string) => void;
+  onTerminate?: (sessionId: number) => void;
   loading?: boolean;
 }
 
@@ -92,7 +92,7 @@ export default function SessionTable({
                 {s.pod_name}
               </td>
               <td className="whitespace-nowrap px-4 py-3 text-sm">
-                {statusBadge(s.status)}
+                {statusBadge(s.pod_status)}
               </td>
               <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
                 {s.session_type}
@@ -102,9 +102,9 @@ export default function SessionTable({
               </td>
               {onTerminate && (
                 <td className="whitespace-nowrap px-4 py-3 text-sm">
-                  {s.status !== "terminated" && (
+                  {s.pod_status !== "terminated" && (
                     <button
-                      onClick={() => onTerminate(s.pod_name)}
+                      onClick={() => onTerminate(s.id)}
                       className="rounded bg-red-50 px-3 py-1 text-xs font-medium text-red-600 hover:bg-red-100 transition-colors"
                     >
                       종료
