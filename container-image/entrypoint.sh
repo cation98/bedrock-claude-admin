@@ -50,14 +50,13 @@ if [ -n "${GIT_USER_EMAIL:-}" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 4) Claude Code settings.local.json 생성 (테마 사전 설정)
+# 4) Claude Code 온보딩 완료 처리
+#    --print 모드로 한 번 실행하면 온보딩이 자동 완료됨
 # ---------------------------------------------------------------------------
-cat > /home/node/.claude/settings.local.json << 'SETTINGS'
-{
-  "theme": "dark",
-  "hasCompletedOnboarding": true
-}
-SETTINGS
+echo "Initializing Claude Code (first-run setup)..."
+cd /home/node/workspace/sample-project
+claude -p --dangerously-skip-permissions "respond with OK" > /dev/null 2>&1 || true
+echo "Claude Code initialized."
 
 # ---------------------------------------------------------------------------
 # 5) 환영 메시지 생성 (.bashrc에 추가)
