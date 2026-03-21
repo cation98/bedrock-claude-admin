@@ -60,7 +60,9 @@ resource "aws_iam_role_policy" "bedrock_invoke" {
         Resource = [
           # Foundation models (직접 호출)
           "arn:aws:bedrock:*::foundation-model/anthropic.claude-*",
-          # Cross-region inference profiles (권장 방식)
+          # Cross-region inference profiles (account ID 포함 필수)
+          "arn:aws:bedrock:*:680877507363:inference-profile/us.anthropic.claude-*",
+          # Global inference profiles
           "arn:aws:bedrock:*::inference-profile/us.anthropic.claude-*"
         ]
       },
