@@ -101,8 +101,16 @@ COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 # 작업 디렉토리 설정
-WORKDIR /home/node/workspace
+WORKDIR /home/node/workspace/sample-project
 USER node
+
+# node 사용자로 전환 후 git init + Claude 설정
+RUN cd /home/node/workspace/sample-project && \
+    git init && \
+    git config user.name "Workshop" && \
+    git config user.email "workshop@skons.net" && \
+    git add -A && \
+    git commit -m "Initial sample project" --quiet
 
 # ttyd 웹 터미널 포트
 EXPOSE 7681
