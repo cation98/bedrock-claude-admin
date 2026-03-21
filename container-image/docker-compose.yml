@@ -1,0 +1,32 @@
+# =============================================================================
+# Docker Compose - 로컬 개발/테스트용
+# 사용법: docker compose up --build
+# 접속: http://localhost:7681
+# =============================================================================
+
+services:
+  claude-terminal:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "7681:7681"
+    environment:
+      # ----- Bedrock 설정 -----
+      CLAUDE_CODE_USE_BEDROCK: "1"
+      AWS_REGION: "${AWS_REGION:-us-east-1}"
+      ANTHROPIC_DEFAULT_SONNET_MODEL: "us.anthropic.claude-sonnet-4-6"
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+
+      # ----- AWS 자격증명 (로컬 테스트용, 프로덕션에서는 Pod에 주입) -----
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
+      AWS_SESSION_TOKEN: "${AWS_SESSION_TOKEN:-}"
+
+      # ----- RDS 접속 (ReadOnly Replica) -----
+      DATABASE_URL: "${DATABASE_URL:-}"
+
+      # ----- Git 설정 -----
+      GIT_USER_NAME: "${GIT_USER_NAME:-Workshop User}"
+      GIT_USER_EMAIL: "${GIT_USER_EMAIL:-workshop@skons.net}"
+    restart: unless-stopped
