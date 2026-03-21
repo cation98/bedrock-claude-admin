@@ -50,7 +50,17 @@ if [ -n "${GIT_USER_EMAIL:-}" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 4) 환영 메시지 생성 (.bashrc에 추가)
+# 4) Claude Code settings.local.json 생성 (테마 사전 설정)
+# ---------------------------------------------------------------------------
+cat > /home/node/.claude/settings.local.json << 'SETTINGS'
+{
+  "theme": "dark",
+  "hasCompletedOnboarding": true
+}
+SETTINGS
+
+# ---------------------------------------------------------------------------
+# 5) 환영 메시지 생성 (.bashrc에 추가)
 # ---------------------------------------------------------------------------
 cat >> /home/node/.bashrc << 'BASHRC'
 
@@ -60,9 +70,9 @@ echo "  ╔═══════════════════════
 echo "  ║        Claude Code Terminal Ready             ║"
 echo "  ╠══════════════════════════════════════════════╣"
 echo "  ║  claude         - Claude Code 시작            ║"
-echo "  ║  claude --help  - 도움말                      ║"
+echo "  ║  /report        - 보고서 생성 스킬             ║"
+echo "  ║  /excel         - 엑셀 파일 생성 스킬          ║"
 echo "  ║  psql           - PostgreSQL 접속              ║"
-echo "  ║  aws sts get-caller-identity  - AWS 인증 확인  ║"
 echo "  ╚══════════════════════════════════════════════╝"
 echo ""
 

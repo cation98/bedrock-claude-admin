@@ -90,11 +90,14 @@ RUN usermod -s /bin/bash node && \
 # -----------------------------------------------------------------------------
 COPY --chown=node:node sample-project/ /home/node/workspace/sample-project/
 
+# Python 패키지 사전 설치 (엑셀 생성, 데이터 분석)
+RUN pip3 install --no-cache-dir --break-system-packages openpyxl pandas matplotlib
+
 # -----------------------------------------------------------------------------
-# Claude Code 설정
-# 비대화형 환경에서의 초기 설정
+# Claude Code 설정 + Skills
 # -----------------------------------------------------------------------------
 COPY --chown=node:node config/settings.json /home/node/.claude/settings.json
+COPY --chown=node:node config/skills/ /home/node/.claude/commands/
 
 # 엔트리포인트 스크립트
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
