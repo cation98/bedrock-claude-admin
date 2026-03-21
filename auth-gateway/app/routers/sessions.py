@@ -3,6 +3,7 @@
 Endpoints:
   POST   /api/v1/sessions/         — 내 터미널 세션 시작 (Pod 생성)
   GET    /api/v1/sessions/         — 내 세션 목록
+  GET    /api/v1/sessions/my-terminal — 내 활성 터미널 Pod IP 조회
   DELETE /api/v1/sessions/{id}     — 내 세션 종료 (Pod 삭제)
   GET    /api/v1/sessions/active   — 모든 활성 세션 (관리자)
   POST   /api/v1/sessions/bulk     — 일괄 세션 생성 (관리자)
@@ -116,9 +117,10 @@ async def create_session(
 async def list_my_sessions(
     current_user: dict = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
+    k8s: K8sService = Depends(_get_k8s_service),
     db: Session = Depends(get_db),
 ):
-    """내 세션 목록."""
+    """내 세션 목록 (K8s 상태 동기화 포함)."""
     sessions = (
         db.query(TerminalSession)
         .filter(TerminalSession.username == current_user["sub"])
@@ -126,6 +128,17 @@ async def list_my_sessions(
         .limit(20)
         .all()
     )
+
+    # creating 상태인 세션의 Pod 상태를 K8s에서 동기화
+    for session in sessions:
+        if session.pod_status == "creating" and session.pod_name:
+            pod_status = k8s.get_pod_status(session.pod_name)
+            if pod_status and pod_status["phase"] == "Running":
+                session.pod_status = "running"
+            elif pod_status and pod_status["phase"] in ("Failed", "Succeeded"):
+                session.pod_status = "terminated"
+    db.commit()
+
     return SessionListResponse(
         total=len(sessions),
         sessions=[_to_response(s, settings) for s in sessions],
