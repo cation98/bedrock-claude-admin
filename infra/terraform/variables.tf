@@ -39,10 +39,10 @@ variable "eks_subnet_ids" {
   ]
 }
 
-variable "nat_gateway_subnet_id" {
-  description = "NAT Gateway를 배치할 서브넷 (public subnet)"
+variable "private_route_table_id" {
+  description = "기존 private route table (NAT Instance + Bedrock Endpoint 라우팅 포함)"
   type        = string
-  default     = "subnet-03f741587efae3ffb" # sko-public-subnet-a
+  default     = "rtb-0700167f652e4360a" # sko-private-subnet-rt
 }
 
 # ----- EKS 전용 Private Subnets (신규 생성) -----
