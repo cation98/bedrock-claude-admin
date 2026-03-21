@@ -37,11 +37,11 @@ spec:
         - name: CLAUDE_CODE_USE_BEDROCK
           value: "1"
         - name: AWS_REGION
-          value: "us-east-1"  # Bedrock 리전
+          value: "ap-northeast-2"  # 서울 리전 (VPC Endpoint 활용)
         - name: ANTHROPIC_DEFAULT_SONNET_MODEL
-          value: "us.anthropic.claude-sonnet-4-6"
+          value: "apac.anthropic.claude-sonnet-4-20250514-v1:0"
         - name: ANTHROPIC_DEFAULT_HAIKU_MODEL
-          value: "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+          value: "global.anthropic.claude-haiku-4-5-20251001-v1:0"
 
         # ----- RDS 접속 (ReadOnly Replica) -----
         # Secret이 생성되면 아래 secretKeyRef로 전환
