@@ -1,19 +1,31 @@
 # =============================================================================
 # Terraform 변수 값 설정
-# 이 파일을 terraform.tfvars로 복사하여 실제 값을 입력하세요.
-# terraform.tfvars는 .gitignore에 포함되어 있어 커밋되지 않습니다.
+# 이 파일을 terraform.tfvars로 복사하여 사용하세요.
 # =============================================================================
 
 aws_region  = "ap-northeast-2"
 environment = "dev"
 
-# EKS 노드 설정
-# Phase 1 (15명): m5.large × 2
-# Phase 2 (50명): m5.xlarge × 4로 변경
+# ----- 기존 SKO VPC (참조만, 수정 안 함) -----
+vpc_id = "vpc-075deed66fcc7f348"
+
+eks_subnet_ids = [
+  "subnet-03f741587efae3ffb", # sko-public-subnet-a (ap-northeast-2a)
+  "subnet-02a58f3358354e490", # sko-public-subnet-b (ap-northeast-2b)
+  "subnet-083d39916aeea24cd", # sko-public-subnet-c (ap-northeast-2c)
+]
+
+nat_gateway_subnet_id = "subnet-03f741587efae3ffb" # sko-public-subnet-a
+
+# ----- EKS 전용 Private Subnets (신규 생성) -----
+eks_private_subnet_cidrs = ["10.0.10.0/24", "10.0.20.0/24"]
+eks_private_subnet_azs   = ["ap-northeast-2a", "ap-northeast-2c"]
+
+# ----- EKS 노드 설정 -----
 eks_node_instance_types = ["m5.large"]
 eks_node_desired_size   = 2
 eks_node_min_size       = 2
 eks_node_max_size       = 4
 
-# Bedrock 리전 (Claude 모델이 있는 리전)
+# Bedrock 리전
 bedrock_region = "us-east-1"

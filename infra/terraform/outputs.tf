@@ -5,8 +5,8 @@
 # =============================================================================
 
 output "vpc_id" {
-  description = "VPC ID"
-  value       = aws_vpc.main.id
+  description = "VPC ID (기존 SKO VPC)"
+  value       = data.aws_vpc.sko.id
 }
 
 output "eks_cluster_name" {

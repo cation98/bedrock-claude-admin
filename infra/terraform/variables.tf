@@ -21,16 +21,40 @@ variable "project_name" {
   default     = "bedrock-claude"
 }
 
-# ----- VPC -----
+# ----- 기존 SKO VPC (data source 참조) -----
 
-variable "vpc_cidr" {
-  description = "VPC CIDR 블록"
+variable "vpc_id" {
+  description = "기존 SKO VPC ID (절대 수정/삭제하지 않음)"
   type        = string
-  default     = "10.0.0.0/16"
+  default     = "vpc-075deed66fcc7f348"
 }
 
-variable "availability_zones" {
-  description = "사용할 가용영역 목록 (EKS는 최소 2개 필요)"
+variable "eks_subnet_ids" {
+  description = "EKS Control Plane이 사용할 기존 서브넷 (최소 2개 AZ)"
+  type        = list(string)
+  default = [
+    "subnet-03f741587efae3ffb", # sko-public-subnet-a (ap-northeast-2a)
+    "subnet-02a58f3358354e490", # sko-public-subnet-b (ap-northeast-2b)
+    "subnet-083d39916aeea24cd", # sko-public-subnet-c (ap-northeast-2c)
+  ]
+}
+
+variable "nat_gateway_subnet_id" {
+  description = "NAT Gateway를 배치할 서브넷 (public subnet)"
+  type        = string
+  default     = "subnet-03f741587efae3ffb" # sko-public-subnet-a
+}
+
+# ----- EKS 전용 Private Subnets (신규 생성) -----
+
+variable "eks_private_subnet_cidrs" {
+  description = "EKS 워커 노드 전용 private 서브넷 CIDR (신규 생성)"
+  type        = list(string)
+  default     = ["10.0.10.0/24", "10.0.20.0/24"]
+}
+
+variable "eks_private_subnet_azs" {
+  description = "EKS private 서브넷 가용영역"
   type        = list(string)
   default     = ["ap-northeast-2a", "ap-northeast-2c"]
 }
@@ -70,7 +94,7 @@ variable "eks_node_max_size" {
 # ----- Bedrock -----
 
 variable "bedrock_region" {
-  description = "Bedrock Claude 모델이 있는 리전 (서울에는 아직 없을 수 있음)"
+  description = "Bedrock Claude 모델이 있는 리전"
   type        = string
   default     = "us-east-1"
 }

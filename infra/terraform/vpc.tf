@@ -1,83 +1,36 @@
 # =============================================================================
-# VPC + 네트워크 인프라
+# VPC — 기존 SKO VPC 참조 (data source)
 #
-# 구조:
-#   VPC (10.0.0.0/16)
-#   ├── Public Subnet A  (10.0.1.0/24)  ← NAT Gateway, ALB
-#   ├── Public Subnet C  (10.0.2.0/24)  ← ALB (이중화)
-#   ├── Private Subnet A (10.0.10.0/24) ← EKS 워커 노드, Pod
-#   └── Private Subnet C (10.0.20.0/24) ← EKS 워커 노드, Pod
+# ⚠️ 기존 리소스를 절대 생성/수정/삭제하지 않음
+# data source로 참조만 하여 EKS 등 신규 리소스에서 사용
 #
-# EKS 워커 노드는 Private Subnet에 배치하여 외부 직접 접근 차단.
-# NAT Gateway를 통해 외부 인터넷 접근 (npm install, Docker pull 등).
+# 기존 구조:
+#   sko-vpc (10.0.0.0/16)  vpc-075deed66fcc7f348
+#   ├── sko-public-subnet-a  (10.0.0.0/24, ap-northeast-2a)
+#   ├── sko-private-subnet-b (10.0.1.0/24, ap-northeast-2b)
+#   ├── sko-public-subnet-c  (10.0.2.0/24, ap-northeast-2c)
+#   └── sko-public-subnet-b  (10.0.4.0/24, ap-northeast-2b)
+#   + sko-internet-gateway (igw-06047fb95a448b7b4)
 # =============================================================================
 
-# ----- VPC -----
+# ----- 기존 VPC 참조 -----
 
-resource "aws_vpc" "main" {
-  cidr_block           = var.vpc_cidr
-  enable_dns_hostnames = true # EKS가 내부 DNS 사용
-  enable_dns_support   = true
-
-  tags = {
-    Name = "${var.project_name}-vpc"
-  }
+data "aws_vpc" "sko" {
+  id = var.vpc_id
 }
 
-# ----- Internet Gateway -----
-# VPC가 인터넷과 통신하기 위한 게이트웨이
+# ----- 기존 Subnet 참조 -----
+# EKS는 최소 2개 AZ의 서브넷이 필요
 
-resource "aws_internet_gateway" "main" {
-  vpc_id = aws_vpc.main.id
-
-  tags = {
-    Name = "${var.project_name}-igw"
-  }
+data "aws_subnet" "eks_subnets" {
+  for_each = toset(var.eks_subnet_ids)
+  id       = each.value
 }
 
-# ----- Public Subnets -----
-# ALB(로드 밸런서)와 NAT Gateway가 위치하는 서브넷
-# 외부에서 접근 가능한 영역
-
-resource "aws_subnet" "public" {
-  count = length(var.availability_zones)
-
-  vpc_id                  = aws_vpc.main.id
-  cidr_block              = cidrsubnet(var.vpc_cidr, 8, count.index + 1) # 10.0.1.0/24, 10.0.2.0/24
-  availability_zone       = var.availability_zones[count.index]
-  map_public_ip_on_launch = true
-
-  tags = {
-    Name = "${var.project_name}-public-${var.availability_zones[count.index]}"
-    # EKS가 이 서브넷에 ALB를 생성할 수 있도록 태그 지정
-    "kubernetes.io/role/elb"                              = "1"
-    "kubernetes.io/cluster/${var.project_name}-eks" = "shared"
-  }
-}
-
-# ----- Private Subnets -----
-# EKS 워커 노드와 Pod이 실행되는 서브넷
-# 외부에서 직접 접근 불가, NAT Gateway를 통해서만 아웃바운드 가능
-
-resource "aws_subnet" "private" {
-  count = length(var.availability_zones)
-
-  vpc_id            = aws_vpc.main.id
-  cidr_block        = cidrsubnet(var.vpc_cidr, 8, (count.index + 1) * 10) # 10.0.10.0/24, 10.0.20.0/24
-  availability_zone = var.availability_zones[count.index]
-
-  tags = {
-    Name = "${var.project_name}-private-${var.availability_zones[count.index]}"
-    # EKS가 이 서브넷에 내부 LB를 생성할 수 있도록 태그 지정
-    "kubernetes.io/role/internal-elb"                      = "1"
-    "kubernetes.io/cluster/${var.project_name}-eks" = "shared"
-  }
-}
-
-# ----- NAT Gateway -----
-# Private Subnet의 리소스가 외부 인터넷에 접근할 때 사용
-# (예: Claude Code가 Bedrock API 호출, npm install 등)
-# 비용 절감을 위해 1개만 생성 (프로덕션에서는 AZ별 1개 권장)
+# ----- NAT Gateway (신규 생성) -----
+# EKS 워커 노드가 외부 인터넷에 접근하기 위해 필요
+# (Bedrock API 호출, npm install, Docker image pull 등)
+# 기존 VPC에 NAT Gateway가 없으므로 신규 생성
 
 resource "aws_eip" "nat" {
   domain = "vpc"
@@ -89,34 +42,35 @@ resource "aws_eip" "nat" {
 
 resource "aws_nat_gateway" "main" {
   allocation_id = aws_eip.nat.id
-  subnet_id     = aws_subnet.public[0].id # 첫 번째 Public Subnet에 배치
+  subnet_id     = var.nat_gateway_subnet_id # public subnet에 배치
 
   tags = {
     Name = "${var.project_name}-nat"
   }
-
-  depends_on = [aws_internet_gateway.main]
 }
 
-# ----- Route Tables -----
+# ----- EKS 전용 Private Subnets (신규 생성) -----
+# 기존 서브넷을 변경하지 않고, EKS 워커 노드 전용 private 서브넷을 새로 생성
+# NAT Gateway를 통해 아웃바운드 인터넷 접근
 
-# Public 라우트 테이블: 인터넷 게이트웨이로 직접 라우팅
-resource "aws_route_table" "public" {
-  vpc_id = aws_vpc.main.id
+resource "aws_subnet" "eks_private" {
+  count = length(var.eks_private_subnet_cidrs)
 
-  route {
-    cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.main.id
-  }
+  vpc_id            = data.aws_vpc.sko.id
+  cidr_block        = var.eks_private_subnet_cidrs[count.index]
+  availability_zone = var.eks_private_subnet_azs[count.index]
 
   tags = {
-    Name = "${var.project_name}-public-rt"
+    Name = "${var.project_name}-eks-private-${var.eks_private_subnet_azs[count.index]}"
+    "kubernetes.io/role/internal-elb"                = "1"
+    "kubernetes.io/cluster/${var.project_name}-eks"   = "shared"
   }
 }
 
-# Private 라우트 테이블: NAT Gateway를 통해 아웃바운드만 허용
-resource "aws_route_table" "private" {
-  vpc_id = aws_vpc.main.id
+# ----- Route Table (신규, EKS private subnets 전용) -----
+
+resource "aws_route_table" "eks_private" {
+  vpc_id = data.aws_vpc.sko.id
 
   route {
     cidr_block     = "0.0.0.0/0"
@@ -124,19 +78,12 @@ resource "aws_route_table" "private" {
   }
 
   tags = {
-    Name = "${var.project_name}-private-rt"
+    Name = "${var.project_name}-eks-private-rt"
   }
 }
 
-# 서브넷에 라우트 테이블 연결
-resource "aws_route_table_association" "public" {
-  count          = length(var.availability_zones)
-  subnet_id      = aws_subnet.public[count.index].id
-  route_table_id = aws_route_table.public.id
-}
-
-resource "aws_route_table_association" "private" {
-  count          = length(var.availability_zones)
-  subnet_id      = aws_subnet.private[count.index].id
-  route_table_id = aws_route_table.private.id
+resource "aws_route_table_association" "eks_private" {
+  count          = length(aws_subnet.eks_private)
+  subnet_id      = aws_subnet.eks_private[count.index].id
+  route_table_id = aws_route_table.eks_private.id
 }

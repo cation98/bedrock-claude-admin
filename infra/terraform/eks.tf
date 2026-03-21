@@ -43,8 +43,8 @@ resource "aws_eks_cluster" "main" {
 
   # 클러스터 네트워크 설정
   vpc_config {
-    # Private Subnet에 배치 (보안)
-    subnet_ids = aws_subnet.private[*].id
+    # 기존 SKO VPC의 서브넷 사용 (Control Plane ENI 배치)
+    subnet_ids = var.eks_subnet_ids
 
     # kubectl 접근 허용 (개발 단계에서는 public 허용)
     endpoint_public_access  = true
@@ -119,7 +119,7 @@ resource "aws_eks_node_group" "main" {
   cluster_name    = aws_eks_cluster.main.name
   node_group_name = "${var.project_name}-nodes"
   node_role_arn   = aws_iam_role.eks_nodes.arn
-  subnet_ids      = aws_subnet.private[*].id
+  subnet_ids      = aws_subnet.eks_private[*].id  # 신규 생성한 EKS 전용 private 서브넷
 
   instance_types = var.eks_node_instance_types
 
