@@ -54,7 +54,7 @@ fi
 #    --print 모드로 한 번 실행하면 온보딩이 자동 완료됨
 # ---------------------------------------------------------------------------
 echo "Initializing Claude Code (first-run setup)..."
-cd /home/node/workspace/sample-project
+cd /home/node
 claude -p --dangerously-skip-permissions "respond with OK" > /dev/null 2>&1 || true
 echo "Claude Code initialized."
 
@@ -75,8 +75,8 @@ echo "  ║  psql           - PostgreSQL 접속              ║"
 echo "  ╚══════════════════════════════════════════════╝"
 echo ""
 
-# 샘플 프로젝트 디렉토리로 이동
-cd ~/workspace/sample-project 2>/dev/null || cd ~/workspace
+# 홈 디렉토리에서 시작
+cd ~
 
 BASHRC
 

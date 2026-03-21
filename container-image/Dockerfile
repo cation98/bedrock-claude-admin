@@ -89,6 +89,7 @@ RUN usermod -s /bin/bash node && \
 # 샘플 프로젝트 복사 (실습용)
 # -----------------------------------------------------------------------------
 COPY --chown=node:node sample-project/ /home/node/workspace/sample-project/
+COPY --chown=node:node sample-project/CLAUDE.md /home/node/CLAUDE.md
 
 # Python 패키지 사전 설치 (엑셀 생성, 데이터 분석)
 RUN pip3 install --no-cache-dir --break-system-packages openpyxl pandas matplotlib
@@ -103,8 +104,8 @@ COPY --chown=node:node config/skills/ /home/node/.claude/commands/
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-# 작업 디렉토리 설정
-WORKDIR /home/node/workspace/sample-project
+# 작업 디렉토리 설정 (홈 디렉토리에서 시작)
+WORKDIR /home/node
 USER node
 
 # node 사용자로 전환 후 git init + Claude 설정
