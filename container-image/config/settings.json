@@ -2,6 +2,7 @@
   "env": {
     "CLAUDE_CODE_USE_BEDROCK": "1"
   },
+  "theme": "dark",
   "permissions": {
     "allow": [
       "Bash(git *)",
