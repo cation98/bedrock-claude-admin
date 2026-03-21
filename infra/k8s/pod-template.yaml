@@ -51,7 +51,10 @@ spec:
         #       name: rds-credentials
         #       key: database-url
         - name: DATABASE_URL
-          value: ""  # 실제 RDS URL은 Secret 또는 Auth Gateway에서 주입
+          valueFrom:
+            secretKeyRef:
+              name: rds-credentials
+              key: database-url
 
         # ----- 사용자 정보 (Auth Gateway가 동적 설정) -----
         - name: GIT_USER_NAME
