@@ -1,0 +1,24 @@
+{
+  "numStartups": 1,
+  "hasCompletedOnboarding": true,
+  "lastOnboardingVersion": "2.1.81",
+  "lastReleaseNotesSeen": "2.1.81",
+  "opusProMigrationComplete": true,
+  "sonnet1m45MigrationComplete": true,
+  "officialMarketplaceAutoInstallAttempted": true,
+  "projects": {
+    "/home/node": {
+      "allowedTools": [],
+      "mcpContextUris": [],
+      "mcpServers": {},
+      "enabledMcpjsonServers": [],
+      "disabledMcpjsonServers": [],
+      "hasTrustDialogAccepted": true,
+      "hasCompletedProjectOnboarding": true,
+      "hasClaudeMdExternalIncludesApproved": false,
+      "hasClaudeMdExternalIncludesWarningShown": false,
+      "projectOnboardingSeenCount": 1,
+      "exampleFiles": []
+    }
+  }
+}

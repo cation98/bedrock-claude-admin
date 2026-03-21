@@ -50,13 +50,9 @@ if [ -n "${GIT_USER_EMAIL:-}" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 4) Claude Code 온보딩 완료 처리
-#    --print 모드로 한 번 실행하면 온보딩이 자동 완료됨
+# 4) Claude Code 온보딩 상태 확인
+#    .claude.json이 이미지에 포함되어 온보딩 건너뜀
 # ---------------------------------------------------------------------------
-echo "Initializing Claude Code (first-run setup)..."
-cd /home/node
-claude -p --dangerously-skip-permissions "respond with OK" > /dev/null 2>&1 || true
-echo "Claude Code initialized."
 
 # ---------------------------------------------------------------------------
 # 5) 환영 메시지 생성 (.bashrc에 추가)
