@@ -43,7 +43,7 @@ fi
 # ---------------------------------------------------------------------------
 # 4) 환영 메시지 생성 (.bashrc에 추가)
 # ---------------------------------------------------------------------------
-cat >> /home/claude-user/.bashrc << 'BASHRC'
+cat >> /home/node/.bashrc << 'BASHRC'
 
 # Claude Code Terminal 환영 메시지
 echo ""
@@ -80,5 +80,4 @@ exec ttyd \
     --base-path "${TTYD_BASE_PATH}" \
     --ping-interval 30 \
     --max-clients 1 \
-    --title "Claude Code Terminal" \
     bash -l

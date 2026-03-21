@@ -77,31 +77,32 @@ RUN apt-get purge -y build-essential cmake && \
     rm -rf /var/lib/apt/lists/*
 
 # -----------------------------------------------------------------------------
-# 실습 사용자 생성
-# root가 아닌 일반 사용자로 Claude Code 실행 (보안)
+# 실습 사용자 설정
+# node:22 이미지에는 UID 1000의 'node' 사용자가 이미 존재
+# 이 사용자의 홈 디렉토리와 셸을 설정하여 재활용
 # -----------------------------------------------------------------------------
-RUN useradd -m -s /bin/bash -u 1000 claude-user && \
-    mkdir -p /home/claude-user/workspace && \
-    chown -R claude-user:claude-user /home/claude-user
+RUN usermod -s /bin/bash node && \
+    mkdir -p /home/node/workspace /home/node/.claude && \
+    chown -R node:node /home/node
 
 # -----------------------------------------------------------------------------
 # 샘플 프로젝트 복사 (실습용)
 # -----------------------------------------------------------------------------
-COPY --chown=claude-user:claude-user sample-project/ /home/claude-user/workspace/sample-project/
+COPY --chown=node:node sample-project/ /home/node/workspace/sample-project/
 
 # -----------------------------------------------------------------------------
 # Claude Code 설정
 # 비대화형 환경에서의 초기 설정
 # -----------------------------------------------------------------------------
-COPY --chown=claude-user:claude-user config/settings.json /home/claude-user/.claude/settings.json
+COPY --chown=node:node config/settings.json /home/node/.claude/settings.json
 
 # 엔트리포인트 스크립트
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 # 작업 디렉토리 설정
-WORKDIR /home/claude-user/workspace
-USER claude-user
+WORKDIR /home/node/workspace
+USER node
 
 # ttyd 웹 터미널 포트
 EXPOSE 7681
