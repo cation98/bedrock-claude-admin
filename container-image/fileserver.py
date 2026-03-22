@@ -27,6 +27,36 @@ MAX_UPLOAD_SIZE = 100 * 1024 * 1024  # 100MB
 class FileServerHandler(SimpleHTTPRequestHandler):
     """파일 업로드를 지원하는 HTTP 핸들러."""
 
+    def do_DELETE(self):
+        """파일 삭제 처리 (DELETE /delete?file=filename)."""
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path != "/delete":
+            self.send_error(404, "Not Found")
+            return
+
+        params = urllib.parse.parse_qs(parsed.query)
+        filename = params.get("file", [None])[0]
+        if not filename:
+            self.send_error(400, "Missing file parameter")
+            return
+
+        # 안전 처리: uploads 디렉토리 내 파일만 삭제 허용
+        safe_name = Path(filename).name
+        filepath = Path(self.directory) / "uploads" / safe_name
+        if not filepath.exists() or not filepath.is_file():
+            self.send_error(404, "File not found")
+            return
+
+        import json
+        try:
+            filepath.unlink()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"deleted": safe_name}).encode())
+        except OSError as e:
+            self.send_error(500, str(e))
+
     def do_POST(self):
         """파일 업로드 처리 (POST /upload)."""
         parsed = urllib.parse.urlparse(self.path)
@@ -137,6 +167,7 @@ class FileServerHandler(SimpleHTTPRequestHandler):
             self.send_error(403, "Permission denied")
             return
 
+        is_uploads = rel_path == "uploads"
         for name in items:
             fullpath = os.path.join(dirpath, name)
             display = html.escape(name)
@@ -145,10 +176,16 @@ class FileServerHandler(SimpleHTTPRequestHandler):
                 display += "/"
                 link += "/"
                 size = "-"
+                delete_btn = ""
             else:
                 size_bytes = os.path.getsize(fullpath)
                 size = self._format_size(size_bytes)
-            entries.append(f'<tr><td><a href="{link}">{display}</a></td><td>{size}</td></tr>')
+                if is_uploads:
+                    safe = html.escape(name, quote=True)
+                    delete_btn = f'<button class="del-btn" onclick="deleteFile(\'{safe}\')">삭제</button>'
+                else:
+                    delete_btn = ""
+            entries.append(f'<tr><td><a href="{link}">{display}</a></td><td>{size}</td><td>{delete_btn}</td></tr>')
 
         # 상위 디렉토리 링크
         parent = ""
@@ -327,7 +364,14 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
   th {{ color: #8b949e; font-weight: 500; font-size: 0.85rem; }}
   td a {{ color: #58a6ff; text-decoration: none; }}
   td a:hover {{ text-decoration: underline; }}
-  td:last-child {{ color: #8b949e; font-size: 0.85rem; white-space: nowrap; }}
+  td:nth-child(2) {{ color: #8b949e; font-size: 0.85rem; white-space: nowrap; }}
+  td:last-child {{ white-space: nowrap; }}
+  .del-btn {{
+    padding: 3px 10px; font-size: 0.75rem; border: 1px solid #da3633;
+    background: transparent; color: #da3633; border-radius: 4px;
+    cursor: pointer; transition: all 0.15s;
+  }}
+  .del-btn:hover {{ background: #da3633; color: #fff; }}
 </style>
 </head>
 <body>
@@ -350,7 +394,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 <div class="toast" id="toast"></div>
 
 <table>
-  <thead><tr><th>Name</th><th>Size</th></tr></thead>
+  <thead><tr><th>Name</th><th>Size</th><th></th></tr></thead>
   <tbody>
     {parent}
     {entries}
@@ -394,7 +438,10 @@ function uploadFiles(files) {{
     if (xhr.status === 200) {{
       const res = JSON.parse(xhr.responseText);
       showToast(res.count + '개 파일 업로드 완료', 'success');
-      setTimeout(() => location.reload(), 500);
+      setTimeout(() => {{
+        const base = window.location.pathname.match(/^\/files\/[^/]+/)?.[0] || '';
+        window.location.href = base + '/uploads/';
+      }}, 500);
     }} else {{
       showToast('업로드 실패: ' + xhr.statusText, 'error');
     }}
@@ -429,6 +476,22 @@ fileInput.addEventListener('change', () => {{
   uploadFiles(fileInput.files);
   fileInput.value = '';
 }});
+
+function deleteFile(name) {{
+  if (!confirm(name + ' 파일을 삭제하시겠습니까?')) return;
+  const base = window.location.pathname.match(/^\/files\/[^/]+/)?.[0] || '';
+  const xhr = new XMLHttpRequest();
+  xhr.onload = () => {{
+    if (xhr.status === 200) {{
+      showToast('삭제 완료', 'success');
+      setTimeout(() => location.reload(), 300);
+    }} else {{
+      showToast('삭제 실패', 'error');
+    }}
+  }};
+  xhr.open('DELETE', base + '/delete?file=' + encodeURIComponent(name));
+  xhr.send();
+}}
 </script>
 </body>
 </html>"""
