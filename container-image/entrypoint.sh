@@ -126,20 +126,21 @@ chmod 600 /home/node/.pgpass
 # DB 접속 스크립트 — Python으로 작성하여 셸 특수문자 문제 회피
 mkdir -p /home/node/.local/bin
 
-python3 -c "
+python3 << 'PYSCRIPT'
+import os
+
 with open('/home/node/.local/bin/psql-tango', 'w') as f:
     f.write('#!/bin/sh\n')
-    f.write('export PGPASSWORD=\"TangoReadOnly2026!\"\n')
-    f.write('exec psql \"host=aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com dbname=postgres user=claude_readonly sslmode=require\" \"\\\$@\"\n')
+    f.write("export PGPASSWORD='TangoReadOnly2026!'\n")
+    f.write('exec psql "host=aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com dbname=postgres user=claude_readonly sslmode=require" "$@"\n')
 
 with open('/home/node/.local/bin/psql-safety', 'w') as f:
     f.write('#!/bin/sh\n')
-    f.write('exec psql \"\\\$DATABASE_URL\" \"\\\$@\"\n')
+    f.write('exec psql "$DATABASE_URL" "$@"\n')
 
-import os
 os.chmod('/home/node/.local/bin/psql-tango', 0o755)
 os.chmod('/home/node/.local/bin/psql-safety', 0o755)
-"
+PYSCRIPT
 export PATH="/home/node/.local/bin:$PATH"
 echo 'export PATH="/home/node/.local/bin:$PATH"' >> /home/node/.bashrc
 
