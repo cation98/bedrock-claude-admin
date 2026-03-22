@@ -405,7 +405,8 @@ function uploadFiles(files) {{
     showToast('네트워크 오류', 'error');
   }};
 
-  xhr.open('POST', '/upload');
+  const basePath = window.location.pathname.match(/^\/files\/[^/]+/)?.[0] || '';
+  xhr.open('POST', basePath + '/upload');
   xhr.send(formData);
 }}
 
