@@ -94,15 +94,28 @@ async def create_session(
     except K8sServiceError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    # DB에 세션 기록
-    session = TerminalSession(
-        user_id=current_user["user_id"],
-        username=username,
-        pod_name=pod_name,
-        pod_status="creating",
-        session_type=request.session_type,
+    # 같은 pod_name의 이전 terminated 세션이 있으면 재활용 (unique constraint 방지)
+    old_session = (
+        db.query(TerminalSession)
+        .filter(TerminalSession.pod_name == pod_name)
+        .first()
     )
-    db.add(session)
+    if old_session:
+        old_session.user_id = current_user["user_id"]
+        old_session.pod_status = "creating"
+        old_session.session_type = request.session_type
+        old_session.started_at = datetime.now(timezone.utc)
+        old_session.terminated_at = None
+        session = old_session
+    else:
+        session = TerminalSession(
+            user_id=current_user["user_id"],
+            username=username,
+            pod_name=pod_name,
+            pod_status="creating",
+            session_type=request.session_type,
+        )
+        db.add(session)
     db.commit()
     db.refresh(session)
 
@@ -206,15 +219,28 @@ async def bulk_create_sessions(
     for username in request.usernames:
         try:
             pod_name = k8s.create_pod(username, request.session_type)
-            session = TerminalSession(
-                user_id=0,  # bulk에서는 user_id 없이 생성
-                username=username,
-                pod_name=pod_name,
-                pod_status="creating",
-                session_type=request.session_type,
+            # 같은 pod_name의 이전 세션 재활용 (unique constraint 방지)
+            old_session = (
+                db.query(TerminalSession)
+                .filter(TerminalSession.pod_name == pod_name)
+                .first()
             )
-            db.add(session)
-            created_sessions.append(session)
+            if old_session:
+                old_session.pod_status = "creating"
+                old_session.session_type = request.session_type
+                old_session.started_at = datetime.now(timezone.utc)
+                old_session.terminated_at = None
+                created_sessions.append(old_session)
+            else:
+                session = TerminalSession(
+                    user_id=0,
+                    username=username,
+                    pod_name=pod_name,
+                    pod_status="creating",
+                    session_type=request.session_type,
+                )
+                db.add(session)
+                created_sessions.append(session)
         except K8sServiceError as e:
             logger.error(f"Failed to create session for {username}: {e}")
 
