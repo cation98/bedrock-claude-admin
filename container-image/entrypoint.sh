@@ -124,17 +124,20 @@ chmod 600 /home/node/.pgpass
 # 5) 환영 메시지
 # ---------------------------------------------------------------------------
 # DB 접속 스크립트 (! 특수문자 안전 처리)
-cat > /usr/local/bin/psql-tango << 'SCRIPT'
+mkdir -p /home/node/.local/bin
+cat > /home/node/.local/bin/psql-tango << 'SCRIPT'
 #!/bin/bash
 PGPASSWORD='TangoReadOnly2026!' exec psql "host=aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com dbname=postgres user=claude_readonly sslmode=require" "$@"
 SCRIPT
-chmod +x /usr/local/bin/psql-tango
+chmod +x /home/node/.local/bin/psql-tango
 
-cat > /usr/local/bin/psql-safety << 'SCRIPT'
+cat > /home/node/.local/bin/psql-safety << 'SCRIPT'
 #!/bin/bash
 exec psql "$DATABASE_URL" "$@"
 SCRIPT
-chmod +x /usr/local/bin/psql-safety
+chmod +x /home/node/.local/bin/psql-safety
+export PATH="/home/node/.local/bin:$PATH"
+echo 'export PATH="/home/node/.local/bin:$PATH"' >> /home/node/.bashrc
 
 # 환영 메시지 (unquoted heredoc: 변수 확장 필요)
 cat >> /home/node/.bashrc << BASHRC
