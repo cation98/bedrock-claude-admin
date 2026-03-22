@@ -101,6 +101,9 @@ COPY --chown=node:node config/settings.json /home/node/.claude/settings.json
 COPY --chown=node:node config/skills/ /home/node/.claude/commands/
 COPY --chown=node:node config/claude.json /home/node/.claude.json
 
+# 파일 업로드/다운로드 서버
+COPY fileserver.py /usr/local/bin/fileserver.py
+
 # 엔트리포인트 스크립트
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh

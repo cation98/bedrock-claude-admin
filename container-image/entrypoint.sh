@@ -112,6 +112,7 @@ git config --global user.email "${USER_ID}@skons.net"
 mkdir -p /home/node/.claude
 mkdir -p /home/node/workspace/exports
 mkdir -p /home/node/workspace/reports
+mkdir -p /home/node/workspace/uploads
 
 # ---------------------------------------------------------------------------
 # 5) 환영 메시지
@@ -124,28 +125,32 @@ alias psql-tango='psql \$TANGO_DATABASE_URL'
 
 # Claude Code Terminal 환영 메시지
 echo ""
-echo "  ╔══════════════════════════════════════════════════════╗"
-echo "  ║  Claude Code Terminal — ${USER_DISPLAY_NAME} 님      "
-echo "  ╠══════════════════════════════════════════════════════╣"
-echo "  ║  claude         - Claude Code 시작                   ║"
-echo "  ║  psql-safety    - 안전관리 DB 접속                    ║"
-echo "  ║  psql-tango     - TANGO 알람 DB 접속                  ║"
-echo "  ║  /report        - 보고서 생성                         ║"
-echo "  ║  /excel         - 엑셀 파일 생성                      ║"
-echo "  ╚══════════════════════════════════════════════════════╝"
+echo "  ╔══════════════════════════════════════════════════════════╗"
+echo "  ║  Claude Code Terminal — ${USER_DISPLAY_NAME} 님          "
+echo "  ╠══════════════════════════════════════════════════════════╣"
+echo "  ║  claude         - Claude Code 시작                       ║"
+echo "  ║  psql-safety    - 안전관리 DB 접속                        ║"
+echo "  ║  psql-tango     - TANGO 알람 DB 접속                      ║"
+echo "  ║  /report        - 보고서 생성                             ║"
+echo "  ║  /excel         - 엑셀 파일 생성                          ║"
+echo "  ╠══════════════════════════════════════════════════════════╣"
+echo "  ║  파일 업로드/다운로드: /files/ 페이지에서 드래그&드롭       ║"
+echo "  ║  업로드 경로: ~/workspace/uploads/                        ║"
+echo "  ╚══════════════════════════════════════════════════════════╝"
 echo ""
 
 cd ~
 BASHRC
 
 # ---------------------------------------------------------------------------
-# 6) 파일 다운로드 서버 (port 8080)
-#    /workspace/exports/ 와 /workspace/reports/ 를 브라우저에서 다운로드 가능
+# 6) 파일 업로드/다운로드 서버 (port 8080)
+#    업로드: 브라우저에서 드래그&드롭으로 파일 업로드 → /workspace/uploads/
+#    다운로드: /workspace/ 하위 모든 파일 브라우저에서 다운로드 가능
 # ---------------------------------------------------------------------------
-DOWNLOAD_PORT="${DOWNLOAD_PORT:-8080}"
+FILE_SERVER_PORT="${FILE_SERVER_PORT:-8080}"
 
-python3 -m http.server ${DOWNLOAD_PORT} --directory /home/node/workspace &
-echo "File server started on port ${DOWNLOAD_PORT}"
+python3 /usr/local/bin/fileserver.py --port "${FILE_SERVER_PORT}" --dir /home/node/workspace &
+echo "File server (upload+download) started on port ${FILE_SERVER_PORT}"
 
 # ---------------------------------------------------------------------------
 # 7) ttyd 시작
