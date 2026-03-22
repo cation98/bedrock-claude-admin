@@ -115,13 +115,15 @@ mkdir -p /home/node/workspace/reports
 mkdir -p /home/node/workspace/uploads
 
 # ---------------------------------------------------------------------------
+# 4b) TANGO DB .pgpass 설정 (패스워드 내 ! 특수문자 처리)
+# ---------------------------------------------------------------------------
+echo "aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com:5432:postgres:claude_readonly:TangoReadOnly2026!" > /home/node/.pgpass
+chmod 600 /home/node/.pgpass
+
+# ---------------------------------------------------------------------------
 # 5) 환영 메시지
 # ---------------------------------------------------------------------------
 cat >> /home/node/.bashrc << BASHRC
-
-# TANGO DB용 .pgpass 설정 (패스워드 내 특수문자 처리)
-echo "aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com:5432:postgres:claude_readonly:TangoReadOnly2026!" > /home/node/.pgpass
-chmod 600 /home/node/.pgpass
 
 # DB 접속 별칭
 alias psql-safety='psql \$DATABASE_URL'
