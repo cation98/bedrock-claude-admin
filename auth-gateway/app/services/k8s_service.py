@@ -107,6 +107,10 @@ class K8sService:
                                 name="DATABASE_URL",
                                 value=self.settings.workshop_database_url,
                             ),
+                            client.V1EnvVar(
+                                name="TANGO_DATABASE_URL",
+                                value=self.settings.tango_database_url,
+                            ),
                         ],
                         resources=client.V1ResourceRequirements(
                             requests={

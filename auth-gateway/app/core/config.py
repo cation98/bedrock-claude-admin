@@ -46,6 +46,7 @@ class Settings(BaseSettings):
 
     # ----- RDS (Pod에 주입할 DB URL) -----
     workshop_database_url: str = ""  # safety-prod ReadOnly Replica
+    tango_database_url: str = ""  # TANGO 알람 DB (aiagentdb) ReadOnly
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

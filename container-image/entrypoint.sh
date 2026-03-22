@@ -29,6 +29,7 @@ echo "  User:     ${USER_DISPLAY_NAME} (${USER_ID})"
 echo "  Bedrock:  ${CLAUDE_CODE_USE_BEDROCK:-not set}"
 echo "  Region:   ${AWS_REGION:-not set}"
 echo "  Model:    ${ANTHROPIC_DEFAULT_SONNET_MODEL:-default}"
+echo "  DB:       Safety + TANGO Alarm"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # CLAUDE.md에 사용자 프로필 섹션 추가
@@ -39,6 +40,52 @@ cat >> /home/node/CLAUDE.md << USERPROFILE
 - **사번**: ${USER_ID}
 - **이름**: ${USER_DISPLAY_NAME}
 USERPROFILE
+
+# CLAUDE.md에 데이터 소스 정보 추가
+cat >> /home/node/CLAUDE.md << 'DATASOURCES'
+
+## 사용 가능한 데이터 소스
+
+### 1. 안전관리 DB (Safety)
+- **접속**: `psql $DATABASE_URL` 또는 `psql -h $SAFETY_DB_HOST -U claude_readonly -d safety`
+- **용도**: 안전관리시스템 데이터 조회
+- **권한**: ReadOnly
+
+### 2. TANGO 알람 DB (네트워크 고장)
+- **접속**: `psql $TANGO_DATABASE_URL` 또는 `psql -h $TANGO_DB_HOST -U claude_readonly -d postgres`
+- **용도**: SK텔레콤 네트워크 실시간 고장/알람 데이터
+- **주요 테이블**:
+  - `alarm_data` — 현재 활성 고장 (7일 보존)
+  - `alarm_events` — 전체 이벤트 로그 (30일 보존, 분석용)
+  - `alarm_history` — 복구된 고장 이력
+  - `facility_info` — 장비 마스터 데이터 (JSONB)
+  - `alarm_hourly_summary` — 시간대별 집계
+  - `alarm_statistics` — 운용팀별 현황 뷰
+- **권한**: ReadOnly
+- **알람 상태값**: O(발생), U(미확인), L(잠금) = 활성 | C(복구), F(사용자복구), A(인지), D(삭제) = 해제
+- **주요 컬럼**: EQP_NM(장비명), FALT_OCCR_LOC_CTT(고장위치), OP_TEAM_ORG_NM(운용팀), EVT_TIME(발생시각), ALM_STAT_VAL(상태)
+
+### 3. S3 아카이브 (AWS Athena 쿼리)
+- **버킷**: `s3://tango-alarm-logs/raw/` (1년 보존)
+- **Athena DB**: `tango_logs`, 테이블: `alarm_events_archive`
+- **쿼리 방법**: `aws athena start-query-execution` 또는 Python boto3
+- **용도**: 30일 이상 과거 알람 데이터 분석
+
+### 예시 쿼리
+
+```sql
+-- 현재 활성 고장 현황 (팀별)
+SELECT OP_TEAM_ORG_NM, COUNT(*) FROM alarm_data GROUP BY OP_TEAM_ORG_NM ORDER BY COUNT(*) DESC;
+
+-- 최근 24시간 고장 추이
+SELECT date_trunc('hour', received_at) AS hour, COUNT(*) FROM alarm_events
+WHERE received_at > NOW() - INTERVAL '24 hours' GROUP BY hour ORDER BY hour;
+
+-- 특정 장비 고장 이력
+SELECT EVT_TIME, ALM_STAT_VAL, ALM_DESC FROM alarm_events
+WHERE EQP_NM LIKE '%장비명%' ORDER BY received_at DESC LIMIT 20;
+```
+DATASOURCES
 
 # 직책/부서 정보가 있으면 추가
 if [ -n "${USER_POSITION}" ]; then
@@ -71,16 +118,21 @@ mkdir -p /home/node/workspace/reports
 # ---------------------------------------------------------------------------
 cat >> /home/node/.bashrc << BASHRC
 
+# DB 접속 별칭
+alias psql-safety='psql \$DATABASE_URL'
+alias psql-tango='psql \$TANGO_DATABASE_URL'
+
 # Claude Code Terminal 환영 메시지
 echo ""
-echo "  ╔══════════════════════════════════════════════════╗"
-echo "  ║  Claude Code Terminal — ${USER_DISPLAY_NAME} 님  "
-echo "  ╠══════════════════════════════════════════════════╣"
-echo "  ║  claude         - Claude Code 시작               ║"
-echo "  ║  /report        - 보고서 생성                     ║"
-echo "  ║  /excel         - 엑셀 파일 생성                  ║"
-echo "  ║  psql           - DB 접속                         ║"
-echo "  ╚══════════════════════════════════════════════════╝"
+echo "  ╔══════════════════════════════════════════════════════╗"
+echo "  ║  Claude Code Terminal — ${USER_DISPLAY_NAME} 님      "
+echo "  ╠══════════════════════════════════════════════════════╣"
+echo "  ║  claude         - Claude Code 시작                   ║"
+echo "  ║  psql-safety    - 안전관리 DB 접속                    ║"
+echo "  ║  psql-tango     - TANGO 알람 DB 접속                  ║"
+echo "  ║  /report        - 보고서 생성                         ║"
+echo "  ║  /excel         - 엑셀 파일 생성                      ║"
+echo "  ╚══════════════════════════════════════════════════════╝"
 echo ""
 
 cd ~

@@ -74,6 +74,66 @@ resource "aws_iam_role_policy" "bedrock_invoke" {
           "bedrock:GetFoundationModel"
         ]
         Resource = "*"
+      },
+      # ----- TANGO 알람 데이터 접근 -----
+      # S3: tango-alarm-logs 버킷 읽기 (1년 아카이브 데이터)
+      {
+        Sid    = "AllowTangoS3Read"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:ListBucket",
+          "s3:GetBucketLocation"
+        ]
+        Resource = [
+          "arn:aws:s3:::tango-alarm-logs",
+          "arn:aws:s3:::tango-alarm-logs/*"
+        ]
+      },
+      # Athena: 아카이브 데이터 SQL 쿼리
+      {
+        Sid    = "AllowTangoAthenaQuery"
+        Effect = "Allow"
+        Action = [
+          "athena:StartQueryExecution",
+          "athena:GetQueryExecution",
+          "athena:GetQueryResults",
+          "athena:StopQueryExecution",
+          "athena:GetWorkGroup"
+        ]
+        Resource = [
+          "arn:aws:athena:ap-northeast-2:680877507363:workgroup/primary"
+        ]
+      },
+      # Glue: Athena가 테이블 메타데이터 조회에 필요
+      {
+        Sid    = "AllowTangoGlueCatalog"
+        Effect = "Allow"
+        Action = [
+          "glue:GetTable",
+          "glue:GetTables",
+          "glue:GetDatabase",
+          "glue:GetDatabases",
+          "glue:GetPartitions"
+        ]
+        Resource = [
+          "arn:aws:glue:ap-northeast-2:680877507363:catalog",
+          "arn:aws:glue:ap-northeast-2:680877507363:database/tango_logs",
+          "arn:aws:glue:ap-northeast-2:680877507363:table/tango_logs/*"
+        ]
+      },
+      # S3: Athena 쿼리 결과 저장 (같은 버킷의 athena-results/ 프리픽스)
+      {
+        Sid    = "AllowAthenaResultsWrite"
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject",
+          "s3:GetObject",
+          "s3:AbortMultipartUpload"
+        ]
+        Resource = [
+          "arn:aws:s3:::tango-alarm-logs/athena-results/*"
+        ]
       }
     ]
   })
