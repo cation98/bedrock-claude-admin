@@ -14,7 +14,7 @@
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'claude_readonly') THEN
-        CREATE ROLE claude_readonly WITH LOGIN PASSWORD 'TangoReadOnly2026!';
+        CREATE ROLE claude_readonly WITH LOGIN PASSWORD 'TangoReadOnly2026';
     END IF;
 END
 $$;

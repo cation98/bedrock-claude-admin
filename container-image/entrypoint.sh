@@ -117,30 +117,27 @@ mkdir -p /home/node/workspace/uploads
 # ---------------------------------------------------------------------------
 # 4b) TANGO DB .pgpass 설정 (패스워드 내 ! 특수문자 처리)
 # ---------------------------------------------------------------------------
-echo "aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com:5432:postgres:claude_readonly:TangoReadOnly2026!" > /home/node/.pgpass
+echo "aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com:5432:postgres:claude_readonly:TangoReadOnly2026" > /home/node/.pgpass
 chmod 600 /home/node/.pgpass
 
 # ---------------------------------------------------------------------------
 # 5) 환영 메시지
 # ---------------------------------------------------------------------------
-# DB 접속 스크립트 — Python으로 작성하여 셸 특수문자 문제 회피
+# DB 접속 스크립트
 mkdir -p /home/node/.local/bin
 
-python3 << 'PYSCRIPT'
-import os
+cat > /home/node/.local/bin/psql-tango << 'DBSCRIPT'
+#!/bin/sh
+export PGPASSWORD="TangoReadOnly2026"
+exec psql "host=aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com dbname=postgres user=claude_readonly sslmode=require" "$@"
+DBSCRIPT
+chmod +x /home/node/.local/bin/psql-tango
 
-with open('/home/node/.local/bin/psql-tango', 'w') as f:
-    f.write('#!/bin/sh\n')
-    f.write("export PGPASSWORD='TangoReadOnly2026!'\n")
-    f.write('exec psql "host=aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com dbname=postgres user=claude_readonly sslmode=require" "$@"\n')
-
-with open('/home/node/.local/bin/psql-safety', 'w') as f:
-    f.write('#!/bin/sh\n')
-    f.write('exec psql "$DATABASE_URL" "$@"\n')
-
-os.chmod('/home/node/.local/bin/psql-tango', 0o755)
-os.chmod('/home/node/.local/bin/psql-safety', 0o755)
-PYSCRIPT
+cat > /home/node/.local/bin/psql-safety << 'DBSCRIPT'
+#!/bin/sh
+exec psql "$DATABASE_URL" "$@"
+DBSCRIPT
+chmod +x /home/node/.local/bin/psql-safety
 export PATH="/home/node/.local/bin:$PATH"
 echo 'export PATH="/home/node/.local/bin:$PATH"' >> /home/node/.bashrc
 
