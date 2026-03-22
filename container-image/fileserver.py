@@ -18,6 +18,7 @@ import html
 import argparse
 import urllib.parse
 import cgi
+import functools
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 
@@ -506,11 +507,12 @@ def main():
 
     os.makedirs(os.path.join(args.dir, "uploads"), exist_ok=True)
 
-    FileServerHandler.directory = args.dir
+    # functools.partial로 directory 인자를 전달해야 __init__에서 올바르게 설정됨
+    handler = functools.partial(FileServerHandler, directory=args.dir)
     # Suppress default access logs (too noisy in container)
     FileServerHandler.log_message = lambda *a: None
 
-    server = HTTPServer((args.bind, args.port), FileServerHandler)
+    server = HTTPServer((args.bind, args.port), handler)
     print(f"File server started on {args.bind}:{args.port} (dir: {args.dir})")
     server.serve_forever()
 
