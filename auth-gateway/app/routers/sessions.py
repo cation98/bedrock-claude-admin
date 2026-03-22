@@ -40,9 +40,11 @@ def _to_response(session: TerminalSession, settings: Settings) -> SessionRespons
     """DB 세션 → API 응답 변환."""
     terminal_url = None
     files_url = None
+    hub_url = None
     if session.pod_status == "running" and session.pod_name:
         terminal_url = f"/terminal/{session.pod_name}/"
         files_url = f"/files/{session.pod_name}/"
+        hub_url = f"/hub/{session.pod_name}/"
 
     return SessionResponse(
         id=session.id,
@@ -52,6 +54,7 @@ def _to_response(session: TerminalSession, settings: Settings) -> SessionRespons
         session_type=session.session_type,
         terminal_url=terminal_url,
         files_url=files_url,
+        hub_url=hub_url,
         started_at=session.started_at,
         terminated_at=session.terminated_at,
     )

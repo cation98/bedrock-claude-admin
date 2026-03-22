@@ -95,12 +95,34 @@ class FileServerHandler(SimpleHTTPRequestHandler):
         }).encode())
 
     def do_GET(self):
-        """디렉토리 리스팅 시 업로드 UI 포함."""
+        """디렉토리 리스팅 시 업로드 UI 포함, /portal은 허브 페이지."""
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == "/portal" or parsed.path == "/portal/":
+            self._send_portal_page()
+            return
         path = self.translate_path(self.path)
         if os.path.isdir(path):
             self._send_directory_page(path)
             return
         super().do_GET()
+
+    def _send_portal_page(self):
+        """터미널 + 파일 관리 포탈 페이지."""
+        user_name = os.environ.get("USER_DISPLAY_NAME", "사용자")
+        user_id = os.environ.get("USER_ID", "")
+        pod_name = os.environ.get("HOSTNAME", "claude-terminal")
+
+        body = PORTAL_TEMPLATE.format(
+            user_name=html.escape(user_name),
+            user_id=html.escape(user_id),
+            pod_name=html.escape(pod_name),
+        )
+        encoded = body.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
 
     def _send_directory_page(self, dirpath):
         """업로드 폼이 포함된 디렉토리 페이지."""
@@ -155,6 +177,101 @@ class FileServerHandler(SimpleHTTPRequestHandler):
             size /= 1024
         return f"{size:.1f}TB"
 
+
+PORTAL_TEMPLATE = """<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Code — {user_name}</title>
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+         background: #0d1117; color: #e6edf3; min-height: 100vh;
+         display: flex; flex-direction: column; align-items: center; justify-content: center; }}
+
+  .container {{ max-width: 720px; width: 90%; padding: 40px 0; }}
+
+  /* Header */
+  .header {{ text-align: center; margin-bottom: 40px; }}
+  .header h1 {{ font-size: 1.6rem; font-weight: 600; margin-bottom: 6px; }}
+  .header h1 .accent {{ color: #58a6ff; }}
+  .header p {{ color: #8b949e; font-size: 0.9rem; }}
+
+  /* Cards */
+  .cards {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 32px; }}
+  .card {{
+    background: #161b22; border: 1px solid #30363d; border-radius: 12px;
+    padding: 28px 24px; text-align: center; text-decoration: none; color: inherit;
+    transition: border-color 0.2s, transform 0.15s, box-shadow 0.2s;
+    display: flex; flex-direction: column; align-items: center; gap: 12px;
+  }}
+  .card:hover {{ border-color: #58a6ff; transform: translateY(-2px);
+    box-shadow: 0 4px 20px rgba(88,166,255,0.1); }}
+  .card .icon {{ font-size: 2.5rem; }}
+  .card h2 {{ font-size: 1.1rem; font-weight: 600; }}
+  .card p {{ font-size: 0.82rem; color: #8b949e; line-height: 1.5; }}
+  .card .badge {{
+    display: inline-block; padding: 3px 10px; border-radius: 12px;
+    font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+  }}
+  .badge-blue {{ background: #1f3a5f; color: #58a6ff; }}
+  .badge-green {{ background: #1a3a2a; color: #3fb950; }}
+
+  /* Guide */
+  .guide {{ background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 20px 24px; }}
+  .guide h3 {{ font-size: 0.9rem; color: #8b949e; margin-bottom: 12px; font-weight: 500; }}
+  .guide-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }}
+  .guide-item {{ font-size: 0.82rem; padding: 6px 0; }}
+  .guide-item code {{
+    background: #21262d; padding: 2px 6px; border-radius: 4px; font-size: 0.78rem;
+    color: #79c0ff;
+  }}
+  .guide-item .label {{ color: #8b949e; }}
+
+  .footer {{ text-align: center; margin-top: 32px; color: #484f58; font-size: 0.75rem; }}
+</style>
+</head>
+<body>
+
+<div class="container">
+  <div class="header">
+    <h1>Claude Code <span class="accent">Terminal</span></h1>
+    <p>{user_name} ({user_id}) &middot; {pod_name}</p>
+  </div>
+
+  <div class="cards">
+    <a class="card" href="/terminal/{pod_name}/" target="_blank">
+      <div class="icon">&#9000;</div>
+      <h2>터미널 접속</h2>
+      <p>Claude Code AI 코딩 어시스턴트<br>웹 터미널에서 바로 실행</p>
+      <span class="badge badge-blue">새 탭에서 열기</span>
+    </a>
+    <a class="card" href="/files/{pod_name}/" target="_blank">
+      <div class="icon">&#128228;</div>
+      <h2>파일 관리</h2>
+      <p>파일 업로드 (드래그&amp;드롭)<br>결과물 다운로드</p>
+      <span class="badge badge-green">새 탭에서 열기</span>
+    </a>
+  </div>
+
+  <div class="guide">
+    <h3>터미널에서 사용 가능한 명령어</h3>
+    <div class="guide-grid">
+      <div class="guide-item"><code>claude</code> <span class="label">Claude Code 시작</span></div>
+      <div class="guide-item"><code>psql-safety</code> <span class="label">안전관리 DB</span></div>
+      <div class="guide-item"><code>psql-tango</code> <span class="label">TANGO 알람 DB</span></div>
+      <div class="guide-item"><code>/report</code> <span class="label">보고서 생성</span></div>
+      <div class="guide-item"><code>/excel</code> <span class="label">엑셀 파일 생성</span></div>
+      <div class="guide-item"><code>ls ~/workspace/uploads</code> <span class="label">업로드된 파일 확인</span></div>
+    </div>
+  </div>
+
+  <div class="footer">Claude Code Platform &middot; Powered by AWS Bedrock</div>
+</div>
+
+</body>
+</html>"""
 
 PAGE_TEMPLATE = """<!DOCTYPE html>
 <html lang="ko">

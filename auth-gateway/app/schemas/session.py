@@ -15,6 +15,7 @@ class SessionResponse(BaseModel):
     session_type: str
     terminal_url: str | None = None
     files_url: str | None = None
+    hub_url: str | None = None
     started_at: datetime | None = None
     terminated_at: datetime | None = None
 

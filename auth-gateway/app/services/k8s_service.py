@@ -176,7 +176,8 @@ class K8sService:
                 logger.error(f"Failed to create service: {e}")
 
     def _create_pod_ingress(self, pod_name: str, username: str):
-        """Pod을 위한 Ingress 규칙 생성 (터미널 + 파일 서버)."""
+        """Pod을 위한 Ingress 규칙 생성 (허브 + 터미널 + 파일 서버)."""
+        # 1) 터미널 + 파일 서버 Ingress (rewrite /$2)
         ingress = client.V1Ingress(
             metadata=client.V1ObjectMeta(
                 name=pod_name,
@@ -229,6 +230,45 @@ class K8sService:
             if e.status != 409:
                 logger.error(f"Failed to create ingress: {e}")
 
+        # 2) 허브 포탈 Ingress (rewrite → /portal)
+        hub_ingress = client.V1Ingress(
+            metadata=client.V1ObjectMeta(
+                name=f"{pod_name}-hub",
+                namespace=self.namespace,
+                annotations={
+                    "nginx.ingress.kubernetes.io/rewrite-target": "/portal",
+                },
+            ),
+            spec=client.V1IngressSpec(
+                ingress_class_name="nginx",
+                rules=[
+                    client.V1IngressRule(
+                        host="claude.skons.net",
+                        http=client.V1HTTPIngressRuleValue(
+                            paths=[
+                                client.V1HTTPIngressPath(
+                                    path=f"/hub/{pod_name}",
+                                    path_type="Prefix",
+                                    backend=client.V1IngressBackend(
+                                        service=client.V1IngressServiceBackend(
+                                            name=pod_name,
+                                            port=client.V1ServiceBackendPort(number=8080),
+                                        )
+                                    ),
+                                ),
+                            ]
+                        ),
+                    )
+                ],
+            ),
+        )
+        try:
+            self.networking.create_namespaced_ingress(namespace=self.namespace, body=hub_ingress)
+            logger.info(f"Hub ingress {pod_name}-hub created")
+        except ApiException as e:
+            if e.status != 409:
+                logger.error(f"Failed to create hub ingress: {e}")
+
     def delete_pod(self, pod_name: str) -> bool:
         """Pod + Service + Ingress 삭제."""
         # Pod 삭제
@@ -249,6 +289,12 @@ class K8sService:
         # Ingress 삭제
         try:
             self.networking.delete_namespaced_ingress(name=pod_name, namespace=self.namespace)
+        except ApiException:
+            pass
+
+        # Hub Ingress 삭제
+        try:
+            self.networking.delete_namespaced_ingress(name=f"{pod_name}-hub", namespace=self.namespace)
         except ApiException:
             pass
 
