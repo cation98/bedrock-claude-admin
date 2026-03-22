@@ -57,7 +57,7 @@ spec:
 
         # ----- TANGO 알람 DB (ReadOnly) -----
         - name: TANGO_DATABASE_URL
-          value: "postgresql://claude_readonly:TangoReadOnly2026!@aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com:5432/postgres?sslmode=require"
+          value: "postgresql://claude_readonly:TangoReadOnly2026%21@aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com:5432/postgres?sslmode=require"
 
         # ----- 사용자 정보 (Auth Gateway가 동적 설정) -----
         - name: GIT_USER_NAME
