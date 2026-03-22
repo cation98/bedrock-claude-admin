@@ -119,9 +119,13 @@ mkdir -p /home/node/workspace/uploads
 # ---------------------------------------------------------------------------
 cat >> /home/node/.bashrc << BASHRC
 
+# TANGO DB용 .pgpass 설정 (패스워드 내 특수문자 처리)
+echo "aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com:5432:postgres:claude_readonly:TangoReadOnly2026!" > /home/node/.pgpass
+chmod 600 /home/node/.pgpass
+
 # DB 접속 별칭
 alias psql-safety='psql \$DATABASE_URL'
-alias psql-tango='psql \$TANGO_DATABASE_URL'
+alias psql-tango='psql "host=aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com dbname=postgres user=claude_readonly sslmode=require"'
 
 # Claude Code Terminal 환영 메시지
 echo ""
