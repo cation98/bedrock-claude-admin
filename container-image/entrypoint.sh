@@ -125,9 +125,9 @@ chmod 600 /home/node/.pgpass
 # ---------------------------------------------------------------------------
 cat >> /home/node/.bashrc << BASHRC
 
-# DB 접속 별칭
-alias psql-safety='psql \$DATABASE_URL'
-alias psql-tango='psql "host=aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com dbname=postgres user=claude_readonly sslmode=require"'
+# DB 접속 함수
+psql-safety() { psql "\$DATABASE_URL" "\$@"; }
+psql-tango() { PGPASSWORD='TangoReadOnly2026!' psql "host=aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com dbname=postgres user=claude_readonly sslmode=require" "\$@"; }
 
 # Claude Code Terminal 환영 메시지
 echo ""
