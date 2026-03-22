@@ -123,13 +123,16 @@ chmod 600 /home/node/.pgpass
 # ---------------------------------------------------------------------------
 # 5) 환영 메시지
 # ---------------------------------------------------------------------------
+# DB 접속 함수 (quoted heredoc: ! 특수문자 보호)
+cat >> /home/node/.bashrc << 'DBFUNCS'
+
+psql-safety() { psql "$DATABASE_URL" "$@"; }
+psql-tango() { PGPASSWORD='TangoReadOnly2026!' psql "host=aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com dbname=postgres user=claude_readonly sslmode=require" "$@"; }
+DBFUNCS
+
+# 환영 메시지 (unquoted heredoc: 변수 확장 필요)
 cat >> /home/node/.bashrc << BASHRC
 
-# DB 접속 함수
-psql-safety() { psql "\$DATABASE_URL" "\$@"; }
-psql-tango() { PGPASSWORD='TangoReadOnly2026!' psql "host=aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com dbname=postgres user=claude_readonly sslmode=require" "\$@"; }
-
-# Claude Code Terminal 환영 메시지
 echo ""
 echo "  ╔══════════════════════════════════════════════════════════╗"
 echo "  ║  Claude Code Terminal — ${USER_DISPLAY_NAME} 님          "
