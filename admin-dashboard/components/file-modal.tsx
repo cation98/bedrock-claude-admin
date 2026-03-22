@@ -1,0 +1,80 @@
+"use client";
+
+import { useEffect, useRef } from "react";
+
+interface FileModalProps {
+  podName: string;
+  username: string;
+  onClose: () => void;
+}
+
+/**
+ * 파일 업로드/다운로드 모달.
+ * Pod의 파일 서버(/files/{pod_name}/)를 iframe으로 표시.
+ */
+export default function FileModal({ podName, username, onClose }: FileModalProps) {
+  const backdropRef = useRef<HTMLDivElement>(null);
+
+  const filesUrl =
+    typeof window !== "undefined"
+      ? `${window.location.protocol}//${window.location.hostname}/files/${podName}/`
+      : `/files/${podName}/`;
+
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [onClose]);
+
+  return (
+    <div
+      ref={backdropRef}
+      onClick={(e) => e.target === backdropRef.current && onClose()}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+    >
+      <div className="relative flex h-[80vh] w-[90vw] max-w-4xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3">
+          <div className="flex items-center gap-3">
+            <span className="text-lg">&#128228;</span>
+            <div>
+              <h2 className="text-sm font-semibold text-gray-900">
+                파일 관리 — {username}
+              </h2>
+              <p className="text-xs text-gray-500 font-mono">{podName}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <a
+              href={filesUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+            >
+              새 탭에서 열기 &#8599;
+            </a>
+            <button
+              onClick={onClose}
+              className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+              aria-label="닫기"
+            >
+              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        {/* iframe */}
+        <iframe
+          src={filesUrl}
+          className="flex-1 border-0"
+          title={`Files for ${podName}`}
+          sandbox="allow-same-origin allow-scripts allow-forms"
+        />
+      </div>
+    </div>
+  );
+}

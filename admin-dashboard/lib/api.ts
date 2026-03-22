@@ -76,6 +76,7 @@ export interface Session {
   session_type: string;
   started_at: string;
   terminal_url: string | null;
+  files_url: string | null;
 }
 
 export interface ActiveSessionsResponse {

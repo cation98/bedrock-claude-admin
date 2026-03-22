@@ -1,6 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import type { Session } from "@/lib/api";
+import FileModal from "./file-modal";
 
 interface SessionTableProps {
   sessions: Session[];
@@ -39,6 +41,7 @@ export default function SessionTable({
   onTerminate,
   loading,
 }: SessionTableProps) {
+  const [fileModalPod, setFileModalPod] = useState<Session | null>(null);
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12 text-gray-400">
@@ -56,6 +59,14 @@ export default function SessionTable({
   }
 
   return (
+    <>
+    {fileModalPod && (
+      <FileModal
+        podName={fileModalPod.pod_name}
+        username={fileModalPod.username}
+        onClose={() => setFileModalPod(null)}
+      />
+    )}
     <div className="overflow-x-auto">
       <table className="min-w-full divide-y divide-gray-200">
         <thead className="bg-gray-50">
@@ -75,9 +86,12 @@ export default function SessionTable({
             <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
               시작 시간
             </th>
+            <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+              접속
+            </th>
             {onTerminate && (
               <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                작업
+                관리
               </th>
             )}
           </tr>
@@ -100,6 +114,26 @@ export default function SessionTable({
               <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
                 {formatDate(s.started_at)}
               </td>
+              <td className="whitespace-nowrap px-4 py-3 text-sm">
+                {s.pod_status === "running" && (
+                  <div className="flex gap-1.5">
+                    <a
+                      href={s.terminal_url ?? `/terminal/${s.pod_name}/`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="rounded bg-blue-50 px-3 py-1 text-xs font-medium text-blue-600 hover:bg-blue-100 transition-colors"
+                    >
+                      터미널
+                    </a>
+                    <button
+                      onClick={() => setFileModalPod(s)}
+                      className="rounded bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-600 hover:bg-emerald-100 transition-colors"
+                    >
+                      파일
+                    </button>
+                  </div>
+                )}
+              </td>
               {onTerminate && (
                 <td className="whitespace-nowrap px-4 py-3 text-sm">
                   {s.pod_status !== "terminated" && (
@@ -117,5 +151,6 @@ export default function SessionTable({
         </tbody>
       </table>
     </div>
+    </>
   );
 }

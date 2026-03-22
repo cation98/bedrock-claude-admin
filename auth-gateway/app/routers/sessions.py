@@ -39,9 +39,10 @@ def _get_k8s_service(settings: Settings = Depends(get_settings)) -> K8sService:
 def _to_response(session: TerminalSession, settings: Settings) -> SessionResponse:
     """DB 세션 → API 응답 변환."""
     terminal_url = None
+    files_url = None
     if session.pod_status == "running" and session.pod_name:
-        # 실제 환경에서는 Ingress URL로 교체
         terminal_url = f"/terminal/{session.pod_name}/"
+        files_url = f"/files/{session.pod_name}/"
 
     return SessionResponse(
         id=session.id,
@@ -50,6 +51,7 @@ def _to_response(session: TerminalSession, settings: Settings) -> SessionRespons
         pod_status=session.pod_status,
         session_type=session.session_type,
         terminal_url=terminal_url,
+        files_url=files_url,
         started_at=session.started_at,
         terminated_at=session.terminated_at,
     )
