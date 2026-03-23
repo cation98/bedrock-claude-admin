@@ -12,7 +12,7 @@ Endpoints:
 
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -27,6 +27,7 @@ from app.schemas.session import (
     SessionListResponse,
     SessionResponse,
 )
+from app.schemas.user import POD_TTL_SECONDS_MAP
 from app.services.k8s_service import K8sService, K8sServiceError
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["sessions"])
@@ -37,8 +38,14 @@ def _get_k8s_service(settings: Settings = Depends(get_settings)) -> K8sService:
     return K8sService(settings)
 
 
-def _to_response(session: TerminalSession, settings: Settings) -> SessionResponse:
-    """DB 세션 → API 응답 변환."""
+def _to_response(session: TerminalSession, settings: Settings, ttl_seconds: int | None = None) -> SessionResponse:
+    """DB 세션 → API 응답 변환.
+
+    Args:
+        session: DB 세션 레코드
+        settings: 앱 설정
+        ttl_seconds: Pod TTL(초). 0이면 unlimited(만료 없음), None이면 기본값 사용.
+    """
     terminal_url = None
     files_url = None
     hub_url = None
@@ -46,6 +53,11 @@ def _to_response(session: TerminalSession, settings: Settings) -> SessionRespons
         terminal_url = f"/terminal/{session.pod_name}/"
         files_url = f"/files/{session.pod_name}/"
         hub_url = f"/hub/{session.pod_name}/"
+
+    # expires_at 계산: ttl_seconds > 0 이고 started_at이 있으면 만료 시간 산출
+    expires_at = None
+    if ttl_seconds and ttl_seconds > 0 and session.started_at:
+        expires_at = session.started_at + timedelta(seconds=ttl_seconds)
 
     return SessionResponse(
         id=session.id,
@@ -58,6 +70,7 @@ def _to_response(session: TerminalSession, settings: Settings) -> SessionRespons
         hub_url=hub_url,
         started_at=session.started_at,
         terminated_at=session.terminated_at,
+        expires_at=expires_at,
     )
 
 
@@ -101,14 +114,18 @@ async def create_session(
         if existing:
             return _to_response(existing, settings)
 
-    # 사용자 표시 이름 조회
+    # 사용자 표시 이름 + Pod TTL 조회
     from app.models.user import User
     user = db.query(User).filter(User.username == username).first()
     user_display_name = user.name if user and user.name else username
 
-    # K8s Pod 생성 (사용자 프로필 주입)
+    # 사용자별 Pod TTL 결정 (DB 설정 → 초 변환)
+    user_pod_ttl = user.pod_ttl if user else "4h"
+    ttl_seconds = POD_TTL_SECONDS_MAP.get(user_pod_ttl, 14400)
+
+    # K8s Pod 생성 (사용자 프로필 주입 + 동적 TTL)
     try:
-        pod_name = k8s.create_pod(username, request.session_type, user_display_name)
+        pod_name = k8s.create_pod(username, request.session_type, user_display_name, ttl_seconds=ttl_seconds)
     except K8sServiceError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -146,7 +163,7 @@ async def create_session(
             break
         time.sleep(2)
 
-    return _to_response(session, settings)
+    return _to_response(session, settings, ttl_seconds=ttl_seconds)
 
 
 @router.get("/", response_model=SessionListResponse)
