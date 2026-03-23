@@ -267,6 +267,12 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
   }}
   .guide-item .label {{ color: #8b949e; }}
 
+  .logout-btn {{
+    display: inline-block; margin-top: 10px; padding: 6px 18px;
+    border: 1px solid #30363d; border-radius: 6px; color: #8b949e;
+    text-decoration: none; font-size: 0.8rem; transition: all 0.2s;
+  }}
+  .logout-btn:hover {{ border-color: #da3633; color: #da3633; }}
   .footer {{ text-align: center; margin-top: 32px; color: #484f58; font-size: 0.75rem; }}
 </style>
 </head>
@@ -276,6 +282,7 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
   <div class="header">
     <h1>Claude Code <span class="accent">Terminal</span></h1>
     <p>{user_name} ({user_id}) &middot; {pod_name}</p>
+    <a href="/" class="logout-btn" onclick="localStorage.clear();">로그아웃</a>
   </div>
 
   <div class="cards">
