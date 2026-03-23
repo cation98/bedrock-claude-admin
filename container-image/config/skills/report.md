@@ -41,7 +41,8 @@ description: DB 데이터를 분석하여 한국어 보고서를 생성합니다
 ```
 
 ## DB 조회 규칙
-- 항상 `psql $DATABASE_URL -c "쿼리"` 사용
+- **TANGO 알람 DB**: 반드시 `psql-tango -c "쿼리"` 사용 (`$TANGO_DATABASE_URL` 직접 사용 금지)
+- **Safety DB**: `psql $DATABASE_URL -c "쿼리"` 사용
 - 대량 데이터는 `LIMIT` 적용
 - 날짜 필터 우선 적용으로 쿼리 최적화
 - 결과를 `~/workspace/reports/` 에 저장
