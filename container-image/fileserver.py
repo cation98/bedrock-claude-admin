@@ -321,18 +321,39 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
 
 <script>
 var termWin = null;
+var termCheckInterval = null;
 
-function setTerminalActive() {{
+function setCardState(active) {{
   var card = document.getElementById('terminalCard');
   var badge = document.getElementById('terminalBadge');
   var desc = document.getElementById('terminalDesc');
-  card.style.borderColor = '#3fb950';
-  card.style.opacity = '0.7';
-  card.style.cursor = 'default';
-  badge.textContent = '실행 중';
-  badge.style.background = '#1a3a2a';
-  badge.style.color = '#3fb950';
-  desc.textContent = '터미널이 다른 탭에서 실행 중입니다.\\n다시 열면 기존 연결이 끊깁니다.';
+  if (active) {{
+    card.style.borderColor = '#3fb950';
+    card.style.opacity = '0.7';
+    badge.textContent = '실행 중';
+    badge.style.background = '#1a3a2a';
+    badge.style.color = '#3fb950';
+    desc.textContent = '터미널이 다른 탭에서 실행 중입니다.';
+  }} else {{
+    card.style.borderColor = '';
+    card.style.opacity = '';
+    badge.textContent = '탭에서 열기';
+    badge.style.background = '';
+    badge.style.color = '';
+    desc.textContent = 'Claude Code AI 코딩 어시스턴트\\n웹 터미널에서 바로 실행';
+  }}
+}}
+
+function startWatchingTerminal() {{
+  if (termCheckInterval) clearInterval(termCheckInterval);
+  termCheckInterval = setInterval(function() {{
+    if (!termWin || termWin.closed) {{
+      clearInterval(termCheckInterval);
+      termWin = null;
+      localStorage.removeItem('terminal_open');
+      setCardState(false);
+    }}
+  }}, 1000);
 }}
 
 function openTerminal(e, el) {{
@@ -347,26 +368,29 @@ function openTerminal(e, el) {{
   }}
   termWin = window.open(el.href, 'claude-terminal-session');
   if (termWin) {{
-    setTerminalActive();
-    var check = setInterval(function() {{
-      if (termWin && termWin.closed) {{
-        clearInterval(check);
-        termWin = null;
-        var card = document.getElementById('terminalCard');
-        var badge = document.getElementById('terminalBadge');
-        var desc = document.getElementById('terminalDesc');
-        card.style.borderColor = '';
-        card.style.opacity = '';
-        card.style.cursor = '';
-        badge.textContent = '탭에서 열기';
-        badge.style.background = '';
-        badge.style.color = '';
-        desc.textContent = 'Claude Code AI 코딩 어시스턴트\\n웹 터미널에서 바로 실행';
-      }}
-    }}, 1000);
+    localStorage.setItem('terminal_open', 'true');
+    setCardState(true);
+    startWatchingTerminal();
   }}
   return false;
 }}
+
+// 페이지 로드 시 기존 터미널 탭 확인
+(function() {{
+  if (localStorage.getItem('terminal_open') === 'true') {{
+    try {{
+      termWin = window.open('', 'claude-terminal-session');
+      if (termWin && termWin.location && termWin.location.href !== 'about:blank') {{
+        setCardState(true);
+        startWatchingTerminal();
+      }} else {{
+        localStorage.removeItem('terminal_open');
+      }}
+    }} catch(e) {{
+      localStorage.removeItem('terminal_open');
+    }}
+  }}
+}})();
 </script>
 </body>
 </html>"""
