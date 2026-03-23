@@ -136,6 +136,7 @@ exec ttyd \
     --max-clients 1 \
     --client-option reconnect=3 \
     --client-option titleFixed="Claude Code Terminal" \
-    --client-option enableSixel=false \
-    --client-option rendererType=canvas \
+    --client-option rendererType=dom \
+    --client-option disableLeaveAlert=true \
+    --client-option allowProposedApi=true \
     bash -l
