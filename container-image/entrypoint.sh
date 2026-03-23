@@ -69,7 +69,19 @@ echo "aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com:5432:postgres:clau
 chmod 600 /home/node/.pgpass
 
 # ---------------------------------------------------------------------------
-# 5) 환영 메시지
+# 5) psql-tango 스크립트 생성 (TANGO DB 접속 단축 명령)
+# ---------------------------------------------------------------------------
+mkdir -p /home/node/.local/bin
+cat > /home/node/.local/bin/psql-tango << 'DBSCRIPT'
+#!/bin/sh
+export PGPASSWORD="$TANGO_DB_PASSWORD"
+exec psql "host=aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com dbname=postgres user=claude_readonly sslmode=require" "$@"
+DBSCRIPT
+chmod +x /home/node/.local/bin/psql-tango
+export PATH="/home/node/.local/bin:$PATH"
+
+# ---------------------------------------------------------------------------
+# 6) 환영 메시지
 # ---------------------------------------------------------------------------
 # DB 접속 스크립트
 mkdir -p /home/node/.local/bin
@@ -108,6 +120,16 @@ echo "  ╚═══════════════════════
 echo ""
 
 cd ~
+
+# Claude Code 자동 시작
+if [ -z "$CLAUDE_STARTED" ]; then
+    export CLAUDE_STARTED=1
+    echo ""
+    echo "  Claude Code를 시작합니다..."
+    echo "  (종료: /exit 또는 Ctrl+C → 터미널로 복귀)"
+    echo ""
+    claude --dangerously-skip-permissions
+fi
 BASHRC
 
 # ---------------------------------------------------------------------------
@@ -121,7 +143,7 @@ python3 /usr/local/bin/fileserver.py --port "${FILE_SERVER_PORT}" --dir /home/no
 echo "File server (upload+download) started on port ${FILE_SERVER_PORT}"
 
 # ---------------------------------------------------------------------------
-# 7) ttyd 시작
+# 8) ttyd 시작
 # ---------------------------------------------------------------------------
 TTYD_PORT="${TTYD_PORT:-7681}"
 TTYD_BASE_PATH="${TTYD_BASE_PATH:-/}"
