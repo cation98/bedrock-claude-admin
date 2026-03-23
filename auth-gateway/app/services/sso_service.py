@@ -110,15 +110,30 @@ class SSOService:
         except json.JSONDecodeError:
             raise SSOAuthError("Failed to parse SSO user info")
 
-        # 전화번호 추출 (claims에서)
+        # claims에서 전화번호, 이름 추출
         phone_number = None
+        display_name = None
         for claim in user_data.get("claims", []):
-            if "mobilephone" in claim.get("Type", ""):
-                phone_number = claim.get("Value")
-                break
+            claim_type = claim.get("Type", "").lower()
+            claim_value = claim.get("Value", "")
+            if "mobilephone" in claim_type:
+                phone_number = claim_value
+            elif "givenname" in claim_type or "first_name" in claim_type or "displayname" in claim_type:
+                display_name = claim_value
+            elif "surname" in claim_type or "last_name" in claim_type:
+                if display_name:
+                    display_name = claim_value + display_name  # 성+이름
+                else:
+                    display_name = claim_value
+
+        # claims에서 이름을 못 찾으면 SSO 응답의 다른 필드에서 시도
+        if not display_name:
+            display_name = user_data.get("displayName") or user_data.get("firstName") or user_data.get("name", "")
+
+        logger.info(f"SSO user info - username: {user_data.get('name')}, display_name: {display_name}, claims: {[c.get('Type','') for c in user_data.get('claims', [])]}")
 
         return {
             "username": user_data.get("name", ""),
-            "name": user_data.get("name", ""),
+            "name": display_name or user_data.get("name", ""),
             "phone_number": phone_number,
         }
