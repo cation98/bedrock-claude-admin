@@ -98,6 +98,7 @@ RUN pip3 install --no-cache-dir --break-system-packages openpyxl pandas matplotl
 # Claude Code 설정 + Skills
 # -----------------------------------------------------------------------------
 COPY --chown=node:node config/settings.json /home/node/.claude/settings.json
+COPY --chown=node:node config/CLAUDE.md /home/node/.claude/CLAUDE.md
 COPY --chown=node:node config/skills/ /home/node/.claude/commands/
 COPY --chown=node:node config/claude.json /home/node/.claude.json
 
