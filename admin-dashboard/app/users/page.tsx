@@ -285,12 +285,24 @@ export default function UsersPage() {
                             {formatDate(u.last_login_at)}
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-sm">
-                            <button
-                              onClick={() => handleApprove(u.id)}
-                              className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-blue-700 transition-colors"
-                            >
-                              승인
-                            </button>
+                            <div className="flex gap-1.5">
+                              <button
+                                onClick={() => handleApprove(u.id)}
+                                className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-blue-700 transition-colors"
+                              >
+                                승인
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (confirm(`${u.name ?? u.username} 사용자를 거절하시겠습니까? 목록에서 삭제됩니다.`)) {
+                                    revokeUser(u.id).then(() => fetchData());
+                                  }
+                                }}
+                                className="rounded-md border border-red-300 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors"
+                              >
+                                거절
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))}
