@@ -103,6 +103,7 @@ class K8sService:
                             # TODO: 직책, 부서 정보 추가 (SSO userinfo 확장 시)
                             # client.V1EnvVar(name="USER_POSITION", value=position),
                             # client.V1EnvVar(name="USER_DEPARTMENT", value=department),
+                            client.V1EnvVar(name="TANGO_DB_PASSWORD", value="TangoReadOnly2026"),
                             client.V1EnvVar(
                                 name="DATABASE_URL",
                                 value=self.settings.workshop_database_url,

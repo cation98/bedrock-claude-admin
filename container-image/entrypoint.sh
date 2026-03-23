@@ -67,7 +67,19 @@ mkdir -p /home/node/workspace/exports
 mkdir -p /home/node/workspace/reports
 
 # ---------------------------------------------------------------------------
-# 5) 환영 메시지
+# 5) psql-tango 스크립트 생성 (TANGO DB 접속 단축 명령)
+# ---------------------------------------------------------------------------
+mkdir -p /home/node/.local/bin
+cat > /home/node/.local/bin/psql-tango << 'DBSCRIPT'
+#!/bin/sh
+export PGPASSWORD="$TANGO_DB_PASSWORD"
+exec psql "host=aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com dbname=postgres user=claude_readonly sslmode=require" "$@"
+DBSCRIPT
+chmod +x /home/node/.local/bin/psql-tango
+export PATH="/home/node/.local/bin:$PATH"
+
+# ---------------------------------------------------------------------------
+# 6) 환영 메시지
 # ---------------------------------------------------------------------------
 cat >> /home/node/.bashrc << BASHRC
 
@@ -84,10 +96,20 @@ echo "  ╚═══════════════════════
 echo ""
 
 cd ~
+
+# Claude Code 자동 시작
+if [ -z "$CLAUDE_STARTED" ]; then
+    export CLAUDE_STARTED=1
+    echo ""
+    echo "  Claude Code를 시작합니다..."
+    echo "  (종료: /exit 또는 Ctrl+C → 터미널로 복귀)"
+    echo ""
+    claude --dangerously-skip-permissions
+fi
 BASHRC
 
 # ---------------------------------------------------------------------------
-# 6) 파일 다운로드 서버 (port 8080)
+# 7) 파일 다운로드 서버 (port 8080)
 #    /workspace/exports/ 와 /workspace/reports/ 를 브라우저에서 다운로드 가능
 # ---------------------------------------------------------------------------
 DOWNLOAD_PORT="${DOWNLOAD_PORT:-8080}"
@@ -96,7 +118,7 @@ python3 -m http.server ${DOWNLOAD_PORT} --directory /home/node/workspace &
 echo "File server started on port ${DOWNLOAD_PORT}"
 
 # ---------------------------------------------------------------------------
-# 7) ttyd 시작
+# 8) ttyd 시작
 # ---------------------------------------------------------------------------
 TTYD_PORT="${TTYD_PORT:-7681}"
 TTYD_BASE_PATH="${TTYD_BASE_PATH:-/}"
