@@ -53,7 +53,7 @@ spec:
     driver: efs.csi.aws.com
     # ⚠️ 아래 값을 terraform output efs_file_system_id 결과로 교체
     # 예: fs-0abc1234def56789a
-    volumeHandle: REPLACE_WITH_EFS_ID
+    volumeHandle: fs-0a2b5924041425002
 
 ---
 # ----- PersistentVolumeClaim -----
