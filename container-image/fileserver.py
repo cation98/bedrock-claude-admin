@@ -237,7 +237,7 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
   .header p {{ color: #8b949e; font-size: 0.9rem; }}
 
   /* Cards */
-  .cards {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 32px; }}
+  .cards {{ display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 32px; }}
   .card {{
     background: #161b22; border: 1px solid #30363d; border-radius: 12px;
     padding: 28px 24px; text-align: center; text-decoration: none; color: inherit;
@@ -289,6 +289,12 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
       <div class="icon">&#128228;</div>
       <h2>파일 관리</h2>
       <p>파일 업로드 (드래그&amp;드롭)<br>결과물 다운로드</p>
+      <span class="badge badge-green">새 탭에서 열기</span>
+    </a>
+    <a class="card" href="/app/{pod_name}/" target="_blank">
+      <div class="icon">&#127760;</div>
+      <h2>웹앱</h2>
+      <p>터미널에서 만든 대시보드<br>웹앱 접속 (포트 3000)</p>
       <span class="badge badge-green">새 탭에서 열기</span>
     </a>
   </div>

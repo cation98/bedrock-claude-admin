@@ -165,6 +165,7 @@ class K8sService:
                 ports=[
                     client.V1ServicePort(name="ttyd", port=7681, target_port=7681),
                     client.V1ServicePort(name="files", port=8080, target_port=8080),
+                    client.V1ServicePort(name="webapp", port=3000, target_port=3000),
                 ],
             ),
         )
@@ -214,6 +215,17 @@ class K8sService:
                                         service=client.V1IngressServiceBackend(
                                             name=pod_name,
                                             port=client.V1ServiceBackendPort(number=8080),
+                                        )
+                                    ),
+                                ),
+                                # 사용자 웹앱 → port 3000
+                                client.V1HTTPIngressPath(
+                                    path=f"/app/{pod_name}(/|$)(.*)",
+                                    path_type="ImplementationSpecific",
+                                    backend=client.V1IngressBackend(
+                                        service=client.V1IngressServiceBackend(
+                                            name=pod_name,
+                                            port=client.V1ServiceBackendPort(number=3000),
                                         )
                                     ),
                                 ),

@@ -89,6 +89,51 @@ psql $DATABASE_URL -c "쿼리"
 - **git**: 버전 관리
 - **AWS CLI**: AWS 리소스 조회
 
+## 웹앱 개발 및 접속
+
+Pod에서 웹앱(대시보드, API 등)을 만들면 브라우저에서 접속할 수 있습니다.
+
+### 웹앱 실행 규칙 — 반드시 포트 3000 사용
+
+```bash
+# ✅ 올바른 방법 — 포트 3000으로 실행
+python3 -m uvicorn app:app --host 0.0.0.0 --port 3000
+
+# ❌ 다른 포트 사용 금지 (Ingress가 3000만 라우팅)
+python3 -m uvicorn app:app --port 8200  # 외부 접속 불가
+```
+
+### 접속 URL
+웹앱을 포트 3000으로 실행하면 브라우저에서 아래 주소로 접속:
+```
+https://claude.skons.net/app/{HOSTNAME}/
+```
+- `{HOSTNAME}`은 Pod 이름 (예: `claude-terminal-n1102359`)
+- 환경변수 `$HOSTNAME`으로 확인 가능
+
+### 사전 설치된 패키지 (pip 설치 불필요)
+- **fastapi**, **uvicorn** — 웹 프레임워크
+- **psycopg2-binary** — PostgreSQL 드라이버
+- **jinja2** — HTML 템플릿
+- **pandas**, **matplotlib**, **openpyxl** — 데이터 분석/차트/엑셀
+- **python-multipart** — 파일 업로드
+
+### 웹앱 예시 (FastAPI 대시보드)
+```python
+# app.py
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
+
+app = FastAPI()
+
+@app.get("/", response_class=HTMLResponse)
+async def index():
+    return "<h1>대시보드</h1>"
+
+# 실행: python3 -m uvicorn app:app --host 0.0.0.0 --port 3000
+# 접속: https://claude.skons.net/app/{HOSTNAME}/
+```
+
 ## 파일 관리
 
 - 업로드된 파일: `~/workspace/uploads/`

@@ -91,8 +91,10 @@ RUN usermod -s /bin/bash node && \
 COPY --chown=node:node sample-project/ /home/node/workspace/sample-project/
 COPY --chown=node:node sample-project/CLAUDE.md /home/node/CLAUDE.md
 
-# Python 패키지 사전 설치 (엑셀 생성, 데이터 분석)
-RUN pip3 install --no-cache-dir --break-system-packages openpyxl pandas matplotlib
+# Python 패키지 사전 설치 (데이터 분석 + 웹앱 개발)
+RUN pip3 install --no-cache-dir --break-system-packages \
+    openpyxl pandas matplotlib \
+    fastapi uvicorn[standard] psycopg2-binary jinja2 python-multipart
 
 # -----------------------------------------------------------------------------
 # Claude Code 설정 + Skills
@@ -121,8 +123,8 @@ RUN cd /home/node/workspace/sample-project && \
     git add -A && \
     git commit -m "Initial sample project" --quiet
 
-# ttyd 웹 터미널 포트
-EXPOSE 7681
+# 포트: 7681(ttyd), 8080(파일서버), 3000(사용자 웹앱)
+EXPOSE 7681 8080 3000
 
 # 환경변수 기본값 (런타임에 오버라이드)
 ENV CLAUDE_CODE_USE_BEDROCK=1 \
