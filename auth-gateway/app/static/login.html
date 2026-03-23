@@ -226,15 +226,15 @@
                 const sessionData = await sessionRes.json();
 
                 // Step 3: Pod이 Ready될 때까지 대기
-                statusEl.textContent = '터미널이 시작되고 있습니다... (최대 60초)';
+                statusEl.textContent = '터미널이 시작되고 있습니다...';
                 const readySession = await waitForTerminal(token, sessionData.pod_name);
 
-                // Step 4: Ingress Endpoint 등록 대기 (503 방지)
+                // Step 4: 허브 페이지가 실제로 응답할 때까지 대기 (503 방지)
+                const hubUrl = (readySession && readySession.hub_url) || `/hub/${sessionData.pod_name}/`;
                 statusEl.textContent = '접속 준비 중...';
-                await new Promise(r => setTimeout(r, 3000));
+                await waitForPage(hubUrl);
 
                 // Step 5: 허브 페이지로 리다이렉트
-                const hubUrl = (readySession && readySession.hub_url) || `/hub/${sessionData.pod_name}/`;
                 window.location.href = hubUrl;
 
             } catch (err) {
@@ -266,6 +266,19 @@
                 }
             }
             throw new Error('터미널 시작 시간이 초과되었습니다. 다시 시도해주세요.');
+        }
+
+        async function waitForPage(url) {
+            for (let i = 0; i < 20; i++) {
+                try {
+                    const res = await fetch(url);
+                    if (res.ok) return;  // 200 → 준비 완료
+                } catch (e) {
+                    // network error, retry
+                }
+                await new Promise(r => setTimeout(r, 3000));
+            }
+            // 60초 후에도 실패하면 그냥 리다이렉트
         }
 
         // TODO: 2FA 핸들러 (향후 구현)
