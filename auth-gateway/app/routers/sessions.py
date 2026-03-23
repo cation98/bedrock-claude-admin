@@ -192,9 +192,14 @@ async def list_my_sessions(
                 session.pod_status = "terminated"
     db.commit()
 
+    # 사용자 TTL 조회
+    from app.models.user import User
+    user = db.query(User).filter(User.username == current_user["sub"]).first()
+    ttl = POD_TTL_SECONDS_MAP.get(user.pod_ttl, 14400) if user else 14400
+
     return SessionListResponse(
         total=len(sessions),
-        sessions=[_to_response(s, settings) for s in sessions],
+        sessions=[_to_response(s, settings, ttl_seconds=ttl) for s in sessions],
     )
 
 
@@ -237,9 +242,21 @@ async def list_active_sessions(
     db.commit()
 
     active = [s for s in sessions if s.pod_status in ("creating", "running")]
+
+    # 사용자별 TTL 조회하여 expires_at 계산
+    from app.models.user import User
+    usernames = {s.username for s in active}
+    user_ttls = {}
+    if usernames:
+        users = db.query(User).filter(User.username.in_(usernames)).all()
+        user_ttls = {u.username: POD_TTL_SECONDS_MAP.get(u.pod_ttl, 14400) for u in users}
+
     return SessionListResponse(
         total=len(active),
-        sessions=[_to_response(s, settings) for s in active],
+        sessions=[
+            _to_response(s, settings, ttl_seconds=user_ttls.get(s.username, 14400))
+            for s in active
+        ],
     )
 
 
