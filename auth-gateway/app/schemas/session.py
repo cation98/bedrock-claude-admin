@@ -16,6 +16,7 @@ class SessionResponse(BaseModel):
     terminal_url: str | None = None
     started_at: datetime | None = None
     terminated_at: datetime | None = None
+    expires_at: datetime | None = None  # Pod TTL 기반 만료 시간 (unlimited이면 None)
 
     model_config = {"from_attributes": True}
 

@@ -47,13 +47,20 @@ class K8sService:
         safe_name = username.lower().replace("_", "-")
         return f"claude-terminal-{safe_name}"
 
-    def create_pod(self, username: str, session_type: str = "workshop", user_display_name: str = "") -> str:
+    def create_pod(
+        self,
+        username: str,
+        session_type: str = "workshop",
+        user_display_name: str = "",
+        ttl_seconds: int = 14400,
+    ) -> str:
         """사용자용 Claude Code 터미널 Pod 생성.
 
         Args:
             username: 사번 (e.g. N1102359)
             session_type: workshop | daily
             user_display_name: 표시 이름 (SSO에서 조회, 없으면 사번 사용)
+            ttl_seconds: Pod 수명(초). 0이면 unlimited (activeDeadlineSeconds 미설정).
 
         Returns:
             pod_name: 생성된 Pod 이름
@@ -79,7 +86,9 @@ class K8sService:
             spec=client.V1PodSpec(
                 service_account_name=self.settings.k8s_service_account,
                 restart_policy="Never",
-                active_deadline_seconds=self.settings.k8s_pod_ttl_seconds,
+                # ttl_seconds=0 → unlimited (activeDeadlineSeconds 미설정)
+                # ttl_seconds>0 → 해당 초 후 Pod 자동 종료
+                active_deadline_seconds=ttl_seconds if ttl_seconds > 0 else None,
                 containers=[
                     client.V1Container(
                         name="terminal",

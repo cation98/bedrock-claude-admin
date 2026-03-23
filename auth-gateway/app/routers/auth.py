@@ -47,7 +47,9 @@ async def login(
 
     # DB에 사용자 등록/업데이트
     user = db.query(User).filter(User.username == sso_user["username"]).first()
+    is_new_user = False
     if not user:
+        is_new_user = True
         user = User(
             username=sso_user["username"],
             name=sso_user.get("name"),
@@ -59,8 +61,25 @@ async def login(
         user.phone_number = sso_user.get("phone_number") or user.phone_number
 
     user.last_login_at = datetime.now(timezone.utc)
+
+    # 관리자는 자동 승인 (최초 등록 시에도 즉시 사용 가능)
+    if user.role == "admin" and not user.is_approved:
+        user.is_approved = True
+        user.approved_at = datetime.now(timezone.utc)
+
     db.commit()
     db.refresh(user)
+
+    # 승인 여부 확인 — 미승인 사용자는 로그인 차단
+    if not user.is_approved:
+        logger.info(f"Unapproved user login attempt: {user.username} (new={is_new_user})")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "detail": "approval_pending",
+                "message": "관리자 승인이 필요합니다. 승인 후 다시 로그인해주세요.",
+            },
+        )
 
     # JWT 발급
     token_data = {
