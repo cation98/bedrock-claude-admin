@@ -2,8 +2,8 @@
 
 import { FormEvent, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { login } from "@/lib/api";
-import { setToken, setUser, isAuthenticated } from "@/lib/auth";
+import { login, createMySession } from "@/lib/api";
+import { setToken, setUser, isAuthenticated, getUser } from "@/lib/auth";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -27,7 +27,15 @@ export default function LoginPage() {
       const res = await login({ username, password });
       setToken(res.access_token);
       setUser({ username: res.username, name: res.name, role: res.role });
-      router.push("/dashboard");
+
+      if (res.role === "admin") {
+        router.push("/dashboard");
+      } else {
+        // 일반 사용자: 세션 자동 생성 → hub 페이지로 이동
+        const session = await createMySession();
+        const hubUrl = session.hub_url || `/hub/${session.pod_name}/`;
+        window.location.href = hubUrl;
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "로그인에 실패했습니다.");
     } finally {
@@ -40,10 +48,10 @@ export default function LoginPage() {
       <div className="w-full max-w-sm">
         <div className="rounded-lg border border-gray-200 bg-white p-8 shadow-sm">
           <h1 className="mb-1 text-center text-xl font-bold text-gray-900">
-            Claude Code Admin
+            Claude Code Platform
           </h1>
           <p className="mb-6 text-center text-sm text-gray-500">
-            관리자 로그인
+            사내 SSO 계정으로 로그인
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">

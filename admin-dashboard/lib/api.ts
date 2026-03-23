@@ -77,6 +77,16 @@ export interface Session {
   started_at: string;
   terminal_url: string | null;
   files_url: string | null;
+  hub_url: string | null;
+}
+
+// ---------- User Session (자동 생성) ----------
+
+export function createMySession(): Promise<Session> {
+  return request<Session>("/api/v1/sessions/", {
+    method: "POST",
+    body: JSON.stringify({ session_type: "workshop" }),
+  });
 }
 
 export interface ActiveSessionsResponse {
