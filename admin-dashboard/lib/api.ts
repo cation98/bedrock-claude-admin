@@ -78,9 +78,8 @@ export interface Session {
   terminal_url: string | null;
   files_url: string | null;
   hub_url: string | null;
+  expires_at: string | null;
 }
-
-// ---------- User Session (자동 생성) ----------
 
 export function createMySession(): Promise<Session> {
   return request<Session>("/api/v1/sessions/", {
@@ -129,6 +128,52 @@ export function bulkDeleteSessions(): Promise<BulkDeleteResponse> {
 
 export function adminTerminateSession(sessionId: number): Promise<Session> {
   return request<Session>(`/api/v1/sessions/admin/${sessionId}`, {
+    method: "DELETE",
+  });
+}
+
+// ---------- Users ----------
+
+export interface User {
+  id: number;
+  username: string;
+  name: string | null;
+  role: string;
+  is_approved: boolean;
+  pod_ttl: string;
+  approved_at: string | null;
+  last_login_at: string | null;
+}
+
+export interface UserListResponse {
+  total: number;
+  users: User[];
+}
+
+export function getUsers(): Promise<UserListResponse> {
+  return request<UserListResponse>("/api/v1/users/");
+}
+
+export function getPendingUsers(): Promise<UserListResponse> {
+  return request<UserListResponse>("/api/v1/users/pending");
+}
+
+export function approveUser(userId: number, podTtl: string): Promise<User> {
+  return request<User>(`/api/v1/users/${userId}/approve`, {
+    method: "PATCH",
+    body: JSON.stringify({ pod_ttl: podTtl }),
+  });
+}
+
+export function updateUserTtl(userId: number, podTtl: string): Promise<User> {
+  return request<User>(`/api/v1/users/${userId}/ttl`, {
+    method: "PATCH",
+    body: JSON.stringify({ pod_ttl: podTtl }),
+  });
+}
+
+export function revokeUser(userId: number): Promise<User> {
+  return request<User>(`/api/v1/users/${userId}/approve`, {
     method: "DELETE",
   });
 }
