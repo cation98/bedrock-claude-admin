@@ -279,11 +279,11 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
   </div>
 
   <div class="cards">
-    <a class="card" href="/terminal/{pod_name}/" target="claude-terminal-session" onclick="return openTerminal(this.href)">
-      <div class="icon">&#9000;</div>
-      <h2>터미널 접속</h2>
-      <p>Claude Code AI 코딩 어시스턴트<br>웹 터미널에서 바로 실행</p>
-      <span class="badge badge-blue">탭에서 열기</span>
+    <a class="card" href="/terminal/{pod_name}/" id="terminalCard" onclick="return openTerminal(event, this)">
+      <div class="icon" id="terminalIcon">&#9000;</div>
+      <h2 id="terminalTitle">터미널 접속</h2>
+      <p id="terminalDesc">Claude Code AI 코딩 어시스턴트<br>웹 터미널에서 바로 실행</p>
+      <span class="badge badge-blue" id="terminalBadge">탭에서 열기</span>
     </a>
     <a class="card" href="/files/{pod_name}/" target="_blank">
       <div class="icon">&#128228;</div>
@@ -320,18 +320,51 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
 </div>
 
 <script>
-function openTerminal(url) {{
-  var win = window.open('', 'claude-terminal-session');
-  if (win && win.location && win.location.href !== 'about:blank') {{
-    win.focus();
+var termWin = null;
+
+function setTerminalActive() {{
+  var card = document.getElementById('terminalCard');
+  var badge = document.getElementById('terminalBadge');
+  var desc = document.getElementById('terminalDesc');
+  card.style.borderColor = '#3fb950';
+  card.style.opacity = '0.7';
+  card.style.cursor = 'default';
+  badge.textContent = '실행 중';
+  badge.style.background = '#1a3a2a';
+  badge.style.color = '#3fb950';
+  desc.textContent = '터미널이 다른 탭에서 실행 중입니다.\\n다시 열면 기존 연결이 끊깁니다.';
+}}
+
+function openTerminal(e, el) {{
+  e.preventDefault();
+  if (termWin && !termWin.closed) {{
+    termWin.focus();
     var t = document.getElementById('hubToast');
-    t.textContent = '이미 터미널이 열려 있습니다. 해당 탭으로 이동합니다.';
+    t.textContent = '이미 열린 터미널 탭으로 이동합니다.';
     t.style.display = 'block';
-    setTimeout(function() {{ t.style.display = 'none'; }}, 3000);
+    setTimeout(function() {{ t.style.display = 'none'; }}, 2000);
     return false;
   }}
-  if (win) {{ win.location.href = url; }}
-  else {{ window.open(url, 'claude-terminal-session'); }}
+  termWin = window.open(el.href, 'claude-terminal-session');
+  if (termWin) {{
+    setTerminalActive();
+    var check = setInterval(function() {{
+      if (termWin && termWin.closed) {{
+        clearInterval(check);
+        termWin = null;
+        var card = document.getElementById('terminalCard');
+        var badge = document.getElementById('terminalBadge');
+        var desc = document.getElementById('terminalDesc');
+        card.style.borderColor = '';
+        card.style.opacity = '';
+        card.style.cursor = '';
+        badge.textContent = '탭에서 열기';
+        badge.style.background = '';
+        badge.style.color = '';
+        desc.textContent = 'Claude Code AI 코딩 어시스턴트\\n웹 터미널에서 바로 실행';
+      }}
+    }}, 1000);
+  }}
   return false;
 }}
 </script>
