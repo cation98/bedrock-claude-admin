@@ -13,7 +13,8 @@ from fastapi.staticfiles import StaticFiles
 
 from app.core.config import get_settings
 from app.core.database import Base, engine
-from app.routers import auth, sessions, users
+
+from app.routers import auth, sessions, users, sms
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -38,7 +39,10 @@ app.add_middleware(
 # 라우터 등록
 app.include_router(auth.router)
 app.include_router(sessions.router)
+
 app.include_router(users.router)
+app.include_router(sms.router)
+app.include_router(sms.router)
 
 
 @app.on_event("startup")
