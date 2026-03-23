@@ -91,33 +91,62 @@ spec:
           ports:
             - containerPort: 8000
           env:
-            # Database
+            # ── Secrets (from K8s Secret: auth-gateway-secrets) ──
             - name: DATABASE_URL
-              value: postgresql://postgres:postgres@platform-db:5432/bedrock_claude
-
-            # JWT
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-secrets
+                  key: DATABASE_URL
             - name: JWT_SECRET_KEY
-              value: prod-secret-change-me-to-random-256bit
-
-            # SSO
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-secrets
+                  key: JWT_SECRET_KEY
             - name: SSO_AUTH_URL
-              value: https://authsvc.networkons.com/OAuthM.WSL/service.svc/RequestToken
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-secrets
+                  key: SSO_AUTH_URL
             - name: SSO_AUTH_URL2
-              value: https://authsvc.networkons.com/OAuthM.WSL/service.svc/AccessProtectedResource
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-secrets
+                  key: SSO_AUTH_URL2
             - name: SSO_CLIENT_ID
-              value: SmartworksMobile
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-secrets
+                  key: SSO_CLIENT_ID
             - name: SSO_CLIENT_SECRET
-              value: OAuthSKey
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-secrets
+                  key: SSO_CLIENT_SECRET
+            - name: PW_ENCODING_SALT
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-secrets
+                  key: PW_ENCODING_SALT
+            - name: WORKSHOP_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-secrets
+                  key: WORKSHOP_DATABASE_URL
+            - name: TANGO_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-secrets
+                  key: TANGO_DATABASE_URL
+
+            # ── Non-secret SSO config ──
             - name: SSO_AUTH_METHOD
               value: "4302010"
             - name: SSO_SCOPES
               value: NeosOAuth
             - name: SSO_TOKEN_KEY
               value: RequestTokenResult
-            - name: PW_ENCODING_SALT
-              value: 1o1sqhmHcREdoi+137Rnug==
 
-            # Kubernetes (EKS 내부에서 실행)
+            # ── Kubernetes (EKS 내부에서 실행) ──
             - name: K8S_IN_CLUSTER
               value: "true"
             - name: K8S_NAMESPACE
@@ -127,21 +156,13 @@ spec:
             - name: K8S_SERVICE_ACCOUNT
               value: claude-terminal-sa
 
-            # Bedrock
+            # ── Bedrock ──
             - name: BEDROCK_REGION
               value: ap-northeast-2
             - name: BEDROCK_SONNET_MODEL
               value: global.anthropic.claude-sonnet-4-6
             - name: BEDROCK_HAIKU_MODEL
               value: global.anthropic.claude-haiku-4-5-20251001-v1:0
-
-            # RDS - Safety DB (ReadOnly Replica)
-            - name: WORKSHOP_DATABASE_URL
-              value: postgresql://claude_readonly:ClaudeReadOnly2026!@safety-prod-db-readonly.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com:5432/safety
-
-            # RDS - TANGO 알람 DB (ReadOnly)
-            - name: TANGO_DATABASE_URL
-              value: postgresql://claude_readonly:TangoReadOnly2026@aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com:5432/postgres?sslmode=require
 
           readinessProbe:
             httpGet:
