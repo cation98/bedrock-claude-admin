@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     bedrock_sonnet_model: str = "us.anthropic.claude-sonnet-4-6"
     bedrock_haiku_model: str = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
+    # ----- SMS Gateway -----
+    sms_gateway_url: str = ""
+    sms_auth_string: str = ""
+
     # ----- RDS (Pod에 주입할 DB URL) -----
     workshop_database_url: str = ""  # safety-prod ReadOnly Replica
 
