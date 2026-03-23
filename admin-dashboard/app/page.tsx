@@ -2,8 +2,8 @@
 
 import { FormEvent, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { login, createMySession } from "@/lib/api";
-import { setToken, setUser, isAuthenticated, getUser } from "@/lib/auth";
+import { login } from "@/lib/api";
+import { setToken, setUser, isAuthenticated } from "@/lib/auth";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -28,14 +28,7 @@ export default function LoginPage() {
       setToken(res.access_token);
       setUser({ username: res.username, name: res.name, role: res.role });
 
-      if (res.role === "admin") {
-        router.push("/dashboard");
-      } else {
-        // 일반 사용자: 세션 자동 생성 → hub 페이지로 이동
-        const session = await createMySession();
-        const hubUrl = session.hub_url || `/hub/${session.pod_name}/`;
-        window.location.href = hubUrl;
-      }
+      router.push("/dashboard");
     } catch (err) {
       setError(err instanceof Error ? err.message : "로그인에 실패했습니다.");
     } finally {
