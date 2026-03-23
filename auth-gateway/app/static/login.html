@@ -227,11 +227,14 @@
 
                 // Step 3: Pod이 Ready될 때까지 대기
                 statusEl.textContent = '터미널이 시작되고 있습니다... (최대 60초)';
-                await waitForTerminal(token, sessionData.id);
+                const readySession = await waitForTerminal(token, sessionData.pod_name);
 
-                // Step 4: 허브 페이지로 리다이렉트
-                statusEl.textContent = '접속합니다...';
-                const hubUrl = sessionData.hub_url || `/hub/${sessionData.pod_name}/`;
+                // Step 4: Ingress Endpoint 등록 대기 (503 방지)
+                statusEl.textContent = '접속 준비 중...';
+                await new Promise(r => setTimeout(r, 3000));
+
+                // Step 5: 허브 페이지로 리다이렉트
+                const hubUrl = (readySession && readySession.hub_url) || `/hub/${sessionData.pod_name}/`;
                 window.location.href = hubUrl;
 
             } catch (err) {
@@ -244,7 +247,7 @@
             }
         }
 
-        async function waitForTerminal(token, sessionId) {
+        async function waitForTerminal(token, podName) {
             const maxWait = 60;
             for (let i = 0; i < maxWait; i += 3) {
                 await new Promise(r => setTimeout(r, 3000));
@@ -254,9 +257,9 @@
                         headers: { 'Authorization': `Bearer ${token}` }
                     });
                     const data = await res.json();
-                    const session = data.sessions.find(s => s.id === sessionId);
+                    const session = data.sessions.find(s => s.pod_name === podName);
                     if (session && session.pod_status === 'running') {
-                        return;
+                        return session;
                     }
                 } catch (e) {
                     // retry
