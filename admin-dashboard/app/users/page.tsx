@@ -237,10 +237,13 @@ export default function UsersPage() {
                           소속
                         </th>
                         <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                          최근 로그인
+                          역할
                         </th>
                         <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                           Pod TTL
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                          최근 로그인
                         </th>
                         <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                           작업
@@ -257,8 +260,8 @@ export default function UsersPage() {
                           <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
                             {[u.region_name, u.team_name, u.job_name].filter(Boolean).join(" / ") || "-"}
                           </td>
-                          <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
-                            {formatDate(u.last_login_at)}
+                          <td className="whitespace-nowrap px-4 py-3 text-sm">
+                            {roleBadge(u.role)}
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-sm">
                             <select
@@ -277,6 +280,9 @@ export default function UsersPage() {
                                 </option>
                               ))}
                             </select>
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
+                            {formatDate(u.last_login_at)}
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-sm">
                             <button
