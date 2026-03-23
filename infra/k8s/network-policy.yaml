@@ -34,6 +34,10 @@ spec:
       ports:
         - port: 7681
           protocol: TCP
+        - port: 8080
+          protocol: TCP
+        - port: 3000
+          protocol: TCP
 
   egress:
     # DNS 조회 허용 (K8s 내부 DNS)
@@ -45,12 +49,27 @@ spec:
         - port: 53
           protocol: TCP
 
-    # 외부 인터넷 허용 (Bedrock API, RDS, npm 등)
+    # HTTPS만 허용 (Bedrock API, npm, pip, CDN 등)
+    # SMTP(25,465,587), SSH(22), FTP(21) 등은 차단되어 외부 전송 방지
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
             except:
-              - 10.0.0.0/16  # VPC 내부 Pod 간 통신은 차단 (RDS는 아래서 별도 허용)
+              - 10.0.0.0/16
+      ports:
+        - port: 443
+          protocol: TCP
+        - port: 80
+          protocol: TCP
+
+    # Auth Gateway 내부 통신 (SMS API, 스킬 공유 등)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: platform
+      ports:
+        - port: 8000
+          protocol: TCP
 
     # RDS ReadOnly Replica 접근 허용 (Private Subnet 내)
     - to:
