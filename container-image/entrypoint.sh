@@ -185,5 +185,5 @@ exec ttyd \
     --port "${TTYD_PORT}" \
     --base-path "${TTYD_BASE_PATH}" \
     --ping-interval 30 \
-    --max-clients 1 \
+    --max-clients 3 \
     bash -l
