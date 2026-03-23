@@ -70,6 +70,12 @@ export default function DashboardPage() {
               >
                 워크숍 관리
               </Link>
+              <Link
+                href="/users"
+                className="hover:text-gray-900 transition-colors"
+              >
+                사용자 관리
+              </Link>
             </nav>
             <div className="flex items-center gap-3">
               {user && (
