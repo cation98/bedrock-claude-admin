@@ -161,6 +161,8 @@ class K8sService:
                 ports=[
                     client.V1ServicePort(name="ttyd", port=7681, target_port=7681),
                     client.V1ServicePort(name="files", port=8080, target_port=8080),
+                    # 사용자 웹앱 포트 — Auth Gateway가 /app/ 프록시로 접근
+                    client.V1ServicePort(name="webapp", port=3000, target_port=3000),
                 ],
             ),
         )

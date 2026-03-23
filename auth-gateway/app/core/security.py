@@ -39,7 +39,11 @@ def create_access_token(
 
 
 def verify_token(token: str, settings: Settings | None = None) -> dict:
-    """JWT 토큰 검증 및 페이로드 반환."""
+    """JWT 토큰 검증 및 페이로드 반환.
+
+    실패 시 HTTPException(401)을 발생시킨다.
+    예외를 던지지 않는 버전이 필요하면 decode_token()을 사용.
+    """
     if settings is None:
         settings = get_settings()
 
@@ -51,6 +55,21 @@ def verify_token(token: str, settings: Settings | None = None) -> dict:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
         )
+
+
+def decode_token(token: str, settings: Settings | None = None) -> dict | None:
+    """JWT 토큰 디코딩 (실패 시 None 반환).
+
+    verify_token()과 동일한 로직이지만, 예외 대신 None을 반환한다.
+    Auth Proxy처럼 인증 실패를 리다이렉트로 처리해야 하는 곳에서 사용.
+    """
+    if settings is None:
+        settings = get_settings()
+
+    try:
+        return jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
+    except JWTError:
+        return None
 
 
 async def get_current_user(

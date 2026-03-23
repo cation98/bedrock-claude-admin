@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.core.config import get_settings
 from app.core.database import Base, engine
-from app.routers import auth, sessions
+from app.routers import auth, sessions, app_proxy
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -38,6 +38,8 @@ app.add_middleware(
 # 라우터 등록
 app.include_router(auth.router)
 app.include_router(sessions.router)
+# app_proxy는 catch-all 경로(/app/{pod_name}/{path:path})를 갖기 때문에 반드시 마지막에 등록
+app.include_router(app_proxy.router)
 
 
 @app.on_event("startup")
