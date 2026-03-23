@@ -122,6 +122,64 @@ curl -s http://localhost:3000/ | head -5
   DATABASE_URL="$DATABASE_URL" python3 -m uvicorn app:app --host 0.0.0.0 --port 3000 &
 ```
 
+## URL/경로 규칙 — 반드시 준수 (무한 리다이렉트 방지)
+
+웹앱은 Ingress 뒤에서 실행되며 URL이 재작성됩니다:
+- 브라우저 URL: `https://claude.skons.net/app/{pod_name}/something`
+- 웹앱이 받는 URL: `/something`
+
+**폼, 링크, API 호출에서 절대 경로(`/`)를 사용하면 Auth Gateway 로그인 페이지로 이동합니다!**
+
+### HTML 템플릿에 반드시 base 태그 추가
+
+```html
+<head>
+  <base href="/app/{{ hostname }}/">
+  ...
+</head>
+```
+
+`hostname`은 서버에서 `os.environ.get("HOSTNAME")`으로 전달합니다.
+
+### 폼/링크는 상대 경로 사용
+
+```html
+<!-- ✅ 올바름 (상대 경로) -->
+<form action="">
+<form action="?period=14d&team=all">
+<a href="?page=2">
+
+<!-- ❌ 금지 (절대 경로 → 로그인 페이지로 이동) -->
+<form action="/">
+<form action="/?period=14d">
+<a href="/">
+```
+
+### JavaScript fetch/API 호출도 상대 경로
+
+```javascript
+// ✅ 올바름
+fetch("api/data")
+fetch("?period=14d")
+
+// ❌ 금지
+fetch("/api/data")
+fetch("/")
+```
+
+### FastAPI 앱에서 hostname 전달
+
+```python
+import os
+
+@app.get("/", response_class=HTMLResponse)
+async def index(request: Request):
+    return templates.TemplateResponse(request, "index.html", {
+        "hostname": os.environ.get("HOSTNAME", ""),
+        # ... 다른 데이터
+    })
+```
+
 ## 템플릿 작성 주의사항
 
 1. **CDN 스크립트 사용**: Chart.js 등은 CDN으로 로드 (npm 설치 불필요)

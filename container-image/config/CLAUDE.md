@@ -118,6 +118,21 @@ https://claude.skons.net/app/{HOSTNAME}/
 - **pandas**, **matplotlib**, **openpyxl** — 데이터 분석/차트/엑셀
 - **python-multipart** — 파일 업로드
 
+### 웹앱 URL 규칙 (무한 리다이렉트 방지)
+
+웹앱은 `/app/{HOSTNAME}/` 경로 뒤에서 실행됩니다. **폼/링크에서 절대 경로(`/`)를 사용하면 로그인 페이지로 이동하는 무한 루프가 발생합니다.**
+
+```html
+<!-- 템플릿 <head>에 반드시 추가 -->
+<base href="/app/{{ hostname }}/">
+
+<!-- 폼은 상대 경로 사용 -->
+<form action="">        ✅
+<form action="/">       ❌ (로그인 페이지로 이동)
+```
+
+서버에서 `hostname = os.environ.get("HOSTNAME")` 전달 필수.
+
 ### 웹앱 예시 (FastAPI 대시보드)
 ```python
 # app.py
