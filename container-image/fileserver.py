@@ -279,11 +279,11 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
   </div>
 
   <div class="cards">
-    <a class="card" href="/terminal/{pod_name}/" target="_blank">
+    <a class="card" href="/terminal/{pod_name}/" target="claude-terminal-session" onclick="return openTerminal(this.href)">
       <div class="icon">&#9000;</div>
       <h2>터미널 접속</h2>
       <p>Claude Code AI 코딩 어시스턴트<br>웹 터미널에서 바로 실행</p>
-      <span class="badge badge-blue">새 탭에서 열기</span>
+      <span class="badge badge-blue">탭에서 열기</span>
     </a>
     <a class="card" href="/files/{pod_name}/" target="_blank">
       <div class="icon">&#128228;</div>
@@ -314,6 +314,27 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
   <div class="footer">Claude Code Platform &middot; Powered by AWS Bedrock</div>
 </div>
 
+<div id="hubToast" style="position:fixed;top:20px;right:20px;padding:14px 22px;
+  background:#1e293b;border:1px solid #58a6ff;border-radius:8px;color:#e6edf3;font-size:0.9rem;
+  display:none;z-index:100;box-shadow:0 4px 20px rgba(0,0,0,0.4);">
+</div>
+
+<script>
+function openTerminal(url) {{
+  var win = window.open('', 'claude-terminal-session');
+  if (win && win.location && win.location.href !== 'about:blank') {{
+    win.focus();
+    var t = document.getElementById('hubToast');
+    t.textContent = '이미 터미널이 열려 있습니다. 해당 탭으로 이동합니다.';
+    t.style.display = 'block';
+    setTimeout(function() {{ t.style.display = 'none'; }}, 3000);
+    return false;
+  }}
+  if (win) {{ win.location.href = url; }}
+  else {{ window.open(url, 'claude-terminal-session'); }}
+  return false;
+}}
+</script>
 </body>
 </html>"""
 
