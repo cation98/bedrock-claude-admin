@@ -11,6 +11,7 @@ Endpoints:
 """
 
 import logging
+import time
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -122,11 +123,14 @@ async def create_session(
     db.commit()
     db.refresh(session)
 
-    # Pod 상태 확인 후 업데이트
-    pod_status = k8s.get_pod_status(pod_name)
-    if pod_status and pod_status["phase"] == "Running":
-        session.pod_status = "running"
-        db.commit()
+    # Pod Ready 대기 (최대 30초) — Ingress 503 방지
+    for _ in range(15):
+        pod_status = k8s.get_pod_status(pod_name)
+        if pod_status and pod_status["phase"] == "Running":
+            session.pod_status = "running"
+            db.commit()
+            break
+        time.sleep(2)
 
     return _to_response(session, settings)
 
