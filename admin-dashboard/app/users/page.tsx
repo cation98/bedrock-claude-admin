@@ -231,10 +231,10 @@ export default function UsersPage() {
                     <thead className="bg-gray-50">
                       <tr>
                         <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                          사용자명
+                          이름 (사번)
                         </th>
                         <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                          이름
+                          소속
                         </th>
                         <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                           최근 로그인
@@ -251,10 +251,11 @@ export default function UsersPage() {
                       {pendingUsers.map((u) => (
                         <tr key={u.id} className="hover:bg-gray-50">
                           <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-gray-900">
-                            {u.username}
+                            {u.name ?? u.username}
+                            <span className="ml-1 text-xs text-gray-400">({u.username})</span>
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
-                            {u.name ?? "-"}
+                            {[u.region_name, u.team_name, u.job_name].filter(Boolean).join(" / ") || "-"}
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
                             {formatDate(u.last_login_at)}
@@ -311,10 +312,10 @@ export default function UsersPage() {
                     <thead className="bg-gray-50">
                       <tr>
                         <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                          사용자명
+                          이름 (사번)
                         </th>
                         <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                          이름
+                          소속
                         </th>
                         <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                           역할
@@ -334,10 +335,11 @@ export default function UsersPage() {
                       {approvedUsers.map((u) => (
                         <tr key={u.id} className="hover:bg-gray-50">
                           <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-gray-900">
-                            {u.username}
+                            {u.name ?? u.username}
+                            <span className="ml-1 text-xs text-gray-400">({u.username})</span>
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
-                            {u.name ?? "-"}
+                            {[u.region_name, u.team_name, u.job_name].filter(Boolean).join(" / ") || "-"}
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-sm">
                             {roleBadge(u.role)}

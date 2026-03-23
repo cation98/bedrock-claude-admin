@@ -138,6 +138,9 @@ export interface User {
   id: number;
   username: string;
   name: string | null;
+  region_name: string | null;
+  team_name: string | null;
+  job_name: string | null;
   role: string;
   is_approved: boolean;
   pod_ttl: string;

@@ -12,8 +12,11 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     username = Column(String(50), unique=True, nullable=False, index=True)  # 사번 (e.g. N1102359)
-    name = Column(String(100))
+    name = Column(String(100))  # 표시 이름 (first_name)
     phone_number = Column(String(20))
+    region_name = Column(String(50))  # 담당 (e.g. AT/DT추진담당)
+    team_name = Column(String(50))    # 팀 (e.g. AT/DT개발팀)
+    job_name = Column(String(50))     # 직급 (e.g. 팀장)
     role = Column(String(20), default="user")  # admin, user
     is_active = Column(Boolean, default=True)
     is_approved = Column(Boolean, default=False, nullable=False)  # 관리자 승인 여부

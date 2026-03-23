@@ -25,6 +25,9 @@ class UserResponse(BaseModel):
     id: int
     username: str
     name: str | None
+    region_name: str | None = None
+    team_name: str | None = None
+    job_name: str | None = None
     role: str
     is_approved: bool
     pod_ttl: str
