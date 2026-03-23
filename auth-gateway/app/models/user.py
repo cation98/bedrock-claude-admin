@@ -24,4 +24,5 @@ class User(Base):
     approved_at = Column(DateTime(timezone=True), nullable=True)  # 승인 일시
     last_login_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    storage_retention = Column(String(10), default="30d", nullable=False)  # 7d, 30d, 90d, unlimited
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

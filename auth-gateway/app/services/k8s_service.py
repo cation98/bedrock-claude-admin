@@ -142,7 +142,26 @@ class K8sService:
                             initial_delay_seconds=10,
                             period_seconds=30,
                         ),
+                        # EFS 볼륨 마운트: 사용자별 격리된 workspace 디렉토리
+                        # sub_path로 users/{username}/ 하위에 각 사용자 데이터 격리
+                        volume_mounts=[
+                            client.V1VolumeMount(
+                                name="user-workspace",
+                                mount_path="/home/node/workspace",
+                                sub_path=f"users/{username.lower()}",
+                            )
+                        ],
                     )
+                ],
+                # EFS Shared PVC를 볼륨으로 선언
+                # PVC는 infra/k8s/efs-storage.yaml에서 생성
+                volumes=[
+                    client.V1Volume(
+                        name="user-workspace",
+                        persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(
+                            claim_name="efs-shared-pvc",
+                        ),
+                    ),
                 ],
             ),
         )

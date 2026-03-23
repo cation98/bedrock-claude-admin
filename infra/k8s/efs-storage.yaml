@@ -1,0 +1,74 @@
+# =============================================================================
+# EFS StorageClass + PersistentVolume + PersistentVolumeClaim
+#
+# K8s 스토리지 개념:
+#   - StorageClass: "어떤 종류의 스토리지를 사용할 것인가" (EFS CSI Driver)
+#   - PersistentVolume (PV): 실제 스토리지 (EFS 파일시스템)를 K8s에 등록
+#   - PersistentVolumeClaim (PVC): Pod이 스토리지를 요청하는 "신청서"
+#
+# 사전 요구사항:
+#   EFS CSI Driver 설치 (EKS Add-on 또는 Helm):
+#     aws eks create-addon --cluster-name bedrock-claude-eks \
+#       --addon-name aws-efs-csi-driver \
+#       --service-account-role-arn <efs-csi-driver-role-arn>
+#
+#   또는 kubectl로 직접 설치:
+#     kubectl apply -k "github.com/kubernetes-sigs/aws-efs-csi-driver/deploy/kubernetes/overlays/stable/?ref=release-2.1"
+#
+# 사용 흐름:
+#   1. Pod spec에서 PVC를 volume으로 선언
+#   2. volumeMount에서 sub_path=users/{username} 으로 사용자별 디렉토리 격리
+#   3. 사용자는 /home/node/workspace 에서 파일 작업 → Pod 삭제 후에도 유지
+# =============================================================================
+
+# ----- StorageClass -----
+# EFS CSI Driver를 사용하는 스토리지 클래스 정의
+# provisioner: efs.csi.aws.com → AWS EFS CSI Driver가 볼륨 관리
+
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: efs-sc
+provisioner: efs.csi.aws.com
+
+---
+# ----- PersistentVolume -----
+# EFS 파일시스템을 K8s 볼륨으로 등록
+# capacity는 EFS에서는 논리적 의미만 가짐 (EFS는 탄력적 용량)
+# accessModes: ReadWriteMany → 여러 Pod이 동시에 읽기/쓰기 가능
+
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: efs-user-workspaces
+spec:
+  capacity:
+    storage: 100Gi  # EFS는 탄력적이므로 논리적 크기 (실제 제한 없음)
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteMany  # 여러 AZ의 Pod에서 동시 마운트 가능
+  persistentVolumeReclaimPolicy: Retain  # PVC 삭제해도 데이터 보존
+  storageClassName: efs-sc
+  csi:
+    driver: efs.csi.aws.com
+    # ⚠️ 아래 값을 terraform output efs_file_system_id 결과로 교체
+    # 예: fs-0abc1234def56789a
+    volumeHandle: REPLACE_WITH_EFS_ID
+
+---
+# ----- PersistentVolumeClaim -----
+# claude-sessions namespace에서 PV를 요청
+# Pod spec에서 이 PVC를 참조하여 볼륨 마운트
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: efs-shared-pvc
+  namespace: claude-sessions
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: efs-sc
+  resources:
+    requests:
+      storage: 100Gi  # PV와 동일 (EFS에서는 논리적 값)
