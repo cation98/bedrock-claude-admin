@@ -101,36 +101,25 @@ chmod +x /home/node/.local/bin/psql-safety
 export PATH="/home/node/.local/bin:$PATH"
 echo 'export PATH="/home/node/.local/bin:$PATH"' >> /home/node/.bashrc
 
-# 환영 메시지 (unquoted heredoc: 변수 확장 필요)
-cat >> /home/node/.bashrc << BASHRC
-
+# 환영 메시지 (unquoted: USER_DISPLAY_NAME 확장)
+cat >> /home/node/.bashrc << WELCOME
 echo ""
-echo "  ╔══════════════════════════════════════════════════════════╗"
-echo "  ║  Claude Code Terminal — ${USER_DISPLAY_NAME} 님          "
-echo "  ╠══════════════════════════════════════════════════════════╣"
-echo "  ║  claude         - Claude Code 시작                       ║"
-echo "  ║  psql-safety    - 안전관리 DB 접속                        ║"
-echo "  ║  psql-tango     - TANGO 알람 DB 접속                      ║"
-echo "  ║  /report        - 보고서 생성                             ║"
-echo "  ║  /excel         - 엑셀 파일 생성                          ║"
-echo "  ╠══════════════════════════════════════════════════════════╣"
-echo "  ║  파일 업로드/다운로드: /files/ 페이지에서 드래그&드롭       ║"
-echo "  ║  업로드 경로: ~/workspace/uploads/                        ║"
-echo "  ╚══════════════════════════════════════════════════════════╝"
+echo "  Claude Code Terminal — ${USER_DISPLAY_NAME} 님"
+echo "  claude / psql-safety / psql-tango / /report / /excel"
 echo ""
-
 cd ~
+WELCOME
 
-# Claude Code 자동 시작
-if [ -z "$CLAUDE_STARTED" ]; then
+# Claude Code 자동 시작 (quoted: $CLAUDE_STARTED 보호)
+cat >> /home/node/.bashrc << 'AUTOSTART'
+if [ -z "${CLAUDE_STARTED:-}" ]; then
     export CLAUDE_STARTED=1
-    echo ""
     echo "  Claude Code를 시작합니다..."
     echo "  (종료: /exit 또는 Ctrl+C → 터미널로 복귀)"
     echo ""
     claude --dangerously-skip-permissions
 fi
-BASHRC
+AUTOSTART
 
 # ---------------------------------------------------------------------------
 # 6) 파일 업로드/다운로드 서버 (port 8080)
