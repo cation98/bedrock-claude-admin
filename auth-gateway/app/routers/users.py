@@ -131,3 +131,23 @@ async def revoke_approval(
 
     logger.info(f"User {user.username} approval revoked")
     return UserResponse.model_validate(user)
+
+
+@router.delete("/{user_id}", status_code=200)
+async def reject_user(
+    user_id: int,
+    _admin: dict = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """사용자 거절 — DB에서 삭제 (관리자용)."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.is_approved:
+        raise HTTPException(status_code=400, detail="승인된 사용자는 거절할 수 없습니다. 승인 취소를 먼저 하세요.")
+
+    username = user.username
+    db.delete(user)
+    db.commit()
+    logger.info(f"User {username} rejected and deleted")
+    return {"deleted": True, "username": username}

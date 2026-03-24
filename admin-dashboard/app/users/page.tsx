@@ -9,6 +9,7 @@ import {
   approveUser,
   updateUserTtl,
   revokeUser,
+  rejectUser,
   type User,
 } from "@/lib/api";
 import { isAuthenticated, logout, getUser } from "@/lib/auth";
@@ -295,7 +296,7 @@ export default function UsersPage() {
                               <button
                                 onClick={() => {
                                   if (confirm(`${u.name ?? u.username} 사용자를 거절하시겠습니까? 목록에서 삭제됩니다.`)) {
-                                    revokeUser(u.id).then(() => fetchData());
+                                    rejectUser(u.id).then(() => fetchData());
                                   }
                                 }}
                                 className="rounded-md border border-red-300 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors"

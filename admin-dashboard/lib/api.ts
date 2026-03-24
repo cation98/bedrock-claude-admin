@@ -180,3 +180,9 @@ export function revokeUser(userId: number): Promise<User> {
     method: "DELETE",
   });
 }
+
+export function rejectUser(userId: number): Promise<{ deleted: boolean; username: string }> {
+  return request<{ deleted: boolean; username: string }>(`/api/v1/users/${userId}`, {
+    method: "DELETE",
+  });
+}
