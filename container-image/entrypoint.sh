@@ -110,14 +110,15 @@ echo ""
 cd ~
 WELCOME
 
-# Claude Code 자동 시작 (quoted: $CLAUDE_STARTED 보호)
+# Claude Code 자동 시작 (quoted: $변수 보호)
 cat >> /home/node/.bashrc << 'AUTOSTART'
 if [ -z "${CLAUDE_STARTED:-}" ]; then
     export CLAUDE_STARTED=1
     echo "  Claude Code를 시작합니다..."
-    echo "  (종료: /exit 또는 Ctrl+C → 터미널로 복귀)"
+    echo "  (종료: Ctrl+C 두 번 → 터미널로 복귀)"
     echo ""
-    claude --dangerously-skip-permissions
+    claude --dangerously-skip-permissions \
+        --append-system-prompt "항상 한국어로 응답하세요. 사용자의 이름을 인지하고 존칭을 사용하세요."
 fi
 AUTOSTART
 
