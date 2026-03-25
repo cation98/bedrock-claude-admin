@@ -84,6 +84,21 @@ class K8sService:
                 },
             ),
             spec=client.V1PodSpec(
+                # EFS 디렉토리 권한 설정 (node user = UID 1000)
+                init_containers=[
+                    client.V1Container(
+                        name="init-workspace",
+                        image="busybox",
+                        command=["sh", "-c", "chown -R 1000:1000 /workspace && chmod 755 /workspace"],
+                        volume_mounts=[
+                            client.V1VolumeMount(
+                                name="user-workspace",
+                                mount_path="/workspace",
+                                sub_path=f"users/{username.lower()}",
+                            )
+                        ],
+                    )
+                ],
                 service_account_name=self.settings.k8s_service_account,
                 restart_policy="Never",
                 # ttl_seconds=0 → unlimited (activeDeadlineSeconds 미설정)
