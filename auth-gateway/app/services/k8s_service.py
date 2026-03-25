@@ -142,15 +142,22 @@ class K8sService:
                             initial_delay_seconds=10,
                             period_seconds=30,
                         ),
-                        # TODO: EFS 보안그룹 수정 후 재활성화
-                        # volume_mounts=[
-                        #     client.V1VolumeMount(
-                        #         name="user-workspace",
-                        #         mount_path="/home/node/workspace",
-                        #         sub_path=f"users/{username.lower()}",
-                        #     )
-                        # ],
+                        volume_mounts=[
+                            client.V1VolumeMount(
+                                name="user-workspace",
+                                mount_path="/home/node/workspace",
+                                sub_path=f"users/{username.lower()}",
+                            )
+                        ],
                     )
+                ],
+                volumes=[
+                    client.V1Volume(
+                        name="user-workspace",
+                        persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(
+                            claim_name="efs-shared-pvc",
+                        ),
+                    ),
                 ],
             ),
         )
