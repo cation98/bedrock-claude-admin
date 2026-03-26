@@ -99,6 +99,39 @@ psql $DATABASE_URL -c "쿼리"
 - DB: safety
 - 테이블 목록: `psql $DATABASE_URL -c "\dt"`
 
+### 3. Opark 업무일지 DB (TANGO DB와 동일 서버)
+
+Opark 테이블은 TANGO와 같은 DB(`postgres`)에 있으므로 `psql-tango`로 접근합니다.
+
+```bash
+psql-tango -c "SELECT * FROM opark_daily_report LIMIT 5;"
+```
+
+**Opark 테이블**:
+
+| 테이블 | 설명 |
+|--------|------|
+| `opark_daily_report` | OPAC 47컬럼 업무일지 (1분 주기 upsert) |
+| `report_embeddings` | pgvector 768dim 벡터 (ko-sroberta) |
+| `report_ontology` | 5단계 업무 분류 트리 (level/code/parent_code) |
+| `report_alarm_matches` | 알람-업무 유사도 매칭 결과 |
+| `opark_b2bequipmaster` | B2B 장비 마스터 |
+| `opark_cmsequipmaster` | CMS 장비 마스터 |
+| `opark_equipmaster` | 장비 마스터 |
+| `opark_evchrgequipmaster` | 전기차 충전 장비 |
+| `opark_fronthaulequipmaster` | Fronthaul 장비 |
+
+## 업무 키워드 → 데이터 소스 매핑
+
+| 키워드 | DB | 접속 명령 | 주요 테이블 |
+|--------|-----|----------|------------|
+| TBM, TBM건수, 작업허가 | **Safety DB** | `psql $DATABASE_URL` | `safety_activity_tbmactivity`, `safety_activity_workinfo` |
+| 시설, 장비, 설비 | **Safety/TANGO DB** | 양쪽 확인 | `opark_equipmaster`, `facility_info` |
+| 고장, 알람, 장애 | **TANGO DB** | `psql-tango` | `alarm_data`, `alarm_events`, `alarm_statistics` |
+| 업무일지, Opark, 일일보고 | **TANGO DB** | `psql-tango` | `opark_daily_report` |
+| 안전점검, 순찰 | **Safety DB** | `psql $DATABASE_URL` | `safety_activity_patrolsafetyinspection_*` |
+| 작업상태, 작업중지 | **Safety DB** | `psql $DATABASE_URL` | `safety_activity_workstatus`, `safety_activity_workstophistory` |
+
 ### DB 공통 규칙
 1. **TANGO DB → `psql-tango -c "쿼리"`** (절대 `$TANGO_DATABASE_URL` 직접 사용 금지)
 2. **Safety DB → `psql $DATABASE_URL -c "쿼리"`**
