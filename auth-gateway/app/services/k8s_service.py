@@ -89,13 +89,18 @@ class K8sService:
                     client.V1Container(
                         name="init-workspace",
                         image="busybox",
-                        command=["sh", "-c", "chown -R 1000:1000 /workspace && chmod 755 /workspace"],
+                        command=["sh", "-c", "chown -R 1000:1000 /workspace && chmod 755 /workspace && chown -R 1000:1000 /shared && chmod 755 /shared"],
                         volume_mounts=[
                             client.V1VolumeMount(
                                 name="user-workspace",
                                 mount_path="/workspace",
                                 sub_path=f"users/{username.lower()}",
-                            )
+                            ),
+                            client.V1VolumeMount(
+                                name="user-workspace",
+                                mount_path="/shared",
+                                sub_path="shared",
+                            ),
                         ],
                     )
                 ],
@@ -162,7 +167,14 @@ class K8sService:
                                 name="user-workspace",
                                 mount_path="/home/node/workspace",
                                 sub_path=f"users/{username.lower()}",
-                            )
+                            ),
+                            # 공유 디렉토리: 시연자가 올린 파일을 모든 참석자가 접근
+                            client.V1VolumeMount(
+                                name="user-workspace",
+                                mount_path="/home/node/workspace/shared",
+                                sub_path="shared",
+                                read_only=(username.upper() != "N1102359"),
+                            ),
                         ],
                     )
                 ],
