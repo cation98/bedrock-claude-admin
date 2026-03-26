@@ -182,8 +182,9 @@ class FileServerHandler(SimpleHTTPRequestHandler):
                 size_bytes = os.path.getsize(fullpath)
                 size = self._format_size(size_bytes)
                 if is_uploads:
-                    safe = html.escape(name, quote=True)
-                    delete_btn = f'<button class="del-btn" onclick="deleteFile(\'{safe}\')">삭제</button>'
+                    import base64
+                    b64name = base64.b64encode(name.encode('utf-8')).decode('ascii')
+                    delete_btn = f'<button class="del-btn" onclick="deleteFile(atob(\'{b64name}\'))">삭제</button>'
                 else:
                     delete_btn = ""
             entries.append(f'<tr><td><a href="{link}">{display}</a></td><td>{size}</td><td>{delete_btn}</td></tr>')
