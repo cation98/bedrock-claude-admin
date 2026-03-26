@@ -101,9 +101,9 @@ class K8sService:
                 ],
                 service_account_name=self.settings.k8s_service_account,
                 restart_policy="Never",
-                # ttl_seconds=0 → unlimited (activeDeadlineSeconds 미설정)
-                # ttl_seconds>0 → 해당 초 후 Pod 자동 종료
                 active_deadline_seconds=ttl_seconds if ttl_seconds > 0 else None,
+                # 시연자(N1102359)는 전용 m5.xlarge 노드에 배치
+                node_selector={"role": "presenter"} if username.upper() == "N1102359" else None,
                 containers=[
                     client.V1Container(
                         name="terminal",
@@ -139,12 +139,12 @@ class K8sService:
                         ],
                         resources=client.V1ResourceRequirements(
                             requests={
-                                "cpu": self.settings.k8s_pod_cpu_request,
-                                "memory": self.settings.k8s_pod_memory_request,
+                                "cpu": "3" if username.upper() == "N1102359" else self.settings.k8s_pod_cpu_request,
+                                "memory": "8Gi" if username.upper() == "N1102359" else self.settings.k8s_pod_memory_request,
                             },
                             limits={
-                                "cpu": self.settings.k8s_pod_cpu_limit,
-                                "memory": self.settings.k8s_pod_memory_limit,
+                                "cpu": "3500m" if username.upper() == "N1102359" else self.settings.k8s_pod_cpu_limit,
+                                "memory": "12Gi" if username.upper() == "N1102359" else self.settings.k8s_pod_memory_limit,
                             },
                         ),
                         readiness_probe=client.V1Probe(
