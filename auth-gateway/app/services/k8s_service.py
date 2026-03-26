@@ -229,6 +229,7 @@ class K8sService:
                     "nginx.ingress.kubernetes.io/proxy-send-timeout": "3600",
                     "nginx.ingress.kubernetes.io/proxy-http-version": "1.1",
                     "nginx.ingress.kubernetes.io/enable-websocket": "true",
+                    "nginx.ingress.kubernetes.io/proxy-body-size": "100m",
                     "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
                 },
             ),
