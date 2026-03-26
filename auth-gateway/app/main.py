@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.core.config import get_settings
 from app.core.database import Base, engine
-from app.routers import auth, sessions, users, sms, skills, app_proxy
+from app.routers import auth, sessions, users, sms, skills, telegram, app_proxy
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -26,7 +26,6 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# CORS 설정 (Admin Dashboard에서 API 호출 허용)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -41,6 +40,7 @@ app.include_router(sessions.router)
 app.include_router(users.router)
 app.include_router(sms.router)
 app.include_router(skills.router)
+app.include_router(telegram.router)
 # app_proxy는 catch-all 경로이므로 반드시 마지막에 등록
 app.include_router(app_proxy.router)
 
@@ -52,14 +52,12 @@ async def startup():
     logger.info(f"{settings.app_name} started")
 
 
-# 정적 파일 (로그인 페이지 등)
 static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 
 @app.get("/")
 async def root():
-    """루트 → 로그인 페이지."""
     return FileResponse(str(static_dir / "login.html"))
 
 

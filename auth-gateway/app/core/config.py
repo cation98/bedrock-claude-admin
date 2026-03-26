@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     k8s_pod_memory_request: str = "3Gi"
     k8s_pod_memory_limit: str = "4Gi"
 
+    # ----- Telegram Bot -----
+    telegram_bot_token: str = ""
+    telegram_bot_username: str = ""  # @봇이름 (멘션 제거용)
+
     # ----- Bedrock (Pod에 주입할 환경변수) -----
     bedrock_region: str = "us-east-1"
     bedrock_sonnet_model: str = "us.anthropic.claude-sonnet-4-6"
