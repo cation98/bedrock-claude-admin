@@ -10,6 +10,7 @@ class SessionCreateRequest(BaseModel):
 class SessionResponse(BaseModel):
     id: int
     username: str
+    user_name: str | None = None  # 성명 (first_name)
     pod_name: str
     pod_status: str
     session_type: str

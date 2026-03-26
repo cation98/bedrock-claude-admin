@@ -71,6 +71,7 @@ export function getMe(): Promise<MeResponse> {
 export interface Session {
   id: number;
   username: string;
+  user_name: string | null;
   pod_name: string;
   pod_status: string;
   session_type: string;

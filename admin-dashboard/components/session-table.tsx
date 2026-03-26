@@ -136,7 +136,8 @@ export default function SessionTable({
             return (
               <tr key={s.pod_name} className="hover:bg-gray-50">
                 <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-gray-900">
-                  {s.username}
+                  {s.user_name ?? s.username}
+                  <span className="ml-1 text-xs text-gray-400">({s.username})</span>
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600 font-mono">
                   {s.pod_name}

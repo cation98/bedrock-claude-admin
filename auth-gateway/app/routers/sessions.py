@@ -38,7 +38,7 @@ def _get_k8s_service(settings: Settings = Depends(get_settings)) -> K8sService:
     return K8sService(settings)
 
 
-def _to_response(session: TerminalSession, settings: Settings, ttl_seconds: int | None = None) -> SessionResponse:
+def _to_response(session: TerminalSession, settings: Settings, ttl_seconds: int | None = None, user_name: str | None = None) -> SessionResponse:
     """DB 세션 → API 응답 변환.
 
     Args:
@@ -62,6 +62,7 @@ def _to_response(session: TerminalSession, settings: Settings, ttl_seconds: int 
     return SessionResponse(
         id=session.id,
         username=session.username,
+        user_name=user_name,
         pod_name=session.pod_name or "",
         pod_status=session.pod_status,
         session_type=session.session_type,
@@ -243,18 +244,20 @@ async def list_active_sessions(
 
     active = [s for s in sessions if s.pod_status in ("creating", "running")]
 
-    # 사용자별 TTL 조회하여 expires_at 계산
+    # 사용자별 TTL + 이름 조회
     from app.models.user import User
     usernames = {s.username for s in active}
     user_ttls = {}
+    user_names = {}
     if usernames:
         users = db.query(User).filter(User.username.in_(usernames)).all()
         user_ttls = {u.username: POD_TTL_SECONDS_MAP.get(u.pod_ttl, 14400) for u in users}
+        user_names = {u.username: u.name for u in users}
 
     return SessionListResponse(
         total=len(active),
         sessions=[
-            _to_response(s, settings, ttl_seconds=user_ttls.get(s.username, 14400))
+            _to_response(s, settings, ttl_seconds=user_ttls.get(s.username, 14400), user_name=user_names.get(s.username))
             for s in active
         ],
     )
