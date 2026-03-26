@@ -9,3 +9,4 @@ psycopg2-binary==2.9.10
 alembic==1.14.1
 kubernetes==31.0.0
 python-multipart==0.0.20
+boto3
