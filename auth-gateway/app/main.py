@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.core.config import get_settings
 from app.core.database import Base, engine
-from app.routers import auth, sessions
+from app.routers import auth, sessions, telegram
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -38,6 +38,8 @@ app.add_middleware(
 # 라우터 등록
 app.include_router(auth.router)
 app.include_router(sessions.router)
+# telegram webhook은 인증 불필요 (Telegram이 직접 호출)
+app.include_router(telegram.router)
 
 
 @app.on_event("startup")
