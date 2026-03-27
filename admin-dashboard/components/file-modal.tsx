@@ -15,10 +15,7 @@ interface FileModalProps {
 export default function FileModal({ podName, username, onClose }: FileModalProps) {
   const backdropRef = useRef<HTMLDivElement>(null);
 
-  const filesUrl =
-    typeof window !== "undefined"
-      ? `${window.location.protocol}//${window.location.hostname}/files/${podName}/`
-      : `/files/${podName}/`;
+  const filesUrl = `https://claude.skons.net/files/${podName}/`;
 
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {

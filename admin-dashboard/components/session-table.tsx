@@ -155,7 +155,7 @@ export default function SessionTable({
                   {s.pod_status === "running" && (
                     <div className="flex gap-1.5">
                       <a
-                        href={s.terminal_url ?? `/terminal/${s.pod_name}/`}
+                        href={`https://claude.skons.net/terminal/${s.pod_name}/`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="rounded bg-blue-50 px-3 py-1 text-xs font-medium text-blue-600 hover:bg-blue-100 transition-colors"
