@@ -530,6 +530,45 @@ async def admin_terminate_session(
     return _to_response(session, settings)
 
 
+# ==================== 사용자 API ====================
+
+
+@router.delete("/", response_model=SessionResponse)
+async def terminate_my_session(
+    current_user: dict = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+    k8s: K8sService = Depends(_get_k8s_service),
+    db: Session = Depends(get_db),
+):
+    """내 활성 세션 종료 (Pod 삭제). Hub 포탈의 '로그아웃 & 종료' 버튼용."""
+    username = current_user["sub"]
+    session = (
+        db.query(TerminalSession)
+        .filter(
+            TerminalSession.username == username,
+            TerminalSession.pod_status.in_(["running", "creating"]),
+        )
+        .order_by(TerminalSession.started_at.desc())
+        .first()
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="Active session not found")
+
+    if session.pod_name and session.pod_status != "terminated":
+        try:
+            k8s.delete_pod(session.pod_name)
+        except K8sServiceError as e:
+            logger.error(f"Failed to delete pod: {e}")
+
+    session.pod_status = "terminated"
+    session.terminated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(session)
+
+    logger.info(f"User {username} terminated own session: {session.pod_name}")
+    return _to_response(session, settings)
+
+
 # ==================== 사용자 API (동적 경로는 마지막에) ====================
 
 
