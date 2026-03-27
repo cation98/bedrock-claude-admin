@@ -132,13 +132,15 @@ async def _send_2fa_sms(phone: str, code: str, settings: Settings) -> None:
     else:
         formatted = cleaned
 
+    import base64 as b64lib
     message = f"[Claude Code] 인증코드: {code} (5분 이내 입력)"
+    pw_base64 = b64lib.b64encode(sms_auth.encode()).decode()
     payload = {
         "TranType": "4",
         "TranPhone": formatted,
         "TranCallBack": sender_number,
         "TranMsg": message,
-        "SysPw": sms_auth,
+        "SysPw": pw_base64,
     }
 
     try:

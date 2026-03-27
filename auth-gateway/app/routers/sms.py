@@ -138,12 +138,14 @@ async def send_sms(
 
     # SMS 게이트웨이 페이로드
     formatted_phone = _normalize_phone(request.phone_number)
+    import base64 as b64lib
+    pw_base64 = b64lib.b64encode(sms_auth.encode()).decode()
     payload = {
         "TranType": "4",
         "TranPhone": formatted_phone,
         "TranCallBack": sender_number,
         "TranMsg": f"[Claude Code] {request.message}",
-        "SysPw": sms_auth,
+        "SysPw": pw_base64,
     }
 
     # 감사 로그 준비
