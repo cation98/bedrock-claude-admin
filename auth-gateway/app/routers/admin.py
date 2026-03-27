@@ -148,6 +148,7 @@ class NodeInfo(BaseModel):
     status: str
     cpu_capacity: str
     memory_capacity: str
+    node_role: str = "user"  # "system" | "presenter" | "user"
     pods: list[PodInfo]
 
 
@@ -186,16 +187,61 @@ async def get_infrastructure(
             for c in (node.status.conditions or [])
         ) else "NotReady"
 
+        # 노드 역할 판별
+        node_role = "user"
+        if labels.get("role") == "presenter":
+            node_role = "presenter"
+
         node_map[name] = NodeInfo(
             node_name=name,
             instance_type=instance_type,
             status=status,
             cpu_capacity=node.status.capacity.get("cpu", "0"),
             memory_capacity=node.status.capacity.get("memory", "0"),
+            node_role=node_role,
             pods=[],
         )
 
-    # Pods
+    # Platform system pods (auth-gateway, platform-db 등)
+    platform_pods = v1.list_namespaced_pod(namespace="platform")
+    for pod in platform_pods.items:
+        node_name = pod.spec.node_name or "unscheduled"
+        if node_name in node_map:
+            node_map[node_name].node_role = "system"
+            pod_info = PodInfo(
+                pod_name=pod.metadata.name,
+                username="SYSTEM",
+                user_name=pod.metadata.name.split("-")[0],  # auth-gateway, platform-db
+                status=pod.status.phase or "Unknown",
+                node_name=node_name,
+                cpu_request="system",
+                memory_request="system",
+                created_at=pod.metadata.creation_timestamp.isoformat() if pod.metadata.creation_timestamp else None,
+            )
+            node_map[node_name].pods.append(pod_info)
+
+    # Ingress controller pods
+    try:
+        ingress_pods = v1.list_namespaced_pod(namespace="ingress-nginx")
+        for pod in ingress_pods.items:
+            node_name = pod.spec.node_name or "unscheduled"
+            if node_name in node_map:
+                node_map[node_name].node_role = "system"
+                pod_info = PodInfo(
+                    pod_name=pod.metadata.name,
+                    username="SYSTEM",
+                    user_name="ingress-nginx",
+                    status=pod.status.phase or "Unknown",
+                    node_name=node_name,
+                    cpu_request="system",
+                    memory_request="system",
+                    created_at=pod.metadata.creation_timestamp.isoformat() if pod.metadata.creation_timestamp else None,
+                )
+                node_map[node_name].pods.append(pod_info)
+    except Exception:
+        pass
+
+    # User pods
     pods = v1.list_namespaced_pod(namespace=namespace, label_selector="app=claude-terminal")
     total_pods = 0
     for pod in pods.items:

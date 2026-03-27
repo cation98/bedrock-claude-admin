@@ -233,6 +233,7 @@ export interface NodeInfo {
   status: string;
   cpu_capacity: string;
   memory_capacity: string;
+  node_role: string;
   pods: PodInfo[];
 }
 

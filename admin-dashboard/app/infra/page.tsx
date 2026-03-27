@@ -27,15 +27,26 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+const ROLE_BADGE: Record<string, { bg: string; label: string }> = {
+  system: { bg: "bg-red-100 text-red-700", label: "시스템 (삭제 금지)" },
+  presenter: { bg: "bg-purple-100 text-purple-700", label: "전용 노드" },
+  user: { bg: "bg-blue-50 text-blue-700", label: "사용자" },
+};
+
 function NodeCard({ node }: { node: NodeInfo }) {
   const hasPods = node.pods.length > 0;
+  const isSystem = node.node_role === "system";
+  const role = ROLE_BADGE[node.node_role] ?? ROLE_BADGE.user;
   return (
-    <div className={`rounded-lg border ${hasPods ? "border-blue-200 bg-white" : "border-gray-200 bg-gray-50"} shadow-sm`}>
+    <div className={`rounded-lg border ${isSystem ? "border-red-200 bg-red-50/30" : hasPods ? "border-blue-200 bg-white" : "border-gray-200 bg-gray-50"} shadow-sm`}>
       <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
         <div>
           <span className="text-sm font-semibold text-gray-900">{shortNode(node.node_name)}</span>
           <span className="ml-2 rounded bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
             {node.instance_type}
+          </span>
+          <span className={`ml-2 rounded px-2 py-0.5 text-xs font-medium ${role.bg}`}>
+            {role.label}
           </span>
         </div>
         <div className="flex items-center gap-2">
