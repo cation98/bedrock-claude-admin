@@ -34,10 +34,10 @@ class Settings(BaseSettings):
     k8s_pod_image: str = ""  # ECR image URL
     k8s_service_account: str = "claude-terminal-sa"
     k8s_pod_ttl_seconds: int = 14400  # 4시간
-    # 노드당 Pod 2개 제한: m5.large(2CPU/8GB) 기준 900m×2=1800m < 1900m(가용)
-    k8s_pod_cpu_request: str = "900m"
+    # 노드당 Pod 2개 제한: m5.large(2CPU/8GB) 기준 750m×2=1500m < 1700m(가용)
+    k8s_pod_cpu_request: str = "750m"
     k8s_pod_cpu_limit: str = "1000m"
-    k8s_pod_memory_request: str = "3Gi"
+    k8s_pod_memory_request: str = "2Gi"
     k8s_pod_memory_limit: str = "4Gi"
 
     # ----- Telegram Bot -----

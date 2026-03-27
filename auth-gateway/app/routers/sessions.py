@@ -155,14 +155,13 @@ async def create_session(
     db.commit()
     db.refresh(session)
 
-    # Pod Ready 대기 (최대 30초) — Ingress 503 방지
-    for _ in range(15):
-        pod_status = k8s.get_pod_status(pod_name)
-        if pod_status and pod_status["phase"] == "Running":
-            session.pod_status = "running"
-            db.commit()
-            break
-        time.sleep(2)
+    # Pod 상태 1회 확인 (블로킹 대기 제거 — 프론트엔드 폴링으로 이관)
+    import asyncio
+    await asyncio.sleep(3)
+    pod_status_info = k8s.get_pod_status(pod_name)
+    if pod_status_info and pod_status_info["phase"] == "Running":
+        session.pod_status = "running"
+        db.commit()
 
     return _to_response(session, settings, ttl_seconds=ttl_seconds)
 
