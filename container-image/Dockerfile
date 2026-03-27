@@ -111,8 +111,7 @@ RUN mkdir -p /home/node/.claude/hooks
 COPY --chown=node:node config/security-hook.sh /home/node/.claude/hooks/security-hook.sh
 RUN chmod 555 /home/node/.claude/hooks/security-hook.sh
 
-# CLAUDE.md와 settings.json을 읽기 전용으로 보호 (사용자가 보안 정책 수정 불가)
-RUN chmod 444 /home/node/.claude/CLAUDE.md /home/node/.claude/settings.json
+# NOTE: chmod 444는 entrypoint.sh 마지막에 설정 (entrypoint에서 CLAUDE.md/settings.json 동적 수정 후)
 COPY --chown=node:node config/skills/ /home/node/.claude/commands/
 COPY --chown=node:node config/claude.json /home/node/.claude.json
 
