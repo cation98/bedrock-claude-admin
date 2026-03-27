@@ -303,14 +303,14 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
       document.cookie = 'claude_token=;path=/;max-age=0';
       window.location.href = '/';
     }};
+    var headers = {{}};
     if (token) {{
-      fetch('/api/v1/sessions/', {{
-        method: 'DELETE',
-        headers: {{ 'Authorization': 'Bearer ' + token }}
-      }}).then(cleanup).catch(cleanup);
-    }} else {{
-      cleanup();
+      headers['Authorization'] = 'Bearer ' + token;
     }}
+    fetch('/api/v1/sessions/', {{
+      method: 'DELETE',
+      headers: headers
+    }}).then(cleanup).catch(cleanup);
   }});
   </script>
 
