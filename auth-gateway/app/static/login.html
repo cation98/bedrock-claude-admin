@@ -126,6 +126,23 @@
         }
         /* TODO: 2FA 입력 UI (향후 구현) */
         .twofa-section { display: none; }
+
+        /* Spinner animation for status messages */
+        .status-spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid transparent;
+            border-top-color: #86efac;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+        .status.with-spinner {
+            display: flex;
+            align-items: center;
+        }
     </style>
 </head>
 <body>
@@ -172,6 +189,15 @@
 
     <script>
         const API_BASE = window.location.origin;
+
+        function setStatusWithSpinner(el, text) {
+            el.textContent = '';
+            el.classList.add('with-spinner');
+            const spinner = document.createElement('span');
+            spinner.className = 'status-spinner';
+            el.appendChild(spinner);
+            el.appendChild(document.createTextNode(text));
+        }
 
         async function handleLogin(e) {
             e.preventDefault();
@@ -227,15 +253,15 @@
 
                 // Step 3: Pod이 Ready될 때까지 대기 (이미 Running이면 빠르게 통과)
                 if (sessionData.pod_status === 'running') {
-                    statusEl.textContent = '터미널에 접속합니다...';
+                    setStatusWithSpinner(statusEl, '접속합니다...');
                 } else {
-                    statusEl.textContent = '지금 자원 설정 중, 커피 한잔 하고 오세요 (약 3분 예상)';
+                    setStatusWithSpinner(statusEl, '자원 설정 중입니다. 최초 접속 시 3~5분이 소요됩니다.');
                 }
                 const readySession = await waitForTerminal(token, sessionData.pod_name);
 
                 // Step 4: 허브 페이지가 실제로 응답할 때까지 대기 (503 방지)
                 const hubUrl = (readySession && readySession.hub_url) || `/hub/${sessionData.pod_name}/`;
-                statusEl.textContent = '접속 준비 중...';
+                setStatusWithSpinner(statusEl, '접속 준비 중...');
                 await waitForPage(hubUrl);
 
                 // Step 5: 허브 페이지로 리다이렉트
@@ -252,17 +278,22 @@
         }
 
         async function waitForTerminal(token, podName) {
-            const maxWait = 300;  // 5분 (노드 확장 포함)
+            const maxWait = 600;  // 10분 (노드 스케일링 포함)
             const statusEl = document.getElementById('status');
             for (let i = 0; i < maxWait; i += 5) {
                 await new Promise(r => setTimeout(r, 5000));
 
                 const elapsed = i + 5;
-                const remaining = Math.max(0, 180 - elapsed);
-                if (elapsed > 15 && remaining > 0) {
-                    statusEl.textContent = `자원 설정 중... 약 ${Math.ceil(remaining / 60)}분 남음`;
-                } else if (elapsed > 180) {
-                    statusEl.textContent = '거의 완료되었습니다... 조금만 더 기다려주세요';
+
+                // Staged progress messages with spinner
+                if (elapsed <= 15) {
+                    setStatusWithSpinner(statusEl, '환경을 준비하고 있습니다...');
+                } else if (elapsed <= 60) {
+                    setStatusWithSpinner(statusEl, '노드를 설정하고 있습니다... (약 2분 소요)');
+                } else if (elapsed <= 180) {
+                    setStatusWithSpinner(statusEl, 'Pod을 시작하고 있습니다... 잠시만 기다려주세요');
+                } else {
+                    setStatusWithSpinner(statusEl, '거의 완료되었습니다...');
                 }
 
                 try {
@@ -272,14 +303,14 @@
                     const data = await res.json();
                     const session = data.sessions.find(s => s.pod_name === podName);
                     if (session && session.pod_status === 'running') {
-                        statusEl.textContent = '터미널에 접속합니다...';
+                        setStatusWithSpinner(statusEl, '터미널에 접속합니다...');
                         return session;
                     }
                 } catch (e) {
                     // retry
                 }
             }
-            throw new Error('자원 설정 시간이 초과되었습니다. 관리자에게 문의해주세요.');
+            throw new Error('자원 설정 시간이 초과되었습니다. 관리자에게 문의해주세요. (10분 초과)');
         }
 
         async function waitForPage(url) {

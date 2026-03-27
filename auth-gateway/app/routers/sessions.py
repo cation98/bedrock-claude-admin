@@ -14,7 +14,9 @@ import logging
 import time
 from datetime import datetime, timedelta, timezone
 
+import boto3
 from fastapi import APIRouter, Depends, HTTPException, status
+from kubernetes import client as k8s_client
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
@@ -32,6 +34,171 @@ from app.services.k8s_service import K8sService, K8sServiceError
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["sessions"])
 logger = logging.getLogger(__name__)
+
+# ---------- 노드 용량 확인 및 오토스케일링 ----------
+
+# 시연자(presenter) 전용 사번 목록 — k8s_service.py의 nodeSelector 로직과 동일
+PRESENTER_USERS = {"N1102359", "N1001065"}
+
+# EKS 클러스터 정보
+EKS_CLUSTER_NAME = "bedrock-claude-eks"
+EKS_REGION = "ap-northeast-2"
+
+# 노드그룹 매핑: 시연자 → presenter-node, 일반 사용자 → bedrock-claude-nodes
+NODEGROUP_MAP = {
+    "presenter": "presenter-node",
+    "user": "bedrock-claude-nodes",
+}
+
+# Pod 생성에 필요한 최소 여유 CPU (millicores)
+MIN_FREE_CPU_MILLICORES = 1000
+
+
+def _parse_cpu_to_millicores(cpu_str: str) -> int:
+    """K8s CPU 문자열을 millicore 정수로 변환.
+
+    Examples:
+        "4" → 4000, "3500m" → 3500, "750m" → 750
+    """
+    cpu_str = cpu_str.strip()
+    if cpu_str.endswith("m"):
+        return int(cpu_str[:-1])
+    return int(float(cpu_str) * 1000)
+
+
+def _parse_memory_to_bytes(mem_str: str) -> int:
+    """K8s 메모리 문자열을 바이트 정수로 변환 (Ki/Mi/Gi 지원)."""
+    mem_str = mem_str.strip()
+    units = {"Ki": 1024, "Mi": 1024**2, "Gi": 1024**3}
+    for suffix, multiplier in units.items():
+        if mem_str.endswith(suffix):
+            return int(mem_str[: -len(suffix)]) * multiplier
+    # 단위 없는 순수 바이트
+    return int(mem_str)
+
+
+def _ensure_node_capacity(username: str) -> None:
+    """Pod 생성 전 대상 노드그룹에 충분한 CPU 여유가 있는지 확인.
+
+    여유가 부족하면 해당 노드그룹의 desiredSize를 +1 스케일업한다.
+    노드가 실제로 Ready 될 때까지 기다리지 않는다 — Pod는 Pending 상태로
+    대기하다가 노드가 준비되면 자동 스케줄링된다.
+
+    IRSA(platform-admin-sa)의 eks:UpdateNodegroupConfig 권한을 사용한다.
+    """
+    is_presenter = username.upper() in PRESENTER_USERS
+    node_label_selector = "role=presenter" if is_presenter else None
+    nodegroup_name = NODEGROUP_MAP["presenter"] if is_presenter else NODEGROUP_MAP["user"]
+
+    try:
+        # K8s API로 해당 라벨의 노드 목록 조회
+        v1 = k8s_client.CoreV1Api()
+
+        if node_label_selector:
+            nodes = v1.list_node(label_selector=node_label_selector).items
+        else:
+            # 일반 사용자: role 라벨이 없는(= presenter/system이 아닌) 노드
+            # bedrock-claude-nodes 노드그룹의 노드는 별도 role 라벨이 없음
+            all_nodes = v1.list_node().items
+            nodes = [
+                n for n in all_nodes
+                if n.metadata.labels.get("role") not in ("presenter", "system")
+            ]
+
+        if not nodes:
+            # 노드가 0개 — 스케일업 필요
+            logger.warning(
+                f"No nodes found for nodegroup '{nodegroup_name}'. Scaling up by 1."
+            )
+            _scale_up_nodegroup(nodegroup_name)
+            return
+
+        # 각 노드의 allocatable CPU에서 실행 중인 Pod의 CPU request 합계를 빼서 여유 계산
+        for node in nodes:
+            node_name = node.metadata.name
+            allocatable_cpu = _parse_cpu_to_millicores(
+                node.status.allocatable.get("cpu", "0")
+            )
+
+            # 해당 노드에서 실행 중인 Pod들의 CPU request 합산
+            pods = v1.list_pod_for_all_namespaces(
+                field_selector=f"spec.nodeName={node_name},status.phase!=Succeeded,status.phase!=Failed"
+            ).items
+
+            used_cpu = 0
+            for pod in pods:
+                for container in pod.spec.containers:
+                    if container.resources and container.resources.requests:
+                        cpu_req = container.resources.requests.get("cpu", "0")
+                        used_cpu += _parse_cpu_to_millicores(cpu_req)
+                # init container는 병렬 실행되지 않으므로 무시
+
+            free_cpu = allocatable_cpu - used_cpu
+            logger.info(
+                f"Node {node_name}: allocatable={allocatable_cpu}m, "
+                f"used={used_cpu}m, free={free_cpu}m"
+            )
+
+            if free_cpu >= MIN_FREE_CPU_MILLICORES:
+                # 충분한 여유가 있는 노드 발견 — 스케일업 불필요
+                logger.info(
+                    f"Node {node_name} has {free_cpu}m free CPU. No scale-up needed."
+                )
+                return
+
+        # 모든 노드가 부족 — 스케일업
+        logger.warning(
+            f"All nodes in nodegroup '{nodegroup_name}' lack capacity. Scaling up by 1."
+        )
+        _scale_up_nodegroup(nodegroup_name)
+
+    except Exception as e:
+        # 용량 확인/스케일업 실패는 Pod 생성을 막지 않는다.
+        # Pod가 Pending 상태로 남게 되지만, 최소한 세션 생성 자체는 진행.
+        logger.error(f"Failed to ensure node capacity: {e}", exc_info=True)
+
+
+def _scale_up_nodegroup(nodegroup_name: str) -> None:
+    """EKS 노드그룹의 desiredSize를 현재값 + 1로 스케일업.
+
+    boto3 EKS API를 사용하며, IRSA 자격증명이 자동으로 적용된다.
+    """
+    try:
+        eks = boto3.client("eks", region_name=EKS_REGION)
+
+        # 현재 노드그룹 상태 조회
+        ng = eks.describe_nodegroup(
+            clusterName=EKS_CLUSTER_NAME,
+            nodegroupName=nodegroup_name,
+        )
+        scaling = ng["nodegroup"]["scalingConfig"]
+        current_desired = scaling["desiredSize"]
+        max_size = scaling["maxSize"]
+        new_desired = current_desired + 1
+
+        if new_desired > max_size:
+            logger.error(
+                f"Cannot scale up '{nodegroup_name}': desired {new_desired} "
+                f"exceeds maxSize {max_size}. Increase maxSize in Terraform first."
+            )
+            return
+
+        eks.update_nodegroup_config(
+            clusterName=EKS_CLUSTER_NAME,
+            nodegroupName=nodegroup_name,
+            scalingConfig={
+                "minSize": scaling["minSize"],
+                "maxSize": max_size,
+                "desiredSize": new_desired,
+            },
+        )
+        logger.info(
+            f"Scaled up nodegroup '{nodegroup_name}': "
+            f"{current_desired} → {new_desired} (max={max_size})"
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to scale up nodegroup '{nodegroup_name}': {e}", exc_info=True)
 
 
 def _get_k8s_service(settings: Settings = Depends(get_settings)) -> K8sService:
@@ -123,6 +290,9 @@ async def create_session(
     # 사용자별 Pod TTL 결정 (DB 설정 → 초 변환)
     user_pod_ttl = user.pod_ttl if user else "4h"
     ttl_seconds = POD_TTL_SECONDS_MAP.get(user_pod_ttl, 14400)
+
+    # 노드 용량 확인 → 부족하면 노드그룹 스케일업 (비차단)
+    _ensure_node_capacity(username)
 
     # K8s Pod 생성 (사용자 프로필 주입 + 동적 TTL)
     try:
