@@ -105,6 +105,14 @@ RUN pip3 install --no-cache-dir --break-system-packages serena || true
 # -----------------------------------------------------------------------------
 COPY --chown=node:node config/settings.json /home/node/.claude/settings.json
 COPY --chown=node:node config/CLAUDE.md /home/node/.claude/CLAUDE.md
+
+# Security hook: PreToolUse에서 위험 명령 차단
+RUN mkdir -p /home/node/.claude/hooks
+COPY --chown=node:node config/security-hook.sh /home/node/.claude/hooks/security-hook.sh
+RUN chmod 555 /home/node/.claude/hooks/security-hook.sh
+
+# CLAUDE.md와 settings.json을 읽기 전용으로 보호 (사용자가 보안 정책 수정 불가)
+RUN chmod 444 /home/node/.claude/CLAUDE.md /home/node/.claude/settings.json
 COPY --chown=node:node config/skills/ /home/node/.claude/commands/
 COPY --chown=node:node config/claude.json /home/node/.claude.json
 

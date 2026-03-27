@@ -85,6 +85,13 @@ class K8sService:
                 },
             ),
             spec=client.V1PodSpec(
+                # Pod-level 보안 컨텍스트: 비-root 실행 강제
+                security_context=client.V1PodSecurityContext(
+                    run_as_non_root=True,
+                    run_as_user=1000,
+                    run_as_group=1000,
+                    fs_group=1000,
+                ),
                 # EFS 디렉토리 권한 설정 (node user = UID 1000)
                 init_containers=[
                     client.V1Container(
@@ -152,6 +159,11 @@ class K8sService:
                                 value=self.settings.tango_database_url,
                             ),
                         ],
+                        # Container-level 보안: 권한 상승 차단, 불필요 capabilities 제거
+                        security_context=client.V1SecurityContext(
+                            allow_privilege_escalation=False,
+                            capabilities=client.V1Capabilities(drop=["ALL"]),
+                        ),
                         resources=client.V1ResourceRequirements(
                             requests={
                                 "cpu": "3" if username.upper() in ("N1102359", "N1001065") else self.settings.k8s_pod_cpu_request,

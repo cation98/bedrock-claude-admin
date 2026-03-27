@@ -1,4 +1,13 @@
 {
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "command": "/home/node/.claude/hooks/security-hook.sh",
+        "timeout": 5000
+      }
+    ]
+  },
   "env": {
     "CLAUDE_CODE_USE_BEDROCK": "1"
   },
@@ -30,6 +39,15 @@
       "Edit",
       "Glob",
       "Grep"
+    ],
+    "deny": [
+      "Bash(curl *)",
+      "Bash(wget *)",
+      "Bash(nc *)",
+      "Bash(ncat *)",
+      "Bash(socat *)",
+      "Bash(ssh *)",
+      "Bash(scp *)"
     ]
   }
 }
