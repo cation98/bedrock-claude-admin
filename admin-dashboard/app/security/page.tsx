@@ -5,10 +5,12 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   getSecurityPolicies,
+  getSecurityTables,
   applySecurityTemplate,
   updateSecurityPolicy,
   type SecurityPolicyWithUser,
   type SecurityLevel,
+  type TableInfo,
 } from "@/lib/api";
 import { isAuthenticated, logout, getUser } from "@/lib/auth";
 import StatsCard from "@/components/stats-card";
@@ -27,6 +29,12 @@ const LEVEL_LABEL: Record<SecurityLevel, string> = {
   full: "Full",
 };
 
+const LEVEL_DESC: Record<SecurityLevel, { text: string; className: string }> = {
+  basic: { text: "스킬만 사용, DB 직접접근 불가", className: "text-xs text-gray-400" },
+  standard: { text: "허용 DB/테이블 접근, 전체 스킬", className: "text-xs text-gray-400" },
+  full: { text: "전체 접근 (주의: 모든 데이터 열람 가능)", className: "text-xs text-amber-500" },
+};
+
 const DB_KEYS = ["db_safety", "db_tango"] as const;
 const DB_LABELS: Record<string, string> = {
   db_safety: "Safety DB",
@@ -41,6 +49,36 @@ const SKILL_LABELS: Record<string, string> = {
   share: "공유",
   sms: "SMS",
   webapp: "웹앱",
+};
+
+/* ── Level template defaults ── */
+const LEVEL_DEFAULTS: Record<
+  string,
+  {
+    db_safety: boolean;
+    db_tango: boolean;
+    skills: string[];
+    can_see_schema: boolean;
+  }
+> = {
+  basic: {
+    db_safety: false,
+    db_tango: false,
+    skills: ["report", "share"],
+    can_see_schema: false,
+  },
+  standard: {
+    db_safety: true,
+    db_tango: true,
+    skills: ["db", "report", "excel", "share", "sms", "webapp"],
+    can_see_schema: true,
+  },
+  full: {
+    db_safety: true,
+    db_tango: true,
+    skills: ["db", "report", "excel", "share", "sms", "webapp"],
+    can_see_schema: true,
+  },
 };
 
 function parsePolicyField<T>(policy: Record<string, unknown>, key: string, fallback: T): T {
@@ -58,14 +96,31 @@ export default function SecurityPage() {
   // Detail panel local state
   const [detailLevel, setDetailLevel] = useState<SecurityLevel>("basic");
   const [detailDbAccess, setDetailDbAccess] = useState<Record<string, boolean>>({});
+  const [detailDbTables, setDetailDbTables] = useState<Record<string, string[]>>({
+    db_safety: ["*"],
+    db_tango: ["*"],
+  });
   const [detailSkills, setDetailSkills] = useState<Record<string, boolean>>({});
   const [detailSchemaExposure, setDetailSchemaExposure] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  // Available tables from API
+  const [availableTables, setAvailableTables] = useState<{ safety: TableInfo[]; tango: TableInfo[] }>({
+    safety: [],
+    tango: [],
+  });
+
+  // Table filter for search
+  const [tableFilter, setTableFilter] = useState("");
+
   const fetchData = useCallback(async () => {
     try {
-      const res = await getSecurityPolicies();
-      setPolicies(res.policies);
+      const [policyRes, tablesRes] = await Promise.all([
+        getSecurityPolicies(),
+        getSecurityTables().catch(() => ({ safety: [], tango: [] })),
+      ]);
+      setPolicies(policyRes.policies);
+      setAvailableTables(tablesRes);
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "데이터 조회 실패");
@@ -94,12 +149,17 @@ export default function SecurityPage() {
       db_safety: parsePolicyField(p.security_policy, "db_safety", false),
       db_tango: parsePolicyField(p.security_policy, "db_tango", false),
     });
+    setDetailDbTables({
+      db_safety: parsePolicyField<string[]>(p.security_policy, "db_safety_tables", ["*"]),
+      db_tango: parsePolicyField<string[]>(p.security_policy, "db_tango_tables", ["*"]),
+    });
     const skills: Record<string, boolean> = {};
     for (const k of SKILL_KEYS) {
       skills[k] = parsePolicyField(p.security_policy, `skill_${k}`, false);
     }
     setDetailSkills(skills);
     setDetailSchemaExposure(parsePolicyField(p.security_policy, "schema_exposure", false));
+    setTableFilter("");
   }, [selectedUserId, policies]);
 
   const user = getUser();
@@ -112,6 +172,26 @@ export default function SecurityPage() {
   function clearMessages() {
     setError("");
     setSuccess("");
+  }
+
+  /* ── Auto-fill form when security level changes ── */
+  function handleLevelChange(level: SecurityLevel) {
+    const defaults = LEVEL_DEFAULTS[level];
+    setDetailLevel(level);
+    setDetailDbAccess({
+      db_safety: defaults.db_safety,
+      db_tango: defaults.db_tango,
+    });
+    setDetailDbTables({
+      db_safety: ["*"],
+      db_tango: ["*"],
+    });
+    const skills: Record<string, boolean> = {};
+    for (const k of SKILL_KEYS) {
+      skills[k] = defaults.skills.includes(k);
+    }
+    setDetailSkills(skills);
+    setDetailSchemaExposure(defaults.can_see_schema);
   }
 
   async function handleQuickTemplate(userId: number, level: SecurityLevel) {
@@ -136,6 +216,8 @@ export default function SecurityPage() {
         security_level: detailLevel,
         db_safety: detailDbAccess.db_safety ?? false,
         db_tango: detailDbAccess.db_tango ?? false,
+        db_safety_tables: detailDbTables.db_safety ?? ["*"],
+        db_tango_tables: detailDbTables.db_tango ?? ["*"],
         db_platform: false, // always OFF
         schema_exposure: detailSchemaExposure,
       };
@@ -162,12 +244,35 @@ export default function SecurityPage() {
       db_safety: parsePolicyField(p.security_policy, "db_safety", false),
       db_tango: parsePolicyField(p.security_policy, "db_tango", false),
     });
+    setDetailDbTables({
+      db_safety: parsePolicyField<string[]>(p.security_policy, "db_safety_tables", ["*"]),
+      db_tango: parsePolicyField<string[]>(p.security_policy, "db_tango_tables", ["*"]),
+    });
     const skills: Record<string, boolean> = {};
     for (const k of SKILL_KEYS) {
       skills[k] = parsePolicyField(p.security_policy, `skill_${k}`, false);
     }
     setDetailSkills(skills);
     setDetailSchemaExposure(parsePolicyField(p.security_policy, "schema_exposure", false));
+    setTableFilter("");
+  }
+
+  /* ── Table toggle helper ── */
+  function toggleTable(dbKey: string, tableName: string, checked: boolean) {
+    setDetailDbTables((prev) => {
+      const current = prev[dbKey] ?? [];
+      if (checked) {
+        return { ...prev, [dbKey]: [...current, tableName] };
+      }
+      return { ...prev, [dbKey]: current.filter((t) => t !== tableName) };
+    });
+  }
+
+  /* ── Resolve which table list to use for a DB key ── */
+  function getTablesForDb(dbKey: string): TableInfo[] {
+    if (dbKey === "db_safety") return availableTables.safety;
+    if (dbKey === "db_tango") return availableTables.tango;
+    return [];
   }
 
   return (
@@ -343,11 +448,11 @@ export default function SecurityPage() {
                     <legend className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">
                       보안 등급
                     </legend>
-                    <div className="flex gap-3">
+                    <div className="flex flex-col gap-2">
                       {(["basic", "standard", "full"] as SecurityLevel[]).map((lvl) => (
                         <label
                           key={lvl}
-                          className={`flex cursor-pointer items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm ${
+                          className={`flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2 text-sm ${
                             detailLevel === lvl
                               ? "border-blue-500 bg-blue-50 text-blue-700"
                               : "border-gray-300 text-gray-600 hover:bg-gray-50"
@@ -358,33 +463,122 @@ export default function SecurityPage() {
                             name="security_level"
                             value={lvl}
                             checked={detailLevel === lvl}
-                            onChange={() => setDetailLevel(lvl)}
+                            onChange={() => handleLevelChange(lvl)}
                             className="sr-only"
                           />
-                          {LEVEL_LABEL[lvl]}
+                          <div>
+                            <span className="font-medium">{LEVEL_LABEL[lvl]}</span>
+                            <p className={LEVEL_DESC[lvl].className}>{LEVEL_DESC[lvl].text}</p>
+                          </div>
                         </label>
                       ))}
                     </div>
                   </fieldset>
 
-                  {/* DB Access Toggles */}
+                  {/* DB Access Toggles + Table Selectors */}
                   <fieldset>
                     <legend className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">
                       DB 접근 권한
                     </legend>
                     <div className="space-y-2">
                       {DB_KEYS.map((key) => (
-                        <label key={key} className="flex items-center gap-2 text-sm text-gray-700">
-                          <input
-                            type="checkbox"
-                            checked={detailDbAccess[key] ?? false}
-                            onChange={(e) =>
-                              setDetailDbAccess((prev) => ({ ...prev, [key]: e.target.checked }))
-                            }
-                            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                          />
-                          {DB_LABELS[key]}
-                        </label>
+                        <div key={key}>
+                          <label className="flex items-center gap-2 text-sm text-gray-700">
+                            <input
+                              type="checkbox"
+                              checked={detailDbAccess[key] ?? false}
+                              onChange={(e) =>
+                                setDetailDbAccess((prev) => ({ ...prev, [key]: e.target.checked }))
+                              }
+                              className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            {DB_LABELS[key]}
+                          </label>
+
+                          {/* Table-level selector (shown when DB is ON) */}
+                          {detailDbAccess[key] && (
+                            <div className="ml-6 mt-2">
+                              <div className="flex items-center gap-2 mb-1">
+                                <label className="text-xs text-gray-500">테이블 접근:</label>
+                                <select
+                                  value={
+                                    detailDbTables[key]?.[0] === "*" ? "all" : "custom"
+                                  }
+                                  onChange={(e) => {
+                                    if (e.target.value === "all") {
+                                      setDetailDbTables((prev) => ({
+                                        ...prev,
+                                        [key]: ["*"],
+                                      }));
+                                    } else {
+                                      setDetailDbTables((prev) => ({
+                                        ...prev,
+                                        [key]: [],
+                                      }));
+                                    }
+                                  }}
+                                  className="text-xs border rounded px-1 py-0.5"
+                                >
+                                  <option value="all">전체 테이블</option>
+                                  <option value="custom">선택...</option>
+                                </select>
+                              </div>
+                              {detailDbTables[key]?.[0] !== "*" && (
+                                <div className="max-h-48 overflow-y-auto border rounded p-2 space-y-1">
+                                  <input
+                                    type="text"
+                                    placeholder="테이블 검색..."
+                                    className="w-full text-xs border-b pb-1 mb-1 px-1 outline-none"
+                                    value={tableFilter}
+                                    onChange={(e) => setTableFilter(e.target.value)}
+                                  />
+                                  {getTablesForDb(key).length === 0 ? (
+                                    <p className="text-xs text-gray-400 py-1">
+                                      테이블 목록을 불러올 수 없습니다
+                                    </p>
+                                  ) : (
+                                    getTablesForDb(key)
+                                      .filter(
+                                        (t) =>
+                                          !tableFilter ||
+                                          t.name
+                                            .toLowerCase()
+                                            .includes(tableFilter.toLowerCase()) ||
+                                          t.description
+                                            .toLowerCase()
+                                            .includes(tableFilter.toLowerCase())
+                                      )
+                                      .map((t) => (
+                                        <label
+                                          key={t.name}
+                                          className="flex items-center gap-2 text-xs hover:bg-gray-50 px-1 py-0.5 rounded"
+                                        >
+                                          <input
+                                            type="checkbox"
+                                            checked={
+                                              detailDbTables[key]?.includes(t.name) ?? false
+                                            }
+                                            onChange={(e) =>
+                                              toggleTable(key, t.name, e.target.checked)
+                                            }
+                                            className="h-3 w-3 rounded border-gray-300 text-blue-600"
+                                          />
+                                          <span className="font-mono text-gray-700">
+                                            {t.name}
+                                          </span>
+                                          {t.description && (
+                                            <span className="text-gray-400">
+                                              — {t.description}
+                                            </span>
+                                          )}
+                                        </label>
+                                      ))
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       ))}
                       <label className="flex items-center gap-2 text-sm text-gray-400">
                         <input

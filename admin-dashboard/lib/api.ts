@@ -399,3 +399,14 @@ export function applySecurityTemplate(userId: number, templateName: SecurityLeve
 export function getSecurityTemplates(): Promise<{ templates: { name: string; description: string; security_policy: Record<string, unknown> }[] }> {
   return request<{ templates: { name: string; description: string; security_policy: Record<string, unknown> }[] }>("/api/v1/security/templates");
 }
+
+// ---------- Security: Table Info ----------
+
+export interface TableInfo {
+  name: string;
+  description: string;
+}
+
+export function getSecurityTables(): Promise<{ safety: TableInfo[]; tango: TableInfo[] }> {
+  return request<{ safety: TableInfo[]; tango: TableInfo[] }>("/api/v1/security/tables");
+}
