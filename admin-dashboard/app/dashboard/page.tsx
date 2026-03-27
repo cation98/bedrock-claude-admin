@@ -65,12 +65,6 @@ export default function DashboardPage() {
                 대시보드
               </Link>
               <Link
-                href="/workshop"
-                className="hover:text-gray-900 transition-colors"
-              >
-                워크숍 관리
-              </Link>
-              <Link
                 href="/users"
                 className="hover:text-gray-900 transition-colors"
               >
