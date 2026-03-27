@@ -364,7 +364,7 @@ export function getInfrastructure(): Promise<InfraResponse> {
 
 // ---------- Security Policies ----------
 
-export type SecurityLevel = "basic" | "standard" | "full";
+export type SecurityLevel = "basic" | "standard" | "full" | (string & {});
 
 export interface SecurityPolicyWithUser {
   user_id: number;

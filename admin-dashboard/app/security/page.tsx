@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -17,23 +17,31 @@ import StatsCard from "@/components/stats-card";
 
 const REFRESH_INTERVAL = 30_000;
 
-const LEVEL_BADGE: Record<SecurityLevel, string> = {
+const KNOWN_LEVELS = ["basic", "standard", "full"] as const;
+
+const LEVEL_BADGE: Record<string, string> = {
   basic: "bg-gray-100 text-gray-600",
   standard: "bg-blue-100 text-blue-700",
   full: "bg-green-100 text-green-700",
 };
 
-const LEVEL_LABEL: Record<SecurityLevel, string> = {
+const LEVEL_LABEL: Record<string, string> = {
   basic: "Basic",
   standard: "Standard",
   full: "Full",
 };
 
-const LEVEL_DESC: Record<SecurityLevel, { text: string; className: string }> = {
-  basic: { text: "스킬만 사용, DB 직접접근 불가", className: "text-xs text-gray-400" },
-  standard: { text: "허용 DB/테이블 접근, 전체 스킬", className: "text-xs text-gray-400" },
-  full: { text: "전체 접근 (주의: 모든 데이터 열람 가능)", className: "text-xs text-amber-500" },
-};
+const LEVEL_OPTIONS: {
+  value: string;
+  label: string;
+  desc: string;
+  descClass: string;
+}[] = [
+  { value: "basic", label: "Basic", desc: "스킬만 사용, DB 직접접근 불가", descClass: "text-xs text-gray-400" },
+  { value: "standard", label: "Standard", desc: "허용 DB/테이블 접근, 전체 스킬", descClass: "text-xs text-gray-400" },
+  { value: "full", label: "Full", desc: "전체 접근 (주의: 모든 데이터 열람 가능)", descClass: "text-xs text-amber-500" },
+  { value: "custom", label: "Custom", desc: "관리자 정의 권한 (직접 설정)", descClass: "text-xs text-purple-500" },
+];
 
 const DB_KEYS = ["db_safety", "db_tango"] as const;
 const DB_LABELS: Record<string, string> = {
@@ -85,6 +93,23 @@ function parsePolicyField<T>(policy: Record<string, unknown>, key: string, fallb
   return (policy[key] as T) ?? fallback;
 }
 
+/** Determine the radio selection for a given security_level string */
+function resolveRadioSelection(level: string): string {
+  if (KNOWN_LEVELS.includes(level as typeof KNOWN_LEVELS[number])) return level;
+  return "custom";
+}
+
+/** Badge renderer — purple fallback for custom levels */
+function levelBadge(level: string) {
+  const colors = LEVEL_BADGE[level] || "bg-purple-100 text-purple-700";
+  const label = LEVEL_LABEL[level] || level.charAt(0).toUpperCase() + level.slice(1);
+  return (
+    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${colors}`}>
+      {label}
+    </span>
+  );
+}
+
 export default function SecurityPage() {
   const router = useRouter();
   const [policies, setPolicies] = useState<SecurityPolicyWithUser[]>([]);
@@ -93,8 +118,13 @@ export default function SecurityPage() {
   const [success, setSuccess] = useState("");
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
 
-  // Detail panel local state
-  const [detailLevel, setDetailLevel] = useState<SecurityLevel>("basic");
+  // Form dirty tracking — prevents auto-refresh from wiping unsaved edits
+  const [formDirty, setFormDirty] = useState(false);
+
+  // Detail panel local state (form state, independent of policies)
+  const [detailLevel, setDetailLevel] = useState<string>("basic");
+  const [selectedRadio, setSelectedRadio] = useState<string>("basic");
+  const [customLevelName, setCustomLevelName] = useState("");
   const [detailDbAccess, setDetailDbAccess] = useState<Record<string, boolean>>({});
   const [detailDbTables, setDetailDbTables] = useState<Record<string, string[]>>({
     db_safety: ["*"],
@@ -113,38 +143,24 @@ export default function SecurityPage() {
   // Table filter for search
   const [tableFilter, setTableFilter] = useState("");
 
-  const fetchData = useCallback(async () => {
-    try {
-      const [policyRes, tablesRes] = await Promise.all([
-        getSecurityPolicies(),
-        getSecurityTables().catch(() => ({ safety: [], tango: [] })),
-      ]);
-      setPolicies(policyRes.policies);
-      setAvailableTables(tablesRes);
-      setError("");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "데이터 조회 실패");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  // Ref to track formDirty in the interval callback without re-creating it
+  const formDirtyRef = useRef(formDirty);
+  formDirtyRef.current = formDirty;
 
-  useEffect(() => {
-    if (!isAuthenticated()) {
-      router.replace("/");
-      return;
-    }
-    fetchData();
-    const timer = setInterval(fetchData, REFRESH_INTERVAL);
-    return () => clearInterval(timer);
-  }, [router, fetchData]);
+  const selectedUserIdRef = useRef(selectedUserId);
+  selectedUserIdRef.current = selectedUserId;
 
-  // Sync detail panel when selection changes
-  useEffect(() => {
-    if (selectedUserId === null) return;
-    const p = policies.find((u) => u.user_id === selectedUserId);
-    if (!p) return;
-    setDetailLevel(p.security_level);
+  /* ── Populate form fields from a policy object ── */
+  const initFormFromPolicy = useCallback((p: SecurityPolicyWithUser) => {
+    const radio = resolveRadioSelection(p.security_level);
+    setSelectedRadio(radio);
+    if (radio === "custom") {
+      setDetailLevel(p.security_level);
+      setCustomLevelName(p.security_level);
+    } else {
+      setDetailLevel(p.security_level);
+      setCustomLevelName("");
+    }
     setDetailDbAccess({
       db_safety: parsePolicyField(p.security_policy, "db_safety", false),
       db_tango: parsePolicyField(p.security_policy, "db_tango", false),
@@ -160,7 +176,57 @@ export default function SecurityPage() {
     setDetailSkills(skills);
     setDetailSchemaExposure(parsePolicyField(p.security_policy, "schema_exposure", false));
     setTableFilter("");
-  }, [selectedUserId, policies]);
+  }, []);
+
+  /* ── Data fetch — NEVER touches form state ── */
+  const fetchData = useCallback(async () => {
+    try {
+      const [policyRes, tablesRes] = await Promise.all([
+        getSecurityPolicies(),
+        getSecurityTables().catch(() => ({ safety: [], tango: [] })),
+      ]);
+      setPolicies(policyRes.policies);
+      setAvailableTables(tablesRes);
+
+      // If a user is selected AND form is NOT dirty, silently sync form from fresh data
+      const currentSelectedId = selectedUserIdRef.current;
+      if (currentSelectedId !== null && !formDirtyRef.current) {
+        const freshPolicy = policyRes.policies.find((p) => p.user_id === currentSelectedId);
+        if (freshPolicy) {
+          initFormFromPolicy(freshPolicy);
+        }
+      }
+      // If formDirty is true, we leave form state untouched
+
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "데이터 조회 실패");
+    } finally {
+      setLoading(false);
+    }
+  }, [initFormFromPolicy]);
+
+  useEffect(() => {
+    if (!isAuthenticated()) {
+      router.replace("/");
+      return;
+    }
+    fetchData();
+    const timer = setInterval(fetchData, REFRESH_INTERVAL);
+    return () => clearInterval(timer);
+  }, [router, fetchData]);
+
+  /* ── Row click handler with dirty-check ── */
+  function handleSelectUser(userId: number) {
+    if (userId === selectedUserId) return; // already selected
+    if (formDirty && !window.confirm("저장되지 않은 변경사항이 있습니다. 계속하시겠습니까?")) return;
+    setSelectedUserId(userId);
+    const policy = policies.find((p) => p.user_id === userId);
+    if (policy) {
+      initFormFromPolicy(policy);
+    }
+    setFormDirty(false);
+  }
 
   const user = getUser();
   const selectedPolicy = policies.find((u) => u.user_id === selectedUserId) ?? null;
@@ -168,16 +234,31 @@ export default function SecurityPage() {
   const basicCount = policies.filter((p) => p.security_level === "basic").length;
   const standardCount = policies.filter((p) => p.security_level === "standard").length;
   const fullCount = policies.filter((p) => p.security_level === "full").length;
+  const customCount = policies.filter(
+    (p) => !KNOWN_LEVELS.includes(p.security_level as typeof KNOWN_LEVELS[number])
+  ).length;
 
   function clearMessages() {
     setError("");
     setSuccess("");
   }
 
-  /* ── Auto-fill form when security level changes ── */
-  function handleLevelChange(level: SecurityLevel) {
-    const defaults = LEVEL_DEFAULTS[level];
-    setDetailLevel(level);
+  /* ── Auto-fill form when security level radio changes ── */
+  function handleLevelChange(radio: string) {
+    setSelectedRadio(radio);
+    setFormDirty(true);
+
+    if (radio === "custom") {
+      // Don't auto-fill — admin sets everything manually
+      setDetailLevel(customLevelName || "custom");
+      return;
+    }
+
+    const defaults = LEVEL_DEFAULTS[radio];
+    if (!defaults) return;
+
+    setDetailLevel(radio);
+    setCustomLevelName("");
     setDetailDbAccess({
       db_safety: defaults.db_safety,
       db_tango: defaults.db_tango,
@@ -194,13 +275,24 @@ export default function SecurityPage() {
     setDetailSchemaExposure(defaults.can_see_schema);
   }
 
-  async function handleQuickTemplate(userId: number, level: SecurityLevel) {
+  async function handleQuickTemplate(userId: number, level: string) {
     clearMessages();
-    const confirmed = window.confirm(`보안 등급을 ${LEVEL_LABEL[level]}(으)로 변경하시겠습니까?`);
+    if (level === "custom") {
+      // "Custom" in the quick dropdown opens the detail panel instead
+      setSelectedUserId(userId);
+      const policy = policies.find((p) => p.user_id === userId);
+      if (policy) initFormFromPolicy(policy);
+      setSelectedRadio("custom");
+      setFormDirty(false);
+      return;
+    }
+    const label = LEVEL_LABEL[level] ?? level;
+    const confirmed = window.confirm(`보안 등급을 ${label}(으)로 변경하시겠습니까?`);
     if (!confirmed) return;
     try {
-      await applySecurityTemplate(userId, level);
+      await applySecurityTemplate(userId, level as SecurityLevel);
       setSuccess("보안 템플릿이 적용되었습니다.");
+      setFormDirty(false);
       fetchData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "템플릿 적용 실패");
@@ -226,6 +318,7 @@ export default function SecurityPage() {
       }
       await updateSecurityPolicy(selectedUserId, policyData);
       setSuccess("보안 정책이 저장되었습니다.");
+      setFormDirty(false);
       fetchData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "저장 실패");
@@ -236,25 +329,10 @@ export default function SecurityPage() {
 
   function handleResetDetail() {
     if (selectedUserId === null) return;
-    // Re-trigger sync from current data
     const p = policies.find((u) => u.user_id === selectedUserId);
     if (!p) return;
-    setDetailLevel(p.security_level);
-    setDetailDbAccess({
-      db_safety: parsePolicyField(p.security_policy, "db_safety", false),
-      db_tango: parsePolicyField(p.security_policy, "db_tango", false),
-    });
-    setDetailDbTables({
-      db_safety: parsePolicyField<string[]>(p.security_policy, "db_safety_tables", ["*"]),
-      db_tango: parsePolicyField<string[]>(p.security_policy, "db_tango_tables", ["*"]),
-    });
-    const skills: Record<string, boolean> = {};
-    for (const k of SKILL_KEYS) {
-      skills[k] = parsePolicyField(p.security_policy, `skill_${k}`, false);
-    }
-    setDetailSkills(skills);
-    setDetailSchemaExposure(parsePolicyField(p.security_policy, "schema_exposure", false));
-    setTableFilter("");
+    initFormFromPolicy(p);
+    setFormDirty(false);
   }
 
   /* ── Table toggle helper ── */
@@ -266,6 +344,7 @@ export default function SecurityPage() {
       }
       return { ...prev, [dbKey]: current.filter((t) => t !== tableName) };
     });
+    setFormDirty(true);
   }
 
   /* ── Resolve which table list to use for a DB key ── */
@@ -327,10 +406,11 @@ export default function SecurityPage() {
         )}
 
         {/* Stats */}
-        <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div className={`mb-8 grid grid-cols-1 gap-4 ${customCount > 0 ? "sm:grid-cols-4" : "sm:grid-cols-3"}`}>
           <StatsCard label="Basic 사용자" value={basicCount} />
           <StatsCard label="Standard 사용자" value={standardCount} />
           <StatsCard label="Full 사용자" value={fullCount} />
+          {customCount > 0 && <StatsCard label="Custom 사용자" value={customCount} />}
         </div>
 
         {loading ? (
@@ -375,7 +455,7 @@ export default function SecurityPage() {
                       {policies.map((p) => (
                         <tr
                           key={p.user_id}
-                          onClick={() => setSelectedUserId(p.user_id)}
+                          onClick={() => handleSelectUser(p.user_id)}
                           className={`cursor-pointer hover:bg-gray-50 ${
                             selectedUserId === p.user_id ? "bg-blue-50" : ""
                           }`}
@@ -388,13 +468,7 @@ export default function SecurityPage() {
                             {p.region_name ?? "-"}
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-sm">
-                            <span
-                              className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                                LEVEL_BADGE[p.security_level]
-                              }`}
-                            >
-                              {LEVEL_LABEL[p.security_level]}
-                            </span>
+                            {levelBadge(p.security_level)}
                             {p.pod_restart_required && (
                               <span className="ml-1.5 inline-flex items-center rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-700">
                                 재시작 필요
@@ -403,16 +477,21 @@ export default function SecurityPage() {
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-sm">
                             <select
-                              value={p.security_level}
+                              value={
+                                KNOWN_LEVELS.includes(p.security_level as typeof KNOWN_LEVELS[number])
+                                  ? p.security_level
+                                  : "custom"
+                              }
                               onClick={(e) => e.stopPropagation()}
                               onChange={(e) =>
-                                handleQuickTemplate(p.user_id, e.target.value as SecurityLevel)
+                                handleQuickTemplate(p.user_id, e.target.value)
                               }
                               className="rounded-md border border-gray-300 px-2 py-1 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                             >
                               <option value="basic">Basic</option>
                               <option value="standard">Standard</option>
                               <option value="full">Full</option>
+                              <option value="custom">Custom...</option>
                             </select>
                           </td>
                         </tr>
@@ -426,7 +505,12 @@ export default function SecurityPage() {
             {/* Detail Panel */}
             <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
               <div className="border-b border-gray-200 px-4 py-3">
-                <h2 className="text-sm font-semibold text-gray-900">상세 설정</h2>
+                <div className="flex items-center justify-between">
+                  <h2 className="text-sm font-semibold text-gray-900">상세 설정</h2>
+                  {formDirty && (
+                    <span className="text-xs font-medium text-amber-600">변경됨</span>
+                  )}
+                </div>
               </div>
 
               {selectedPolicy === null ? (
@@ -449,26 +533,45 @@ export default function SecurityPage() {
                       보안 등급
                     </legend>
                     <div className="flex flex-col gap-2">
-                      {(["basic", "standard", "full"] as SecurityLevel[]).map((lvl) => (
+                      {LEVEL_OPTIONS.map((opt) => (
                         <label
-                          key={lvl}
+                          key={opt.value}
                           className={`flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2 text-sm ${
-                            detailLevel === lvl
-                              ? "border-blue-500 bg-blue-50 text-blue-700"
+                            selectedRadio === opt.value
+                              ? opt.value === "custom"
+                                ? "border-purple-500 bg-purple-50 text-purple-700"
+                                : "border-blue-500 bg-blue-50 text-blue-700"
                               : "border-gray-300 text-gray-600 hover:bg-gray-50"
                           }`}
                         >
                           <input
                             type="radio"
                             name="security_level"
-                            value={lvl}
-                            checked={detailLevel === lvl}
-                            onChange={() => handleLevelChange(lvl)}
+                            value={opt.value}
+                            checked={selectedRadio === opt.value}
+                            onChange={() => handleLevelChange(opt.value)}
                             className="sr-only"
                           />
-                          <div>
-                            <span className="font-medium">{LEVEL_LABEL[lvl]}</span>
-                            <p className={LEVEL_DESC[lvl].className}>{LEVEL_DESC[lvl].text}</p>
+                          <div className="flex-1">
+                            <span className="font-medium">{opt.label}</span>
+                            <p className={opt.descClass}>{opt.desc}</p>
+                            {/* Custom name input */}
+                            {opt.value === "custom" && selectedRadio === "custom" && (
+                              <div className="mt-2">
+                                <input
+                                  type="text"
+                                  placeholder="등급 이름 (예: 경영진전용)"
+                                  value={customLevelName}
+                                  onChange={(e) => {
+                                    setCustomLevelName(e.target.value);
+                                    setDetailLevel(e.target.value || "custom");
+                                    setFormDirty(true);
+                                  }}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                                />
+                              </div>
+                            )}
                           </div>
                         </label>
                       ))}
@@ -487,9 +590,10 @@ export default function SecurityPage() {
                             <input
                               type="checkbox"
                               checked={detailDbAccess[key] ?? false}
-                              onChange={(e) =>
-                                setDetailDbAccess((prev) => ({ ...prev, [key]: e.target.checked }))
-                              }
+                              onChange={(e) => {
+                                setDetailDbAccess((prev) => ({ ...prev, [key]: e.target.checked }));
+                                setFormDirty(true);
+                              }}
                               className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                             />
                             {DB_LABELS[key]}
@@ -516,6 +620,7 @@ export default function SecurityPage() {
                                         [key]: [],
                                       }));
                                     }
+                                    setFormDirty(true);
                                   }}
                                   className="text-xs border rounded px-1 py-0.5"
                                 >
@@ -603,9 +708,10 @@ export default function SecurityPage() {
                           <input
                             type="checkbox"
                             checked={detailSkills[key] ?? false}
-                            onChange={(e) =>
-                              setDetailSkills((prev) => ({ ...prev, [key]: e.target.checked }))
-                            }
+                            onChange={(e) => {
+                              setDetailSkills((prev) => ({ ...prev, [key]: e.target.checked }));
+                              setFormDirty(true);
+                            }}
                             className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                           />
                           {SKILL_LABELS[key]}
@@ -623,7 +729,10 @@ export default function SecurityPage() {
                       <input
                         type="checkbox"
                         checked={detailSchemaExposure}
-                        onChange={(e) => setDetailSchemaExposure(e.target.checked)}
+                        onChange={(e) => {
+                          setDetailSchemaExposure(e.target.checked);
+                          setFormDirty(true);
+                        }}
                         className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                       />
                       DB 스키마 정보 제공
