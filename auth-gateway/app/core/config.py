@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     # ----- SMS Gateway -----
     sms_gateway_url: str = ""
     sms_auth_string: str = ""
+    sms_callback_number: str = "02-6123-2200"
+
+    # ----- 2FA -----
+    two_factor_enabled: bool = True  # SMS 2FA 활성화 (False면 SSO만으로 로그인)
 
     # ----- RDS (Pod에 주입할 DB URL) -----
     workshop_database_url: str = ""  # safety-prod ReadOnly Replica
