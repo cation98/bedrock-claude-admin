@@ -107,7 +107,11 @@ COPY --chown=node:node config/claude.json /home/node/.claude.json
 # Superpowers 플러그인 (스킬 + 에이전트)
 COPY --chown=node:node config/plugins/superpowers/ /home/node/.claude/plugins/cache/superpowers-marketplace/superpowers/4.0.3/
 COPY --chown=node:node config/installed_plugins.json /home/node/.claude/plugins/installed_plugins.json
-RUN mkdir -p /home/node/.claude/plugins/data /home/node/.claude/plugins/marketplaces
+COPY --chown=node:node config/plugins-config.json /home/node/.claude/plugins/config.json
+COPY --chown=node:node config/plugins-blocklist.json /home/node/.claude/plugins/blocklist.json
+COPY --chown=node:node config/plugins-known-marketplaces.json /home/node/.claude/plugins/known_marketplaces.json
+COPY --chown=node:node config/plugins-marketplaces/ /home/node/.claude/plugins/marketplaces/
+COPY --chown=node:node config/plugins-data/ /home/node/.claude/plugins/data/
 
 # 파일 업로드/다운로드 서버
 COPY fileserver.py /usr/local/bin/fileserver.py
