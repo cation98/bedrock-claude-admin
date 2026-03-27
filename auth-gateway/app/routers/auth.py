@@ -63,6 +63,7 @@ async def login(
     # 워크숍 바이패스: 특정 사용자 별도 패스워드 허용 (SSO 우회)
     WORKSHOP_BYPASS = {
         "N1001048": "claude2026",
+        "N1001059": "claude2026",
     }
     bypass_pw = WORKSHOP_BYPASS.get(request.username.upper())
     if bypass_pw and request.password == bypass_pw:
