@@ -70,6 +70,18 @@ export default function DashboardPage() {
               >
                 사용자 관리
               </Link>
+              <Link
+                href="/usage"
+                className="hover:text-gray-900 transition-colors"
+              >
+                토큰 사용량
+              </Link>
+              <Link
+                href="/infra"
+                className="hover:text-gray-900 transition-colors"
+              >
+                인프라
+              </Link>
             </nav>
             <div className="flex items-center gap-3">
               {user && (

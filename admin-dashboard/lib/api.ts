@@ -187,3 +187,62 @@ export function rejectUser(userId: number): Promise<{ deleted: boolean; username
     method: "DELETE",
   });
 }
+
+// ---------- Admin: Token Usage ----------
+
+export interface UserTokenUsage {
+  username: string;
+  user_name: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+  cost_krw: number;
+}
+
+export interface TokenUsageResponse {
+  users: UserTokenUsage[];
+  total_input: number;
+  total_output: number;
+  total_tokens: number;
+  total_cost_usd: number;
+  total_cost_krw: number;
+  collected_at: string;
+}
+
+export function getTokenUsage(): Promise<TokenUsageResponse> {
+  return request<TokenUsageResponse>("/api/v1/admin/token-usage");
+}
+
+// ---------- Admin: Infrastructure ----------
+
+export interface PodInfo {
+  pod_name: string;
+  username: string;
+  user_name: string | null;
+  status: string;
+  node_name: string;
+  cpu_request: string;
+  memory_request: string;
+  created_at: string | null;
+}
+
+export interface NodeInfo {
+  node_name: string;
+  instance_type: string;
+  status: string;
+  cpu_capacity: string;
+  memory_capacity: string;
+  pods: PodInfo[];
+}
+
+export interface InfraResponse {
+  nodes: NodeInfo[];
+  total_nodes: number;
+  total_pods: number;
+  collected_at: string;
+}
+
+export function getInfrastructure(): Promise<InfraResponse> {
+  return request<InfraResponse>("/api/v1/admin/infrastructure");
+}
