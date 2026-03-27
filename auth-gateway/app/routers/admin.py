@@ -505,14 +505,17 @@ class ScaleNodeGroupRequest(BaseModel):
     desired_size: int
 
 
+def _get_eks_client():
+    import boto3
+    return boto3.client("eks", region_name="ap-northeast-2")
+
+
 @router.get("/nodegroups", response_model=NodeGroupListResponse)
 async def list_nodegroups(
     _admin: dict = Depends(_require_admin),
-    settings: Settings = Depends(get_settings),
 ):
     """EKS 노드그룹 목록 조회."""
-    import boto3
-    eks = boto3.client("eks", region_name="ap-northeast-2")
+    eks = _get_eks_client()
     cluster = "bedrock-claude-eks"
 
     ng_names = eks.list_nodegroups(clusterName=cluster)["nodegroups"]
@@ -538,8 +541,7 @@ async def scale_nodegroup(
     _admin: dict = Depends(_require_admin),
 ):
     """EKS 노드그룹 스케일링."""
-    import boto3
-    eks = boto3.client("eks", region_name="ap-northeast-2")
+    eks = _get_eks_client()
     cluster = "bedrock-claude-eks"
 
     # 현재 상태 확인
@@ -591,7 +593,7 @@ async def scale_nodegroup(
         nodegroupName=req.nodegroup_name,
         scalingConfig={
             "minSize": new_min,
-            "maxSize": scaling["maxSize"],
+            "maxSize": int(scaling["maxSize"]),
             "desiredSize": req.desired_size,
         },
     )
