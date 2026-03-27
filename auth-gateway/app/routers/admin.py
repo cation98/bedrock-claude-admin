@@ -546,12 +546,43 @@ async def scale_nodegroup(
     ng = eks.describe_nodegroup(clusterName=cluster, nodegroupName=req.nodegroup_name)["nodegroup"]
     scaling = ng["scalingConfig"]
 
-    # 시스템 보호: 시스템 Pod이 있는 노드그룹은 최소 1대 유지
-    min_allowed = scaling["minSize"]
     if req.desired_size < 0:
         raise HTTPException(status_code=400, detail="노드 수는 0 이상이어야 합니다")
     if req.desired_size > scaling["maxSize"]:
         raise HTTPException(status_code=400, detail=f"최대 {scaling['maxSize']}대까지 가능합니다")
+
+    # 시스템 보호: 시스템/인프라 Pod이 있는 노드그룹은 축소 차단
+    v1 = client.CoreV1Api()
+    ng_nodes = set()
+    nodes = v1.list_node()
+    for node in nodes.items:
+        labels = node.metadata.labels or {}
+        # 노드가 이 노드그룹에 속하는지 확인 (instance-type + nodegroup label)
+        ng_label = labels.get("eks.amazonaws.com/nodegroup", "")
+        if ng_label == req.nodegroup_name:
+            ng_nodes.add(node.metadata.name)
+
+    # 시스템 Pod 확인
+    has_system_pods = False
+    for ns in ["platform", "ingress-nginx"]:
+        try:
+            pods = v1.list_namespaced_pod(namespace=ns)
+            for pod in pods.items:
+                if pod.spec.node_name in ng_nodes:
+                    has_system_pods = True
+                    break
+        except Exception:
+            pass
+        if has_system_pods:
+            break
+
+    if has_system_pods and req.desired_size < len(ng_nodes):
+        # 시스템 Pod이 있는 노드그룹은 현재 노드 수 이하로 축소 금지
+        raise HTTPException(
+            status_code=400,
+            detail=f"시스템 Pod(Auth Gateway, Ingress)이 이 노드그룹에서 운영 중입니다. "
+                   f"현재 {len(ng_nodes)}대 미만으로 축소할 수 없습니다.",
+        )
 
     new_min = min(scaling["minSize"], req.desired_size)
 
