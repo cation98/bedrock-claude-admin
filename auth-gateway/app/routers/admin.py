@@ -604,3 +604,70 @@ async def scale_nodegroup(
         "desired_size": req.desired_size,
         "status": "scaling",
     }
+
+
+class DrainNodeRequest(BaseModel):
+    node_name: str
+
+
+@router.post("/drain-node")
+async def drain_node(
+    req: DrainNodeRequest,
+    _admin: dict = Depends(_require_admin),
+):
+    """특정 노드를 drain하고 제거 (Pod 없는 노드만 가능)."""
+    v1 = client.CoreV1Api()
+
+    # 노드 존재 확인
+    try:
+        node = v1.read_node(req.node_name)
+    except client.rest.ApiException:
+        raise HTTPException(status_code=404, detail="노드를 찾을 수 없습니다")
+
+    # 시스템 Pod 확인
+    labels = node.metadata.labels or {}
+    if labels.get("role") == "system":
+        raise HTTPException(status_code=400, detail="시스템 노드는 제거할 수 없습니다")
+
+    # 사용자/플랫폼 Pod 확인
+    all_pods = v1.list_pod_for_all_namespaces(field_selector=f"spec.nodeName={req.node_name}")
+    user_pods = [p for p in all_pods.items if p.metadata.namespace not in ("kube-system",)]
+    non_system_pods = [p for p in user_pods if p.metadata.namespace not in ("kube-system",)
+                       and not p.metadata.name.startswith("aws-node")
+                       and not p.metadata.name.startswith("kube-proxy")
+                       and not p.metadata.name.startswith("efs-csi")
+                       and not p.metadata.name.startswith("coredns")]
+
+    if non_system_pods:
+        pod_names = [f"{p.metadata.namespace}/{p.metadata.name}" for p in non_system_pods]
+        raise HTTPException(
+            status_code=400,
+            detail=f"노드에 Pod이 실행 중입니다: {', '.join(pod_names)}. 먼저 Pod을 종료하세요.",
+        )
+
+    # 노드 cordon (스케줄링 차단)
+    body = {"spec": {"unschedulable": True}}
+    v1.patch_node(req.node_name, body)
+
+    # 노드그룹 확인 후 desired -1
+    ng_name = labels.get("eks.amazonaws.com/nodegroup", "")
+    if ng_name:
+        eks = _get_eks_client()
+        cluster = "bedrock-claude-eks"
+        ng = eks.describe_nodegroup(clusterName=cluster, nodegroupName=ng_name)["nodegroup"]
+        current = ng["scalingConfig"]["desiredSize"]
+        new_desired = max(0, current - 1)
+        new_min = min(ng["scalingConfig"]["minSize"], new_desired)
+        eks.update_nodegroup_config(
+            clusterName=cluster,
+            nodegroupName=ng_name,
+            scalingConfig={
+                "minSize": new_min,
+                "maxSize": int(ng["scalingConfig"]["maxSize"]),
+                "desiredSize": new_desired,
+            },
+        )
+        logger.info(f"Node {req.node_name} cordoned, {ng_name} scaled to {new_desired}")
+        return {"node_name": req.node_name, "nodegroup": ng_name, "new_desired": new_desired, "status": "draining"}
+
+    raise HTTPException(status_code=400, detail="노드그룹을 확인할 수 없습니다")

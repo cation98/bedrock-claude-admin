@@ -269,6 +269,15 @@ export function scaleNodeGroup(nodegroupName: string, desiredSize: number): Prom
   });
 }
 
+// ---------- Admin: Node Drain ----------
+
+export function drainNode(nodeName: string): Promise<{ node_name: string; status: string }> {
+  return request<{ node_name: string; status: string }>("/api/v1/admin/drain-node", {
+    method: "POST",
+    body: JSON.stringify({ node_name: nodeName }),
+  });
+}
+
 // ---------- Admin: Token Usage ----------
 
 export interface UserTokenUsage {

@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { getInfrastructure, getUsers, getNodeGroups, scaleNodeGroup, assignPod, movePod, terminatePod, type InfraResponse, type NodeInfo, type User, type NodeGroupInfo } from "@/lib/api";
+import { getInfrastructure, getUsers, getNodeGroups, scaleNodeGroup, assignPod, movePod, terminatePod, drainNode, type InfraResponse, type NodeInfo, type User, type NodeGroupInfo } from "@/lib/api";
 import { isAuthenticated, logout, getUser } from "@/lib/auth";
 import StatsCard from "@/components/stats-card";
 
@@ -54,6 +54,23 @@ function NodeCard({ node, allNodes, onAction }: { node: NodeInfo; allNodes: Node
           <span className="text-xs text-gray-400">
             CPU {node.cpu_capacity} / Mem {node.memory_capacity}
           </span>
+          {!isSystem && (
+            <button
+              disabled={node.pods.filter((p) => p.username !== "SYSTEM").length > 0}
+              onClick={async () => {
+                if (confirm(`${shortNode(node.node_name)} 노드를 종료합니다.\n노드그룹 크기가 1 줄어듭니다.`)) {
+                  try {
+                    await drainNode(node.node_name);
+                    onAction();
+                  } catch (err) { alert(err instanceof Error ? err.message : "노드 종료 실패"); }
+                }
+              }}
+              className="rounded bg-red-50 px-2 py-0.5 text-xs font-medium text-red-600 hover:bg-red-100 disabled:opacity-30 disabled:cursor-not-allowed"
+              title={node.pods.filter((p) => p.username !== "SYSTEM").length > 0 ? "Pod을 먼저 종료하세요" : "노드 종료"}
+            >
+              노드 종료
+            </button>
+          )}
         </div>
       </div>
 
