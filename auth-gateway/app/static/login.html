@@ -124,8 +124,54 @@
             font-size: 0.75rem;
             color: #64748b;
         }
-        /* TODO: 2FA 입력 UI (향후 구현) */
-        .twofa-section { display: none; }
+        /* 2FA 인증코드 입력 UI */
+        .twofa-section {
+            display: none;
+            text-align: center;
+        }
+        .twofa-section.active {
+            display: block;
+        }
+        .tfa-code-input {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid #334155;
+            background: #1e293b;
+            color: #f1f5f9;
+            border-radius: 0.5rem;
+            font-size: 1.5rem;
+            text-align: center;
+            letter-spacing: 0.5rem;
+            font-family: monospace;
+        }
+        .tfa-code-input:focus {
+            border-color: #818cf8;
+            outline: none;
+        }
+        .tfa-info {
+            color: #94a3b8;
+            font-size: 0.85rem;
+            margin-bottom: 1rem;
+        }
+        .tfa-timer {
+            color: #86efac;
+            font-size: 0.85rem;
+            margin-top: 0.75rem;
+        }
+        .tfa-timer.expired {
+            color: #f87171;
+        }
+        .tfa-resend {
+            color: #818cf8;
+            text-decoration: none;
+            font-size: 0.8rem;
+            cursor: pointer;
+            margin-top: 0.5rem;
+            display: inline-block;
+        }
+        .tfa-resend:hover {
+            text-decoration: underline;
+        }
 
         /* Spinner animation for status messages */
         .status-spinner {
@@ -157,6 +203,7 @@
             <div class="status" id="status"></div>
 
             <!-- 로그인 폼 -->
+            <div id="loginSection">
             <form id="loginForm" onsubmit="handleLogin(event)">
                 <div class="form-group">
                     <label for="username">사번</label>
@@ -170,15 +217,21 @@
                 </div>
                 <button type="submit" class="btn" id="loginBtn">로그인</button>
             </form>
+            </div>
 
-            <!-- TODO: 2FA 섹션 (향후 구현) -->
+            <!-- 2FA 인증코드 입력 -->
             <div class="twofa-section" id="tfaSection">
+                <p class="tfa-info" id="tfaMessage">인증코드가 발송되었습니다</p>
                 <div class="form-group">
-                    <label for="tfaCode">인증 코드 (SMS)</label>
-                    <input type="text" id="tfaCode" placeholder="6자리 코드 입력"
-                           maxlength="6" pattern="[0-9]{6}">
+                    <label for="tfaCode">인증코드</label>
+                    <input type="text" id="tfaCode" class="tfa-code-input"
+                           maxlength="6" placeholder="000000"
+                           inputmode="numeric" pattern="[0-9]*"
+                           autocomplete="one-time-code">
                 </div>
-                <button class="btn" onclick="handleTFA()">인증 확인</button>
+                <button class="btn" id="tfaBtn" onclick="handleVerify2fa()">인증 확인</button>
+                <p class="tfa-timer" id="tfaTimer">남은 시간: 5:00</p>
+                <a class="tfa-resend" onclick="handleResend()">코드 재발송</a>
             </div>
         </div>
 
@@ -189,6 +242,11 @@
 
     <script>
         const API_BASE = window.location.origin;
+
+        // 2FA state
+        let currentCodeId = null;
+        let tfaTimerInterval = null;
+        let loginCredentials = null;
 
         function setStatusWithSpinner(el, text) {
             el.textContent = '';
@@ -214,6 +272,9 @@
             const username = document.getElementById('username').value.trim();
             const password = document.getElementById('password').value;
 
+            // 재발송용 자격증명 저장
+            loginCredentials = { username, password };
+
             try {
                 // Step 1: SSO 로그인
                 const loginRes = await fetch(`${API_BASE}/api/v1/auth/login`, {
@@ -224,20 +285,137 @@
 
                 if (!loginRes.ok) {
                     const err = await loginRes.json();
-                    throw new Error(err.detail || '인증에 실패했습니다.');
+                    throw new Error(err.detail?.message || err.detail || '인증에 실패했습니다.');
                 }
 
                 const loginData = await loginRes.json();
-                const token = loginData.access_token;
 
-                // 토큰을 쿠키에 저장 (Hub 포탈에서 Pod 종료 API 호출용)
-                document.cookie = `claude_token=${token};path=/;max-age=28800;SameSite=Lax`;
+                // 2FA 필요 여부 확인
+                if (loginData.requires_2fa) {
+                    currentCodeId = loginData.code_id;
+                    document.getElementById('loginSection').style.display = 'none';
+                    document.getElementById('tfaSection').classList.add('active');
+                    document.getElementById('tfaMessage').textContent =
+                        `${loginData.phone_masked} 로 인증코드를 발송했습니다`;
+                    document.getElementById('tfaCode').value = '';
+                    document.getElementById('tfaCode').focus();
+                    startTfaTimer(300);  // 5분
 
-                // Step 2: 터미널 세션 생성 (Pod 생성)
-                statusEl.textContent = '터미널 환경을 준비하고 있습니다...';
-                statusEl.style.display = 'block';
-                btn.textContent = '환경 준비 중';
+                    // 로그인 버튼/상태 초기화
+                    errorEl.style.display = 'none';
+                    statusEl.style.display = 'none';
+                    btn.disabled = false;
+                    btn.classList.remove('loading');
+                    btn.textContent = '로그인';
+                    return;
+                }
 
+                // 2FA 불필요 (bypass) — 바로 세션 생성 진행
+                await proceedWithToken(loginData);
+
+            } catch (err) {
+                errorEl.textContent = err.message;
+                errorEl.style.display = 'block';
+                btn.disabled = false;
+                btn.classList.remove('loading');
+                btn.textContent = '로그인';
+                statusEl.style.display = 'none';
+            }
+        }
+
+        async function handleVerify2fa() {
+            const code = document.getElementById('tfaCode').value.trim();
+            const errorEl = document.getElementById('error');
+            const tfaBtn = document.getElementById('tfaBtn');
+
+            if (code.length !== 6) {
+                errorEl.textContent = '6자리 인증코드를 입력해주세요.';
+                errorEl.style.display = 'block';
+                return;
+            }
+
+            tfaBtn.disabled = true;
+            tfaBtn.textContent = '인증 확인 중...';
+            errorEl.style.display = 'none';
+
+            try {
+                const res = await fetch(`${API_BASE}/api/v1/auth/verify-2fa`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ code_id: currentCodeId, code: code })
+                });
+
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.detail || '인증코드 확인에 실패했습니다.');
+                }
+
+                const data = await res.json();
+                clearInterval(tfaTimerInterval);
+                await proceedWithToken(data);
+
+            } catch (err) {
+                errorEl.textContent = err.message;
+                errorEl.style.display = 'block';
+                tfaBtn.disabled = false;
+                tfaBtn.textContent = '인증 확인';
+                document.getElementById('tfaCode').value = '';
+                document.getElementById('tfaCode').focus();
+            }
+        }
+
+        async function handleResend() {
+            if (!loginCredentials) return;
+            const errorEl = document.getElementById('error');
+
+            try {
+                const res = await fetch(`${API_BASE}/api/v1/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(loginCredentials)
+                });
+
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.detail?.message || err.detail || '코드 재발송에 실패했습니다.');
+                }
+
+                const data = await res.json();
+                if (data.requires_2fa) {
+                    currentCodeId = data.code_id;
+                    document.getElementById('tfaMessage').textContent =
+                        `새 인증코드가 ${data.phone_masked} 로 발송되었습니다`;
+                    document.getElementById('tfaCode').value = '';
+                    document.getElementById('tfaCode').focus();
+                    startTfaTimer(300);
+                    errorEl.style.display = 'none';
+                }
+            } catch (err) {
+                errorEl.textContent = err.message;
+                errorEl.style.display = 'block';
+            }
+        }
+
+        async function proceedWithToken(data) {
+            const token = data.access_token;
+            const statusEl = document.getElementById('status');
+            const btn = document.getElementById('loginBtn');
+
+            // 토큰을 쿠키에 저장 (Hub 포탈에서 Pod 종료 API 호출용)
+            document.cookie = `claude_token=${token};path=/;max-age=28800;SameSite=Lax`;
+
+            // 2FA 섹션 숨기고 상태 표시 준비
+            document.getElementById('tfaSection').classList.remove('active');
+            document.getElementById('loginSection').style.display = '';
+
+            // Step 2: 터미널 세션 생성 (Pod 생성)
+            statusEl.textContent = '터미널 환경을 준비하고 있습니다...';
+            statusEl.style.display = 'block';
+            btn.disabled = true;
+            btn.classList.add('loading');
+            btn.textContent = '환경 준비 중';
+
+            try {
                 const sessionRes = await fetch(`${API_BASE}/api/v1/sessions/`, {
                     method: 'POST',
                     headers: {
@@ -271,6 +449,7 @@
                 window.location.href = hubUrl;
 
             } catch (err) {
+                const errorEl = document.getElementById('error');
                 errorEl.textContent = err.message;
                 errorEl.style.display = 'block';
                 btn.disabled = false;
@@ -278,6 +457,29 @@
                 btn.textContent = '로그인';
                 statusEl.style.display = 'none';
             }
+        }
+
+        function startTfaTimer(seconds) {
+            clearInterval(tfaTimerInterval);
+            let remaining = seconds;
+            const timerEl = document.getElementById('tfaTimer');
+            timerEl.classList.remove('expired');
+            timerEl.style.color = '';
+
+            tfaTimerInterval = setInterval(() => {
+                remaining--;
+                const min = Math.floor(remaining / 60);
+                const sec = remaining % 60;
+                timerEl.textContent = `남은 시간: ${min}:${String(sec).padStart(2, '0')}`;
+
+                if (remaining <= 60) timerEl.style.color = '#fbbf24';
+                if (remaining <= 0) {
+                    clearInterval(tfaTimerInterval);
+                    timerEl.textContent = '인증코드가 만료되었습니다';
+                    timerEl.classList.add('expired');
+                    timerEl.style.color = '';
+                }
+            }, 1000);
         }
 
         async function waitForTerminal(token, podName) {
@@ -329,11 +531,10 @@
             // 60초 후에도 실패하면 그냥 리다이렉트
         }
 
-        // TODO: 2FA 핸들러 (향후 구현)
-        async function handleTFA() {
-            // const code = document.getElementById('tfaCode').value;
-            // await fetch(`${API_BASE}/api/v1/auth/verify-2fa`, ...);
-        }
+        // Enter key handler for 2FA code input
+        document.getElementById('tfaCode').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') handleVerify2fa();
+        });
     </script>
 </body>
 </html>
