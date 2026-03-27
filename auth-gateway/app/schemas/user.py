@@ -43,6 +43,7 @@ class UserResponse(BaseModel):
     role: str
     is_approved: bool
     pod_ttl: str
+    security_level: str | None = None
     approved_at: datetime | None
     last_login_at: datetime | None
 

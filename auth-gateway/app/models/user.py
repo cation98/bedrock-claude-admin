@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, String, DateTime, Boolean, Integer
+from sqlalchemy import Column, String, DateTime, Boolean, Integer, JSON
 
 from app.core.database import Base
 
@@ -26,3 +26,4 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     storage_retention = Column(String(10), default="30d", nullable=False)  # 7d, 30d, 90d, unlimited
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    security_policy = Column(JSON, nullable=True, default=None)
