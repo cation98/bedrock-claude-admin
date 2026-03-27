@@ -225,8 +225,12 @@
 
                 const sessionData = await sessionRes.json();
 
-                // Step 3: Pod이 Ready될 때까지 대기
-                statusEl.textContent = '터미널이 시작되고 있습니다...';
+                // Step 3: Pod이 Ready될 때까지 대기 (이미 Running이면 빠르게 통과)
+                if (sessionData.pod_status === 'running') {
+                    statusEl.textContent = '터미널에 접속합니다...';
+                } else {
+                    statusEl.textContent = '지금 자원 설정 중, 커피 한잔 하고 오세요 (약 3분 예상)';
+                }
                 const readySession = await waitForTerminal(token, sessionData.pod_name);
 
                 // Step 4: 허브 페이지가 실제로 응답할 때까지 대기 (503 방지)
@@ -248,9 +252,18 @@
         }
 
         async function waitForTerminal(token, podName) {
-            const maxWait = 60;
-            for (let i = 0; i < maxWait; i += 3) {
-                await new Promise(r => setTimeout(r, 3000));
+            const maxWait = 300;  // 5분 (노드 확장 포함)
+            const statusEl = document.getElementById('status');
+            for (let i = 0; i < maxWait; i += 5) {
+                await new Promise(r => setTimeout(r, 5000));
+
+                const elapsed = i + 5;
+                const remaining = Math.max(0, 180 - elapsed);
+                if (elapsed > 15 && remaining > 0) {
+                    statusEl.textContent = `자원 설정 중... 약 ${Math.ceil(remaining / 60)}분 남음`;
+                } else if (elapsed > 180) {
+                    statusEl.textContent = '거의 완료되었습니다... 조금만 더 기다려주세요';
+                }
 
                 try {
                     const res = await fetch(`${API_BASE}/api/v1/sessions/`, {
@@ -259,13 +272,14 @@
                     const data = await res.json();
                     const session = data.sessions.find(s => s.pod_name === podName);
                     if (session && session.pod_status === 'running') {
+                        statusEl.textContent = '터미널에 접속합니다...';
                         return session;
                     }
                 } catch (e) {
                     // retry
                 }
             }
-            throw new Error('터미널 시작 시간이 초과되었습니다. 다시 시도해주세요.');
+            throw new Error('자원 설정 시간이 초과되었습니다. 관리자에게 문의해주세요.');
         }
 
         async function waitForPage(url) {

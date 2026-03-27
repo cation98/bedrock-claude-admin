@@ -126,7 +126,7 @@ async def create_session(
 
     # K8s Pod 생성 (사용자 프로필 주입 + 동적 TTL)
     try:
-        pod_name = k8s.create_pod(username, request.session_type, user_display_name, ttl_seconds=ttl_seconds)
+        pod_name = k8s.create_pod(username, user_pod_ttl, user_display_name, ttl_seconds=ttl_seconds)
     except K8sServiceError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -139,7 +139,7 @@ async def create_session(
     if old_session:
         old_session.user_id = current_user["user_id"]
         old_session.pod_status = "creating"
-        old_session.session_type = request.session_type
+        old_session.session_type = user_pod_ttl
         old_session.started_at = datetime.now(timezone.utc)
         old_session.terminated_at = None
         session = old_session
@@ -149,7 +149,7 @@ async def create_session(
             username=username,
             pod_name=pod_name,
             pod_status="creating",
-            session_type=request.session_type,
+            session_type=user_pod_ttl,
         )
         db.add(session)
     db.commit()

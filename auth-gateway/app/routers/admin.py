@@ -337,7 +337,7 @@ async def assign_pod(
 
     k8s = K8sService(settings)
 
-    from app.core.config import POD_TTL_SECONDS_MAP
+    from app.schemas.user import POD_TTL_SECONDS_MAP
     ttl = POD_TTL_SECONDS_MAP.get(user.pod_ttl, 14400)
     pod_name = k8s.create_pod(
         req.username.upper(), "daily", user.name or req.username,
@@ -418,7 +418,7 @@ async def move_pod(
         raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
 
     # 대상 노드에 재생성
-    from app.core.config import POD_TTL_SECONDS_MAP
+    from app.schemas.user import POD_TTL_SECONDS_MAP
     ttl = POD_TTL_SECONDS_MAP.get(user.pod_ttl, 14400)
     k8s.create_pod(req.username.upper(), "daily", user.name or req.username,
                    ttl_seconds=ttl, target_node=req.target_node)

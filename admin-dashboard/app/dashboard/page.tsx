@@ -62,7 +62,7 @@ export default function DashboardPage() {
                 href="/dashboard"
                 className="text-blue-600 border-b-2 border-blue-600 pb-0.5"
               >
-                대시보드
+                운용현황
               </Link>
               <Link
                 href="/users"

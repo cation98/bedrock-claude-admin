@@ -11,11 +11,23 @@ VALID_POD_TTLS = {"unlimited", "30d", "7d", "1d", "8h", "4h"}
 # Pod TTL → 초 변환 맵
 POD_TTL_SECONDS_MAP = {
     "unlimited": 0,
+    "weekday-office": 0,   # 평일(월~금) 09시~18시 — 스케줄러로 관리
     "30d": 2592000,
     "7d": 604800,
     "1d": 86400,
     "8h": 28800,
     "4h": 14400,
+}
+
+# TTL 라벨 (한글 표시)
+POD_TTL_LABELS = {
+    "unlimited": "만료없음",
+    "weekday-office": "평일 09-18시",
+    "30d": "30일",
+    "7d": "7일",
+    "1d": "1일",
+    "8h": "8시간",
+    "4h": "4시간",
 }
 
 

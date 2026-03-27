@@ -112,7 +112,7 @@ export default function SessionTable({
               상태
             </th>
             <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-              세션 유형
+              운용 유형
             </th>
             <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
               시작 시간
@@ -146,7 +146,7 @@ export default function SessionTable({
                   {statusBadge(s.pod_status)}
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
-                  {s.session_type}
+                  {{"unlimited":"만료없음","weekday-office":"평일 09-18시","30d":"30일","7d":"7일","1d":"1일","8h":"8시간","4h":"4시간"}[s.session_type] ?? s.session_type}
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
                   {formatDate(s.started_at)}

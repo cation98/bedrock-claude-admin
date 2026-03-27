@@ -21,12 +21,15 @@ const REFRESH_INTERVAL = 10_000;
 
 const TTL_OPTIONS: { value: string; label: string }[] = [
   { value: "unlimited", label: "만료없음" },
+  { value: "weekday-office", label: "평일 09-18시" },
   { value: "30d", label: "30일" },
   { value: "7d", label: "7일" },
   { value: "1d", label: "1일" },
   { value: "8h", label: "8시간" },
   { value: "4h", label: "4시간" },
 ];
+
+const TTL_LABEL_MAP: Record<string, string> = Object.fromEntries(TTL_OPTIONS.map((o) => [o.value, o.label]));
 
 const TTL_LABEL: Record<string, string> = {
   unlimited: "만료없음",
@@ -192,7 +195,7 @@ export default function UsersPage() {
                 href="/dashboard"
                 className="hover:text-gray-900 transition-colors"
               >
-                대시보드
+                운용현황
               </Link>
               <Link
                 href="/users"

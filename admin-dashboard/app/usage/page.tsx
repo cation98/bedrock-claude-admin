@@ -51,7 +51,7 @@ export default function UsagePage() {
           <div className="flex items-center gap-6">
             <nav className="flex gap-4 text-sm font-medium text-gray-600">
               <Link href="/dashboard" className="hover:text-gray-900 transition-colors">
-                대시보드
+                운용현황
               </Link>
               <Link href="/users" className="hover:text-gray-900 transition-colors">
                 사용자 관리
