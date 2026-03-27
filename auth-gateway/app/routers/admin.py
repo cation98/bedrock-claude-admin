@@ -187,6 +187,10 @@ async def get_infrastructure(
             for c in (node.status.conditions or [])
         ) else "NotReady"
 
+        # cordon된 노드 (종료 대기 중) 필터링
+        if node.spec.unschedulable:
+            continue
+
         # 노드 역할 판별
         node_role = "user"
         if labels.get("role") == "presenter":
