@@ -284,6 +284,7 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
     <h1>Claude Code <span class="accent">Terminal</span></h1>
     <p>{user_name} ({user_id}) &middot; {pod_name}</p>
     <a href="/" class="logout-btn" onclick="localStorage.clear();">로그아웃</a>
+    <a href="/" class="logout-btn" style="border-color:#da3633;color:#da3633;" onclick="if(confirm('Pod을 종료하시겠습니까? 대화 백업 후 종료됩니다.')){{fetch('/api/v1/sessions/',{{method:'DELETE',headers:{{'Authorization':'Bearer '+document.cookie.replace(/.*claude_token=([^;]*).*$/,'$1')}}}}).then(()=>{{localStorage.clear();window.location.href='/'}})}}return false;">Pod 종료</a>
   </div>
 
   <div class="cards">
