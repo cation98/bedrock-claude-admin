@@ -56,6 +56,9 @@ export default function UsagePage() {
               <Link href="/users" className="hover:text-gray-900 transition-colors">
                 사용자 관리
               </Link>
+              <Link href="/security" className="hover:text-gray-900 transition-colors">
+                보안 정책
+              </Link>
               <Link href="/usage" className="text-blue-600 border-b-2 border-blue-600 pb-0.5">
                 토큰 사용량
               </Link>

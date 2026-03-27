@@ -191,6 +191,9 @@ export default function InfraPage() {
               <Link href="/users" className="hover:text-gray-900 transition-colors">
                 사용자 관리
               </Link>
+              <Link href="/security" className="hover:text-gray-900 transition-colors">
+                보안 정책
+              </Link>
               <Link href="/usage" className="hover:text-gray-900 transition-colors">
                 토큰 사용량
               </Link>

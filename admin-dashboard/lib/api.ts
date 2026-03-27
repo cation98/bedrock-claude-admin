@@ -361,3 +361,41 @@ export interface InfraResponse {
 export function getInfrastructure(): Promise<InfraResponse> {
   return request<InfraResponse>("/api/v1/admin/infrastructure");
 }
+
+// ---------- Security Policies ----------
+
+export type SecurityLevel = "basic" | "standard" | "full";
+
+export interface SecurityPolicyWithUser {
+  user_id: number;
+  username: string;
+  name: string | null;
+  region_name: string | null;
+  team_name: string | null;
+  role: string;
+  security_level: SecurityLevel;
+  security_policy: Record<string, unknown>;
+  pod_restart_required: boolean;
+}
+
+export function getSecurityPolicies(): Promise<{ total: number; policies: SecurityPolicyWithUser[] }> {
+  return request<{ total: number; policies: SecurityPolicyWithUser[] }>("/api/v1/security/policies");
+}
+
+export function updateSecurityPolicy(userId: number, data: Record<string, unknown>): Promise<SecurityPolicyWithUser> {
+  return request<SecurityPolicyWithUser>(`/api/v1/security/policies/${userId}`, {
+    method: "PUT",
+    body: JSON.stringify({ security_policy: data }),
+  });
+}
+
+export function applySecurityTemplate(userId: number, templateName: SecurityLevel): Promise<SecurityPolicyWithUser> {
+  return request<SecurityPolicyWithUser>(`/api/v1/security/templates/apply/${userId}`, {
+    method: "POST",
+    body: JSON.stringify({ template_name: templateName }),
+  });
+}
+
+export function getSecurityTemplates(): Promise<{ templates: { name: string; description: string; security_policy: Record<string, unknown> }[] }> {
+  return request<{ templates: { name: string; description: string; security_policy: Record<string, unknown> }[] }>("/api/v1/security/templates");
+}
