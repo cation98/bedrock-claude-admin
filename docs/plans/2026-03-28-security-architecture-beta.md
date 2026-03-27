@@ -404,6 +404,154 @@ git commit -m "feat: add 2FA verification to admin dashboard login"
 
 ---
 
+## Phase 0.5: 감사 로그 체계 (Audit Logging)
+
+### Task 0-5: 감사 로그 모델 + 자동 기록
+
+**Files:**
+- Create: `auth-gateway/app/models/audit_log.py`
+- Modify: `auth-gateway/app/routers/auth.py`
+- Modify: `auth-gateway/app/routers/sessions.py`
+- Modify: `auth-gateway/app/routers/security.py`
+- Modify: `auth-gateway/app/routers/admin.py`
+
+**Step 1: AuditLog 모델 생성**
+
+`auth-gateway/app/models/audit_log.py`:
+
+```python
+"""감사 로그 — 모든 보안 관련 이벤트 기록."""
+from datetime import datetime, timezone
+from sqlalchemy import Column, Integer, String, DateTime, Text, JSON
+from app.core.database import Base
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    timestamp = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    actor = Column(String(50), nullable=False)       # 행위자 사번 (N1102359)
+    action = Column(String(50), nullable=False)       # 행위 유형
+    target = Column(String(100), nullable=True)       # 대상 (사번, Pod명, 노드명 등)
+    detail = Column(Text, nullable=True)              # 상세 내용
+    ip_address = Column(String(45), nullable=True)    # 요청 IP
+    metadata_ = Column("metadata", JSON, nullable=True)  # 추가 데이터 (JSON)
+
+# 행위 유형 상수
+class AuditAction:
+    # 인증
+    LOGIN_SSO = "login_sso"           # SSO 인증 성공
+    LOGIN_2FA_SENT = "login_2fa_sent" # 2FA 코드 발송
+    LOGIN_2FA_OK = "login_2fa_ok"     # 2FA 인증 성공
+    LOGIN_2FA_FAIL = "login_2fa_fail" # 2FA 인증 실패
+    LOGIN_LOCKED = "login_locked"     # 계정 잠금
+    LOGIN_BYPASS = "login_bypass"     # 바이패스 로그인
+
+    # 세션/Pod
+    POD_CREATE = "pod_create"         # Pod 생성
+    POD_TERMINATE = "pod_terminate"   # Pod 종료
+    POD_MOVE = "pod_move"             # Pod 이동
+    POD_ASSIGN = "pod_assign"         # Pod 할당
+
+    # 노드
+    NODE_SCALE_UP = "node_scale_up"
+    NODE_SCALE_DOWN = "node_scale_down"
+    NODE_DRAIN = "node_drain"
+
+    # 보안 정책
+    SECURITY_UPDATE = "security_update"     # 보안 정책 변경
+    SECURITY_TEMPLATE = "security_template" # 템플릿 적용
+
+    # 사용자 관리
+    USER_APPROVE = "user_approve"
+    USER_REVOKE = "user_revoke"
+    USER_ADD = "user_add_direct"
+
+    # 관리자
+    ADMIN_LOGIN = "admin_login"
+```
+
+**Step 2: 감사 로그 기록 헬퍼**
+
+```python
+def log_audit(db, actor: str, action: str, target: str = None,
+              detail: str = None, ip: str = None, metadata: dict = None):
+    """감사 로그 1건 기록."""
+    entry = AuditLog(
+        actor=actor, action=action, target=target,
+        detail=detail, ip_address=ip, metadata_=metadata,
+    )
+    db.add(entry)
+    # commit은 호출자가 담당 (트랜잭션 내에서 사용)
+```
+
+**Step 3: 주요 엔드포인트에 감사 로그 삽입**
+
+```python
+# auth.py — 로그인 시
+log_audit(db, username, AuditAction.LOGIN_SSO, detail="SSO 인증 성공", ip=request.client.host)
+log_audit(db, username, AuditAction.LOGIN_2FA_SENT, target=masked_phone)
+log_audit(db, username, AuditAction.LOGIN_2FA_OK)
+log_audit(db, username, AuditAction.LOGIN_2FA_FAIL, detail=f"시도 {attempts}회")
+
+# sessions.py — Pod 생성/종료 시
+log_audit(db, username, AuditAction.POD_CREATE, target=pod_name)
+log_audit(db, username, AuditAction.POD_TERMINATE, target=pod_name)
+
+# admin.py — 노드/Pod 관리 시
+log_audit(db, admin_username, AuditAction.NODE_SCALE_UP, target=nodegroup_name)
+log_audit(db, admin_username, AuditAction.NODE_DRAIN, target=node_name)
+log_audit(db, admin_username, AuditAction.POD_ASSIGN, target=f"{username}→{node_name}")
+
+# security.py — 보안 정책 변경 시
+log_audit(db, admin_username, AuditAction.SECURITY_UPDATE,
+    target=user.username, detail=f"{old_level}→{new_level}",
+    metadata={"before": old_policy, "after": new_policy})
+
+# users.py — 사용자 관리 시
+log_audit(db, admin_username, AuditAction.USER_APPROVE, target=user.username)
+log_audit(db, admin_username, AuditAction.USER_REVOKE, target=user.username)
+```
+
+**Step 4: 감사 로그 조회 API**
+
+```python
+# admin.py에 추가
+@router.get("/audit-logs")
+async def get_audit_logs(
+    actor: str = None,      # 행위자 필터
+    action: str = None,     # 행위 유형 필터
+    days: int = 7,          # 최근 N일
+    limit: int = 100,
+    _admin: dict = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    query = db.query(AuditLog).order_by(AuditLog.timestamp.desc())
+    if actor: query = query.filter(AuditLog.actor == actor)
+    if action: query = query.filter(AuditLog.action == action)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    query = query.filter(AuditLog.timestamp >= cutoff)
+    return {"logs": query.limit(limit).all()}
+```
+
+**Step 5: Admin 대시보드 감사 로그 페이지**
+
+`admin-dashboard/app/audit/page.tsx`:
+- 날짜 범위 필터 + 행위자 검색 + 행위 유형 필터
+- 테이블: 시간, 행위자, 행위, 대상, 상세, IP
+- 자동 갱신 30초
+- 네비게이션: 운용현황 | 사용자 관리 | 보안 정책 | 토큰 사용량 | 인프라 | **감사 로그**
+
+**Step 6: 커밋**
+
+```bash
+git add auth-gateway/app/models/audit_log.py auth-gateway/app/routers/*.py \
+  admin-dashboard/app/audit/page.tsx
+git commit -m "feat: audit logging for all security events + admin viewer"
+```
+
+---
+
 ## Phase 1: P0 보안 수정 + 데이터 모델 (즉시)
 
 ### Task 1: User 모델에 security_policy JSONB 컬럼 추가
@@ -1270,6 +1418,8 @@ cd out && zip -r /tmp/admin-security.zip . -x '*.DS_Store'
 | `auth-gateway/app/routers/auth.py` | 2단계 로그인 (SSO→2FA→JWT) | 0 |
 | `auth-gateway/app/static/login.html` | 2FA 코드 입력 UI + 타이머 | 0 |
 | `admin-dashboard/app/page.tsx` | Admin 로그인 2FA 적용 | 0 |
+| `auth-gateway/app/models/audit_log.py` | 새 파일 (감사 로그 모델) | 0.5 |
+| `admin-dashboard/app/audit/page.tsx` | 새 파일 (감사 로그 조회 UI) | 0.5 |
 | `auth-gateway/app/models/user.py` | security_policy 컬럼 추가 | 1 |
 | `auth-gateway/app/schemas/security.py` | 새 파일 (템플릿+스키마) | 1 |
 | `auth-gateway/app/services/k8s_service.py` | 조건부 env 주입 + securityContext | 1,2 |
