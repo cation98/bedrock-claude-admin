@@ -188,6 +188,32 @@ export function rejectUser(userId: number): Promise<{ deleted: boolean; username
   });
 }
 
+// ---------- Users: Search + Direct Add ----------
+
+export interface OGuardProfile {
+  username: string;
+  first_name: string | null;
+  region_name: string | null;
+  team_name: string | null;
+  job_name: string | null;
+}
+
+export interface OGuardSearchResponse {
+  total: number;
+  results: OGuardProfile[];
+}
+
+export function searchMembers(q: string): Promise<OGuardSearchResponse> {
+  return request<OGuardSearchResponse>(`/api/v1/users/search-members?q=${encodeURIComponent(q)}`);
+}
+
+export function addMemberDirectly(username: string, podTtl: string): Promise<User> {
+  return request<User>("/api/v1/users/add-member", {
+    method: "POST",
+    body: JSON.stringify({ username, pod_ttl: podTtl }),
+  });
+}
+
 // ---------- Admin: Token Usage ----------
 
 export interface UserTokenUsage {

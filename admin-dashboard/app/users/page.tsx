@@ -10,7 +10,10 @@ import {
   updateUserTtl,
   revokeUser,
   rejectUser,
+  searchMembers,
+  addMemberDirectly,
   type User,
+  type OGuardProfile,
 } from "@/lib/api";
 import { isAuthenticated, logout, getUser } from "@/lib/auth";
 
@@ -68,6 +71,10 @@ export default function UsersPage() {
   const router = useRouter();
   const [pendingUsers, setPendingUsers] = useState<User[]>([]);
   const [approvedUsers, setApprovedUsers] = useState<User[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<OGuardProfile[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [addTtl, setAddTtl] = useState("4h");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -90,6 +97,30 @@ export default function UsersPage() {
       setLoading(false);
     }
   }, []);
+
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) return;
+    setSearchLoading(true);
+    try {
+      const res = await searchMembers(searchQuery.trim());
+      setSearchResults(res.results);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "검색 실패");
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  const handleAddMember = async (username: string) => {
+    try {
+      await addMemberDirectly(username, addTtl);
+      setSuccess(`${username} 허용목록에 추가 완료`);
+      setSearchResults((prev) => prev.filter((r) => r.username !== username));
+      fetchData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "추가 실패");
+    }
+  };
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -217,6 +248,81 @@ export default function UsersPage() {
           </div>
         ) : (
           <div className="space-y-8">
+            {/* Member Search + Direct Add */}
+            <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
+              <div className="border-b border-gray-200 px-4 py-3">
+                <h2 className="text-sm font-semibold text-gray-900">구성원 검색 + 직접 추가</h2>
+              </div>
+              <div className="px-4 py-3">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+                    placeholder="사번 또는 이름으로 검색"
+                    className="flex-1 rounded-md border border-gray-300 px-3 py-1.5 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                  <select
+                    value={addTtl}
+                    onChange={(e) => setAddTtl(e.target.value)}
+                    className="rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+                  >
+                    {TTL_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={handleSearch}
+                    disabled={searchLoading || !searchQuery.trim()}
+                    className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {searchLoading ? "검색중..." : "검색"}
+                  </button>
+                </div>
+                {searchResults.length > 0 && (
+                  <div className="mt-3 overflow-x-auto">
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500">사번</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500">이름</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500">소속</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500">직책</th>
+                          <th className="px-3 py-2 text-right text-xs font-medium uppercase text-gray-500">추가</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-200">
+                        {searchResults.map((r) => {
+                          const alreadyAdded = approvedUsers.some((u) => u.username === r.username);
+                          return (
+                            <tr key={r.username} className="hover:bg-gray-50">
+                              <td className="px-3 py-2 text-sm text-gray-900">{r.username}</td>
+                              <td className="px-3 py-2 text-sm text-gray-900">{r.first_name ?? "-"}</td>
+                              <td className="px-3 py-2 text-sm text-gray-600">{r.region_name ?? "-"} / {r.team_name ?? "-"}</td>
+                              <td className="px-3 py-2 text-sm text-gray-600">{r.job_name ?? "-"}</td>
+                              <td className="px-3 py-2 text-right">
+                                {alreadyAdded ? (
+                                  <span className="text-xs text-gray-400">등록됨</span>
+                                ) : (
+                                  <button
+                                    onClick={() => handleAddMember(r.username)}
+                                    className="rounded bg-green-600 px-3 py-1 text-xs font-medium text-white hover:bg-green-700"
+                                  >
+                                    추가
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+
             {/* Pending Users */}
             <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
               <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
