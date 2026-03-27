@@ -107,16 +107,16 @@ async def login(
 
     user.last_login_at = datetime.now(timezone.utc)
 
-    # 로그인 시 자동 승인 (워크숍 모드)
-    if not user.is_approved:
+    # 관리자는 자동 승인
+    if user.role == "admin" and not user.is_approved:
         user.is_approved = True
         user.approved_at = datetime.now(timezone.utc)
 
     db.commit()
     db.refresh(user)
 
-    # 승인 여부 확인 — 현재 자동 승인 모드 (아래 코드는 비활성)
-    if False and not user.is_approved:
+    # 승인 여부 확인 — 미승인 사용자는 로그인 차단
+    if not user.is_approved:
         logger.info(f"Unapproved user login attempt: {user.username} (new={is_new_user})")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
