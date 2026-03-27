@@ -675,3 +675,47 @@ async def drain_node(
         return {"node_name": req.node_name, "nodegroup": ng_name, "new_desired": new_desired, "status": "draining"}
 
     raise HTTPException(status_code=400, detail="노드그룹을 확인할 수 없습니다")
+
+
+# ==================== Audit Logs ====================
+
+@router.get("/audit-logs")
+async def get_audit_logs(
+    actor: str = None,
+    action: str = None,
+    days: int = 7,
+    limit: int = 100,
+    _admin: dict = Depends(_require_admin),
+    settings: Settings = Depends(get_settings),
+):
+    """감사 로그 조회 (관리자용)."""
+    from app.core.database import SessionLocal
+    from app.models.audit_log import AuditLog
+    from datetime import timedelta
+
+    db = SessionLocal()
+    query = db.query(AuditLog).order_by(AuditLog.timestamp.desc())
+    if actor:
+        query = query.filter(AuditLog.actor == actor)
+    if action:
+        query = query.filter(AuditLog.action == action)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    query = query.filter(AuditLog.timestamp >= cutoff)
+    logs = query.limit(limit).all()
+    db.close()
+
+    return {
+        "total": len(logs),
+        "logs": [
+            {
+                "id": log.id,
+                "timestamp": log.timestamp.isoformat() if log.timestamp else None,
+                "actor": log.actor,
+                "action": log.action,
+                "target": log.target,
+                "detail": log.detail,
+                "ip_address": log.ip_address,
+            }
+            for log in logs
+        ],
+    }
