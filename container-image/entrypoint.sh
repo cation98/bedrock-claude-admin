@@ -130,6 +130,16 @@ chmod +x /home/node/.local/bin/restore-chat
 export PATH="/home/node/.local/bin:$PATH"
 
 # ---------------------------------------------------------------------------
+# 5b) Superpowers 플러그인 설치 (CLI 등록, 1회만)
+# ---------------------------------------------------------------------------
+if [ ! -f /home/node/workspace/.plugins-installed ]; then
+    echo "  플러그인 설치 중..."
+    claude plugin install superpowers --marketplace superpowers-marketplace -y 2>/dev/null || true
+    touch /home/node/workspace/.plugins-installed
+    echo "  플러그인 설치 완료"
+fi
+
+# ---------------------------------------------------------------------------
 # 6) 환영 메시지
 # ---------------------------------------------------------------------------
 # DB 접속 스크립트
