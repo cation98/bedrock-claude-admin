@@ -279,3 +279,207 @@ async def get_infrastructure(
         total_pods=total_pods,
         collected_at=datetime.now(timezone.utc).isoformat(),
     )
+
+
+# ==================== Pod Management ====================
+
+class AssignPodRequest(BaseModel):
+    username: str
+    node_name: str | None = None  # 특정 노드 지정 (None이면 자동 배치)
+
+
+class MovePodRequest(BaseModel):
+    username: str
+    target_node: str
+
+
+class PodActionResponse(BaseModel):
+    username: str
+    pod_name: str
+    status: str
+    node_name: str | None = None
+
+
+@router.post("/assign-pod", response_model=PodActionResponse)
+async def assign_pod(
+    req: AssignPodRequest,
+    _admin: dict = Depends(_require_admin),
+    settings: Settings = Depends(get_settings),
+):
+    """사용자에게 Pod을 할당 (특정 노드 지정 가능)."""
+    from app.core.database import SessionLocal
+    from app.models.user import User
+    from app.models.session import TerminalSession
+    from app.services.k8s_service import K8sService
+
+    db = SessionLocal()
+    user = db.query(User).filter(User.username == req.username.upper()).first()
+    if not user:
+        db.close()
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
+    if not user.is_approved:
+        db.close()
+        raise HTTPException(status_code=400, detail="미승인 사용자입니다")
+
+    v1 = client.CoreV1Api()
+    namespace = settings.k8s_namespace
+    pod_name = f"claude-terminal-{req.username.lower()}"
+
+    # 기존 Pod 확인
+    try:
+        existing = v1.read_namespaced_pod(pod_name, namespace)
+        if existing.status.phase in ("Running", "Pending"):
+            db.close()
+            raise HTTPException(status_code=400, detail=f"이미 실행 중인 Pod이 있습니다 ({existing.status.phase})")
+    except client.rest.ApiException as e:
+        if e.status != 404:
+            raise
+
+    k8s = K8sService(settings)
+
+    from app.core.config import POD_TTL_SECONDS_MAP
+    ttl = POD_TTL_SECONDS_MAP.get(user.pod_ttl, 14400)
+    pod_name = k8s.create_pod(
+        req.username.upper(), "daily", user.name or req.username,
+        ttl_seconds=ttl, target_node=req.node_name,
+    )
+
+    # 세션 레코드
+    session = db.query(TerminalSession).filter(TerminalSession.pod_name == pod_name).first()
+    if session:
+        session.pod_status = "creating"
+        session.started_at = datetime.now(timezone.utc)
+        session.terminated_at = None
+    else:
+        session = TerminalSession(
+            user_id=user.id, username=req.username.upper(),
+            pod_name=pod_name, pod_status="creating",
+            session_type="daily", started_at=datetime.now(timezone.utc),
+        )
+        db.add(session)
+    db.commit()
+    db.close()
+
+    return PodActionResponse(
+        username=req.username.upper(),
+        pod_name=pod_name,
+        status="creating",
+        node_name=req.node_name,
+    )
+
+
+
+@router.post("/move-pod", response_model=PodActionResponse)
+async def move_pod(
+    req: MovePodRequest,
+    _admin: dict = Depends(_require_admin),
+    settings: Settings = Depends(get_settings),
+):
+    """사용자 Pod을 다른 노드로 이동 (백업 → 삭제 → 재생성)."""
+    from app.core.database import SessionLocal
+    from app.models.user import User
+    from app.models.session import TerminalSession
+    from app.services.k8s_service import K8sService
+
+    v1 = client.CoreV1Api()
+    namespace = settings.k8s_namespace
+    pod_name = f"claude-terminal-{req.username.lower()}"
+
+    # 기존 Pod 백업 실행
+    try:
+        resp = stream(
+            v1.connect_get_namespaced_pod_exec,
+            pod_name, namespace,
+            command=["bash", "-c",
+                     "mkdir -p /home/node/workspace/.claude-backup && "
+                     "cp -r /home/node/.claude/projects/ /home/node/workspace/.claude-backup/ 2>/dev/null; "
+                     "cp /home/node/.claude/history.jsonl /home/node/workspace/.claude-backup/ 2>/dev/null; "
+                     "cp -r /home/node/.serena/ /home/node/workspace/.serena-backup/ 2>/dev/null; "
+                     "echo OK"],
+            container="terminal",
+            stderr=False, stdin=False, stdout=True, tty=False,
+        )
+        logger.info(f"Backup for {pod_name}: {resp.strip()}")
+    except Exception as e:
+        logger.warning(f"Backup failed for {pod_name}: {e}")
+
+    # 삭제
+    k8s = K8sService(settings)
+    k8s.delete_pod(pod_name)
+
+    import time
+    time.sleep(3)
+
+    # DB에서 사용자 정보
+    db = SessionLocal()
+    user = db.query(User).filter(User.username == req.username.upper()).first()
+    if not user:
+        db.close()
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
+
+    # 대상 노드에 재생성
+    from app.core.config import POD_TTL_SECONDS_MAP
+    ttl = POD_TTL_SECONDS_MAP.get(user.pod_ttl, 14400)
+    k8s.create_pod(req.username.upper(), "daily", user.name or req.username,
+                   ttl_seconds=ttl, target_node=req.target_node)
+
+    # 세션 업데이트
+    session = db.query(TerminalSession).filter(TerminalSession.pod_name == pod_name).first()
+    if session:
+        session.pod_status = "creating"
+        session.started_at = datetime.now(timezone.utc)
+        session.terminated_at = None
+    db.commit()
+    db.close()
+
+    return PodActionResponse(
+        username=req.username.upper(),
+        pod_name=pod_name,
+        status="creating",
+        node_name=req.target_node,
+    )
+
+
+@router.delete("/terminate-pod/{username}")
+async def terminate_pod(
+    username: str,
+    _admin: dict = Depends(_require_admin),
+    settings: Settings = Depends(get_settings),
+):
+    """사용자 Pod 종료."""
+    from app.core.database import SessionLocal
+    from app.models.session import TerminalSession
+    from app.services.k8s_service import K8sService
+
+    v1 = client.CoreV1Api()
+    namespace = settings.k8s_namespace
+    pod_name = f"claude-terminal-{username.lower()}"
+
+    # 백업
+    try:
+        stream(
+            v1.connect_get_namespaced_pod_exec,
+            pod_name, namespace,
+            command=["bash", "-c",
+                     "mkdir -p /home/node/workspace/.claude-backup && "
+                     "cp -r /home/node/.claude/projects/ /home/node/workspace/.claude-backup/ 2>/dev/null; "
+                     "cp /home/node/.claude/history.jsonl /home/node/workspace/.claude-backup/ 2>/dev/null; "
+                     "echo OK"],
+            container="terminal",
+            stderr=False, stdin=False, stdout=True, tty=False,
+        )
+    except Exception:
+        pass
+
+    k8s = K8sService(settings)
+    k8s.delete_pod(pod_name)
+
+    db = SessionLocal()
+    session = db.query(TerminalSession).filter(TerminalSession.pod_name == pod_name).first()
+    if session:
+        session.pod_status = "terminated"
+        session.terminated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.close()
+
+    return {"username": username.upper(), "pod_name": pod_name, "status": "terminated"}

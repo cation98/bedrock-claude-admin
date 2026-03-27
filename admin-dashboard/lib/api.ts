@@ -214,6 +214,35 @@ export function addMemberDirectly(username: string, podTtl: string): Promise<Use
   });
 }
 
+// ---------- Admin: Pod Management ----------
+
+export interface PodActionResponse {
+  username: string;
+  pod_name: string;
+  status: string;
+  node_name: string | null;
+}
+
+export function assignPod(username: string, nodeName?: string): Promise<PodActionResponse> {
+  return request<PodActionResponse>("/api/v1/admin/assign-pod", {
+    method: "POST",
+    body: JSON.stringify({ username, node_name: nodeName ?? null }),
+  });
+}
+
+export function movePod(username: string, targetNode: string): Promise<PodActionResponse> {
+  return request<PodActionResponse>("/api/v1/admin/move-pod", {
+    method: "POST",
+    body: JSON.stringify({ username, target_node: targetNode }),
+  });
+}
+
+export function terminatePod(username: string): Promise<{ username: string; status: string }> {
+  return request<{ username: string; status: string }>(`/api/v1/admin/terminate-pod/${username}`, {
+    method: "DELETE",
+  });
+}
+
 // ---------- Admin: Token Usage ----------
 
 export interface UserTokenUsage {

@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { getInfrastructure, type InfraResponse, type NodeInfo } from "@/lib/api";
+import { getInfrastructure, getUsers, assignPod, movePod, terminatePod, type InfraResponse, type NodeInfo, type User } from "@/lib/api";
 import { isAuthenticated, logout, getUser } from "@/lib/auth";
 import StatsCard from "@/components/stats-card";
 
@@ -33,7 +33,7 @@ const ROLE_BADGE: Record<string, { bg: string; label: string }> = {
   user: { bg: "bg-blue-50 text-blue-700", label: "사용자" },
 };
 
-function NodeCard({ node }: { node: NodeInfo }) {
+function NodeCard({ node, allNodes, onAction }: { node: NodeInfo; allNodes: NodeInfo[]; onAction: () => void }) {
   const hasPods = node.pods.length > 0;
   const isSystem = node.node_role === "system";
   const role = ROLE_BADGE[node.node_role] ?? ROLE_BADGE.user;
@@ -72,6 +72,43 @@ function NodeCard({ node }: { node: NodeInfo }) {
                   CPU {pod.cpu_request} / Mem {pod.memory_request}
                 </span>
                 <StatusBadge status={pod.status} />
+                {pod.username !== "SYSTEM" && (
+                  <div className="flex gap-1">
+                    <select
+                      className="rounded border border-gray-200 px-1 py-0.5 text-xs"
+                      defaultValue=""
+                      onChange={async (e) => {
+                        const target = e.target.value;
+                        if (!target) return;
+                        if (confirm(`${pod.user_name ?? pod.username} Pod을 이동하시겠습니까?\n대화는 자동 백업됩니다.`)) {
+                          try {
+                            await movePod(pod.username, target);
+                            onAction();
+                          } catch (err) { alert(err instanceof Error ? err.message : "이동 실패"); }
+                        }
+                        e.target.value = "";
+                      }}
+                    >
+                      <option value="">이동</option>
+                      {allNodes.filter((n) => n.node_name !== node.node_name && n.node_role !== "system").map((n) => (
+                        <option key={n.node_name} value={n.node_name}>{shortNode(n.node_name)} ({n.instance_type})</option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={async () => {
+                        if (confirm(`${pod.user_name ?? pod.username} Pod을 종료하시겠습니까?`)) {
+                          try {
+                            await terminatePod(pod.username);
+                            onAction();
+                          } catch (err) { alert(err instanceof Error ? err.message : "종료 실패"); }
+                        }
+                      }}
+                      className="rounded bg-red-50 px-2 py-0.5 text-xs font-medium text-red-600 hover:bg-red-100"
+                    >
+                      종료
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           ))}
@@ -90,11 +127,15 @@ export default function InfraPage() {
   const [data, setData] = useState<InfraResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [approvedUsers, setApprovedUsers] = useState<User[]>([]);
+  const [assignUser, setAssignUser] = useState("");
+  const [assignNode, setAssignNode] = useState("");
 
   const fetchData = useCallback(async () => {
     try {
-      const res = await getInfrastructure();
+      const [res, usersRes] = await Promise.all([getInfrastructure(), getUsers()]);
       setData(res);
+      setApprovedUsers(usersRes.users.filter((u) => u.is_approved));
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to fetch");
@@ -179,9 +220,55 @@ export default function InfraPage() {
             데이터를 불러오는 중...
           </div>
         ) : (
+          {/* Pod 할당 */}
+          <div className="mb-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+            <h3 className="mb-2 text-sm font-semibold text-gray-900">Pod 할당</h3>
+            <div className="flex gap-2">
+              <select
+                value={assignUser}
+                onChange={(e) => setAssignUser(e.target.value)}
+                className="flex-1 rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+              >
+                <option value="">사용자 선택</option>
+                {approvedUsers
+                  .filter((u) => !data?.nodes.some((n) => n.pods.some((p) => p.username === u.username)))
+                  .map((u) => (
+                    <option key={u.username} value={u.username}>{u.name ?? u.username} ({u.username})</option>
+                  ))}
+              </select>
+              <select
+                value={assignNode}
+                onChange={(e) => setAssignNode(e.target.value)}
+                className="flex-1 rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+              >
+                <option value="">노드 자동 배치</option>
+                {data?.nodes.filter((n) => n.node_role !== "system").map((n) => (
+                  <option key={n.node_name} value={n.node_name}>
+                    {shortNode(n.node_name)} ({n.instance_type}) - Pod {n.pods.filter((p) => p.username !== "SYSTEM").length}개
+                  </option>
+                ))}
+              </select>
+              <button
+                disabled={!assignUser}
+                onClick={async () => {
+                  if (!assignUser) return;
+                  try {
+                    await assignPod(assignUser, assignNode || undefined);
+                    setAssignUser("");
+                    setAssignNode("");
+                    fetchData();
+                  } catch (err) { setError(err instanceof Error ? err.message : "할당 실패"); }
+                }}
+                className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                할당
+              </button>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             {data?.nodes.map((node) => (
-              <NodeCard key={node.node_name} node={node} />
+              <NodeCard key={node.node_name} node={node} allNodes={data.nodes} onAction={fetchData} />
             ))}
           </div>
         )}

@@ -53,6 +53,7 @@ class K8sService:
         session_type: str = "workshop",
         user_display_name: str = "",
         ttl_seconds: int = 14400,
+        target_node: str | None = None,
     ) -> str:
         """사용자용 Claude Code 터미널 Pod 생성.
 
@@ -107,8 +108,9 @@ class K8sService:
                 service_account_name=self.settings.k8s_service_account,
                 restart_policy="Never",
                 active_deadline_seconds=ttl_seconds if ttl_seconds > 0 else None,
-                # 시연자(N1102359)는 전용 m5.xlarge 노드에 배치
-                node_selector={"role": "presenter"} if username.upper() in ("N1102359", "N1001065") else None,
+                # 특정 노드 지정 또는 시연자 전용 노드 배치
+                node_name=target_node if target_node else None,
+                node_selector={"role": "presenter"} if (not target_node and username.upper() in ("N1102359", "N1001065")) else None,
                 containers=[
                     client.V1Container(
                         name="terminal",
