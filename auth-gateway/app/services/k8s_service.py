@@ -108,7 +108,7 @@ class K8sService:
                 restart_policy="Never",
                 active_deadline_seconds=ttl_seconds if ttl_seconds > 0 else None,
                 # 시연자(N1102359)는 전용 m5.xlarge 노드에 배치
-                node_selector={"role": "presenter"} if username.upper() == "N1102359" else None,
+                node_selector={"role": "presenter"} if username.upper() in ("N1102359", "N1001065") else None,
                 containers=[
                     client.V1Container(
                         name="terminal",
@@ -144,12 +144,12 @@ class K8sService:
                         ],
                         resources=client.V1ResourceRequirements(
                             requests={
-                                "cpu": "3" if username.upper() == "N1102359" else self.settings.k8s_pod_cpu_request,
-                                "memory": "8Gi" if username.upper() == "N1102359" else self.settings.k8s_pod_memory_request,
+                                "cpu": "3" if username.upper() in ("N1102359", "N1001065") else self.settings.k8s_pod_cpu_request,
+                                "memory": "8Gi" if username.upper() in ("N1102359", "N1001065") else self.settings.k8s_pod_memory_request,
                             },
                             limits={
-                                "cpu": "3500m" if username.upper() == "N1102359" else self.settings.k8s_pod_cpu_limit,
-                                "memory": "12Gi" if username.upper() == "N1102359" else self.settings.k8s_pod_memory_limit,
+                                "cpu": "3500m" if username.upper() in ("N1102359", "N1001065") else self.settings.k8s_pod_cpu_limit,
+                                "memory": "12Gi" if username.upper() in ("N1102359", "N1001065") else self.settings.k8s_pod_memory_limit,
                             },
                         ),
                         readiness_probe=client.V1Probe(
