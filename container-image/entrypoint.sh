@@ -169,17 +169,8 @@ echo ""
 cd ~
 WELCOME
 
-# Claude Code 자동 시작 (quoted: $변수 보호)
-cat >> /home/node/.bashrc << 'AUTOSTART'
-if [ -z "${CLAUDE_STARTED:-}" ]; then
-    export CLAUDE_STARTED=1
-    echo "  Claude Code를 시작합니다..."
-    echo "  (종료: Ctrl+C 두 번 → 터미널로 복귀)"
-    echo ""
-    claude --dangerously-skip-permissions \
-        --append-system-prompt "항상 한국어로 응답하세요. 사용자의 이름을 인지하고 존칭을 사용하세요."
-fi
-AUTOSTART
+# Claude Code 자동 시작 — .bashrc 자동시작 제거 (보안: claude-wrapper로 대체)
+# ttyd가 claude-wrapper를 직접 실행하므로 .bashrc 자동시작 불필요
 
 # ---------------------------------------------------------------------------
 # 6) 파일 업로드/다운로드 서버 (port 8080)
@@ -192,7 +183,47 @@ python3 /usr/local/bin/fileserver.py --port "${FILE_SERVER_PORT}" --dir /home/no
 echo "File server (upload+download) started on port ${FILE_SERVER_PORT}"
 
 # ---------------------------------------------------------------------------
-# 8) ttyd 시작
+# 8) claude-wrapper 생성 (보안: Claude 종료 시 쉘 접근 차단)
+#    ttyd가 이 wrapper를 직접 실행하여, Claude Code 종료 후
+#    사용자가 bash 쉘에 접근하지 못하도록 함
+# ---------------------------------------------------------------------------
+cat > /home/node/.local/bin/claude-wrapper << 'WRAPPER'
+#!/bin/bash
+# Source profile for PATH and env vars
+export PATH="/home/node/.local/bin:$PATH"
+
+echo ""
+echo "  Claude Code를 시작합니다..."
+echo ""
+
+# Run Claude Code
+claude --dangerously-skip-permissions \
+    --append-system-prompt "항상 한국어로 응답하세요. 사용자의 이름을 인지하고 존칭을 사용하세요."
+
+# Claude exited — backup conversations to EFS
+echo ""
+echo "  대화 내용을 백업 중..."
+backup-chat 2>/dev/null
+
+# Show termination message and block further input
+# 'read' will block forever — user sees the message but cannot execute commands
+echo ""
+echo "============================================"
+echo "  세션이 종료되었습니다."
+echo "  대화 내용은 자동 백업되었습니다."
+echo "  브라우저를 닫아주세요."
+echo "============================================"
+echo ""
+
+# Block forever — prevents shell access after Claude exits
+# If the user closes the browser tab, ttyd terminates naturally
+read -r
+WRAPPER
+chmod +x /home/node/.local/bin/claude-wrapper
+
+# ---------------------------------------------------------------------------
+# 9) ttyd 시작 — claude-wrapper를 직접 실행 (bash -l 대신)
+#    보안: Claude 종료 후 bash 쉘에 접근 불가
 # ---------------------------------------------------------------------------
 TTYD_PORT="${TTYD_PORT:-7681}"
 TTYD_BASE_PATH="${TTYD_BASE_PATH:-/}"
@@ -210,4 +241,4 @@ exec ttyd \
     --client-option rendererType=dom \
     --client-option disableLeaveAlert=true \
     --client-option allowProposedApi=true \
-    bash -l
+    /home/node/.local/bin/claude-wrapper

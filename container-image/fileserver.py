@@ -283,8 +283,36 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
   <div class="header">
     <h1>Claude Code <span class="accent">Terminal</span></h1>
     <p>{user_name} ({user_id}) &middot; {pod_name}</p>
-    <a href="/" class="logout-btn" style="border-color:#da3633;color:#da3633;" onclick="if(confirm('로그아웃 및 Pod을 종료합니다.\\n대화 내용은 자동 백업되어 다음 로그인 시 복원됩니다.')){{var t=document.cookie.replace(/.*claude_token=([^;]*).*/,'$1');fetch('/api/v1/sessions/',{{method:'DELETE',headers:{{'Authorization':'Bearer '+t}}}}).finally(function(){{localStorage.clear();document.cookie='claude_token=;path=/;max-age=0';window.location.href='/'}})}}return false;">로그아웃 &amp; 종료</a>
+    <a href="/" class="logout-btn" style="border-color:#da3633;color:#da3633;" id="logoutBtn">로그아웃 &amp; 종료</a>
   </div>
+  <script>
+  document.getElementById('logoutBtn').addEventListener('click', function(e) {{
+    e.preventDefault();
+    if (!confirm('로그아웃 및 Pod을 종료합니다.\\n대화 내용은 자동 백업되어 다음 로그인 시 복원됩니다.')) return;
+    var cookies = document.cookie.split(';');
+    var token = '';
+    for (var i = 0; i < cookies.length; i++) {{
+      var c = cookies[i].trim();
+      if (c.indexOf('claude_token=') === 0) {{
+        token = c.substring('claude_token='.length);
+        break;
+      }}
+    }}
+    var cleanup = function() {{
+      localStorage.clear();
+      document.cookie = 'claude_token=;path=/;max-age=0';
+      window.location.href = '/';
+    }};
+    if (token) {{
+      fetch('/api/v1/sessions/', {{
+        method: 'DELETE',
+        headers: {{ 'Authorization': 'Bearer ' + token }}
+      }}).then(cleanup).catch(cleanup);
+    }} else {{
+      cleanup();
+    }}
+  }});
+  </script>
 
   <div class="cards">
     <a class="card" href="/terminal/{pod_name}/" id="terminalCard" onclick="return openTerminal(event, this)">
