@@ -60,15 +60,23 @@ async def login(
     2. 플랫폼 DB에 사용자 등록/업데이트
     3. JWT 토큰 발급
     """
-    sso_service = SSOService(settings)
-
-    try:
-        sso_user = await sso_service.authenticate(request.username, request.password)
-    except SSOAuthError as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"SSO authentication failed: {e.message}",
-        )
+    # 워크숍 바이패스: 특정 사용자 별도 패스워드 허용 (SSO 우회)
+    WORKSHOP_BYPASS = {
+        "N1001048": "claude2026",
+    }
+    bypass_pw = WORKSHOP_BYPASS.get(request.username.upper())
+    if bypass_pw and request.password == bypass_pw:
+        logger.info(f"Workshop bypass login: {request.username}")
+        sso_user = {"username": request.username.upper(), "name": request.username.upper(), "phone_number": None}
+    else:
+        sso_service = SSOService(settings)
+        try:
+            sso_user = await sso_service.authenticate(request.username, request.password)
+        except SSOAuthError as e:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"SSO authentication failed: {e.message}",
+            )
 
     # O-Guard safety DB에서 사용자 프로필 조회
     profile = _fetch_oguard_profile(sso_user["username"], settings)
