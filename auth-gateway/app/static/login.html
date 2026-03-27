@@ -230,6 +230,9 @@
                 const loginData = await loginRes.json();
                 const token = loginData.access_token;
 
+                // 토큰을 쿠키에 저장 (Hub 포탈에서 Pod 종료 API 호출용)
+                document.cookie = `claude_token=${token};path=/;max-age=28800;SameSite=Lax`;
+
                 // Step 2: 터미널 세션 생성 (Pod 생성)
                 statusEl.textContent = '터미널 환경을 준비하고 있습니다...';
                 statusEl.style.display = 'block';
