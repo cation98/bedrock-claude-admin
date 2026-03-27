@@ -94,7 +94,11 @@ COPY --chown=node:node sample-project/CLAUDE.md /home/node/CLAUDE.md
 # Python 패키지 사전 설치 (데이터 분석 + 웹앱 개발)
 RUN pip3 install --no-cache-dir --break-system-packages \
     openpyxl pandas matplotlib \
-    fastapi uvicorn[standard] psycopg2-binary jinja2 python-multipart
+    fastapi uvicorn[standard] psycopg2-binary jinja2 python-multipart \
+    uv
+
+# Serena MCP 서버 사전 설치 (uvx로 실행)
+RUN pip3 install --no-cache-dir --break-system-packages serena || true
 
 # -----------------------------------------------------------------------------
 # Claude Code 설정 + Skills
@@ -106,6 +110,7 @@ COPY --chown=node:node config/claude.json /home/node/.claude.json
 
 # Superpowers 플러그인 (스킬 + 에이전트)
 COPY --chown=node:node config/plugins/superpowers/ /home/node/.claude/plugins/cache/superpowers-marketplace/superpowers/4.0.3/
+COPY --chown=node:node config/plugins/serena/ /home/node/.claude/plugins/cache/claude-plugins-official/serena/unknown/
 COPY --chown=node:node config/installed_plugins.json /home/node/.claude/plugins/installed_plugins.json
 COPY --chown=node:node config/plugins-config.json /home/node/.claude/plugins/config.json
 COPY --chown=node:node config/plugins-blocklist.json /home/node/.claude/plugins/blocklist.json

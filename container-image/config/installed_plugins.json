@@ -9,6 +9,15 @@
         "installedAt": "2026-03-24T00:00:00.000Z",
         "lastUpdated": "2026-03-24T00:00:00.000Z"
       }
+    ],
+    "serena@claude-plugins-official": [
+      {
+        "scope": "user",
+        "installPath": "/home/node/.claude/plugins/cache/claude-plugins-official/serena/unknown",
+        "version": "unknown",
+        "installedAt": "2026-03-27T00:00:00.000Z",
+        "lastUpdated": "2026-03-27T00:00:00.000Z"
+      }
     ]
   }
 }
