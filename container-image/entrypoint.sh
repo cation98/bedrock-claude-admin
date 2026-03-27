@@ -63,6 +63,15 @@ mkdir -p /home/node/workspace/reports
 mkdir -p /home/node/workspace/uploads
 
 # ---------------------------------------------------------------------------
+# 4a) 이전 대화 자동 복원 (EFS 백업 → ~/.claude/)
+# ---------------------------------------------------------------------------
+if [ -d /home/node/workspace/.claude-backup/projects ]; then
+    cp -r /home/node/workspace/.claude-backup/projects/ /home/node/.claude/projects/ 2>/dev/null
+    cp /home/node/workspace/.claude-backup/history.jsonl /home/node/.claude/history.jsonl 2>/dev/null
+    echo "  이전 대화 복원 완료"
+fi
+
+# ---------------------------------------------------------------------------
 # 4b) TANGO DB .pgpass 설정 (패스워드 내 ! 특수문자 처리)
 # ---------------------------------------------------------------------------
 echo "aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com:5432:postgres:claude_readonly:TangoReadOnly2026" > /home/node/.pgpass
@@ -78,6 +87,29 @@ export PGPASSWORD="$TANGO_DB_PASSWORD"
 exec psql "host=aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com dbname=postgres user=claude_readonly sslmode=require" "$@"
 DBSCRIPT
 chmod +x /home/node/.local/bin/psql-tango
+
+# backup-chat / restore-chat 스크립트
+cat > /home/node/.local/bin/backup-chat << 'BSCRIPT'
+#!/bin/bash
+mkdir -p /home/node/workspace/.claude-backup
+cp -r /home/node/.claude/projects/ /home/node/workspace/.claude-backup/ 2>/dev/null
+cp /home/node/.claude/history.jsonl /home/node/workspace/.claude-backup/ 2>/dev/null
+echo "대화 백업 완료: ~/workspace/.claude-backup/"
+BSCRIPT
+chmod +x /home/node/.local/bin/backup-chat
+
+cat > /home/node/.local/bin/restore-chat << 'RSCRIPT'
+#!/bin/bash
+if [ -d /home/node/workspace/.claude-backup/projects ]; then
+    cp -r /home/node/workspace/.claude-backup/projects/ /home/node/.claude/projects/
+    cp /home/node/workspace/.claude-backup/history.jsonl /home/node/.claude/history.jsonl 2>/dev/null
+    echo "대화 복원 완료. claude를 재시작하면 이전 대화가 보입니다."
+else
+    echo "백업이 없습니다. 먼저 backup-chat을 실행하세요."
+fi
+RSCRIPT
+chmod +x /home/node/.local/bin/restore-chat
+
 export PATH="/home/node/.local/bin:$PATH"
 
 # ---------------------------------------------------------------------------
