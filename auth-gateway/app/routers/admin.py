@@ -483,3 +483,91 @@ async def terminate_pod(
     db.close()
 
     return {"username": username.upper(), "pod_name": pod_name, "status": "terminated"}
+
+
+# ==================== Node Group Scaling ====================
+
+class NodeGroupInfo(BaseModel):
+    name: str
+    instance_type: str
+    min_size: int
+    max_size: int
+    desired_size: int
+    status: str
+
+
+class NodeGroupListResponse(BaseModel):
+    groups: list[NodeGroupInfo]
+
+
+class ScaleNodeGroupRequest(BaseModel):
+    nodegroup_name: str
+    desired_size: int
+
+
+@router.get("/nodegroups", response_model=NodeGroupListResponse)
+async def list_nodegroups(
+    _admin: dict = Depends(_require_admin),
+    settings: Settings = Depends(get_settings),
+):
+    """EKS 노드그룹 목록 조회."""
+    import boto3
+    eks = boto3.client("eks", region_name="ap-northeast-2")
+    cluster = "bedrock-claude-eks"
+
+    ng_names = eks.list_nodegroups(clusterName=cluster)["nodegroups"]
+    groups = []
+    for ng_name in ng_names:
+        ng = eks.describe_nodegroup(clusterName=cluster, nodegroupName=ng_name)["nodegroup"]
+        scaling = ng["scalingConfig"]
+        instance_types = ng.get("instanceTypes", ["unknown"])
+        groups.append(NodeGroupInfo(
+            name=ng_name,
+            instance_type=instance_types[0] if instance_types else "unknown",
+            min_size=scaling["minSize"],
+            max_size=scaling["maxSize"],
+            desired_size=scaling["desiredSize"],
+            status=ng["status"],
+        ))
+    return NodeGroupListResponse(groups=groups)
+
+
+@router.post("/scale-nodegroup")
+async def scale_nodegroup(
+    req: ScaleNodeGroupRequest,
+    _admin: dict = Depends(_require_admin),
+):
+    """EKS 노드그룹 스케일링."""
+    import boto3
+    eks = boto3.client("eks", region_name="ap-northeast-2")
+    cluster = "bedrock-claude-eks"
+
+    # 현재 상태 확인
+    ng = eks.describe_nodegroup(clusterName=cluster, nodegroupName=req.nodegroup_name)["nodegroup"]
+    scaling = ng["scalingConfig"]
+
+    # 시스템 보호: 시스템 Pod이 있는 노드그룹은 최소 1대 유지
+    min_allowed = scaling["minSize"]
+    if req.desired_size < 0:
+        raise HTTPException(status_code=400, detail="노드 수는 0 이상이어야 합니다")
+    if req.desired_size > scaling["maxSize"]:
+        raise HTTPException(status_code=400, detail=f"최대 {scaling['maxSize']}대까지 가능합니다")
+
+    new_min = min(scaling["minSize"], req.desired_size)
+
+    eks.update_nodegroup_config(
+        clusterName=cluster,
+        nodegroupName=req.nodegroup_name,
+        scalingConfig={
+            "minSize": new_min,
+            "maxSize": scaling["maxSize"],
+            "desiredSize": req.desired_size,
+        },
+    )
+
+    logger.info(f"Nodegroup {req.nodegroup_name} scaled to {req.desired_size}")
+    return {
+        "nodegroup": req.nodegroup_name,
+        "desired_size": req.desired_size,
+        "status": "scaling",
+    }

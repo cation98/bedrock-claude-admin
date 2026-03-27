@@ -243,6 +243,32 @@ export function terminatePod(username: string): Promise<{ username: string; stat
   });
 }
 
+// ---------- Admin: Node Group Scaling ----------
+
+export interface NodeGroupInfo {
+  name: string;
+  instance_type: string;
+  min_size: number;
+  max_size: number;
+  desired_size: number;
+  status: string;
+}
+
+export interface NodeGroupListResponse {
+  groups: NodeGroupInfo[];
+}
+
+export function getNodeGroups(): Promise<NodeGroupListResponse> {
+  return request<NodeGroupListResponse>("/api/v1/admin/nodegroups");
+}
+
+export function scaleNodeGroup(nodegroupName: string, desiredSize: number): Promise<{ nodegroup: string; desired_size: number; status: string }> {
+  return request<{ nodegroup: string; desired_size: number; status: string }>("/api/v1/admin/scale-nodegroup", {
+    method: "POST",
+    body: JSON.stringify({ nodegroup_name: nodegroupName, desired_size: desiredSize }),
+  });
+}
+
 // ---------- Admin: Token Usage ----------
 
 export interface UserTokenUsage {

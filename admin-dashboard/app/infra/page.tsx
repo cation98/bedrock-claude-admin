@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { getInfrastructure, getUsers, assignPod, movePod, terminatePod, type InfraResponse, type NodeInfo, type User } from "@/lib/api";
+import { getInfrastructure, getUsers, getNodeGroups, scaleNodeGroup, assignPod, movePod, terminatePod, type InfraResponse, type NodeInfo, type User, type NodeGroupInfo } from "@/lib/api";
 import { isAuthenticated, logout, getUser } from "@/lib/auth";
 import StatsCard from "@/components/stats-card";
 
@@ -130,12 +130,14 @@ export default function InfraPage() {
   const [approvedUsers, setApprovedUsers] = useState<User[]>([]);
   const [assignUser, setAssignUser] = useState("");
   const [assignNode, setAssignNode] = useState("");
+  const [nodeGroups, setNodeGroups] = useState<NodeGroupInfo[]>([]);
 
   const fetchData = useCallback(async () => {
     try {
-      const [res, usersRes] = await Promise.all([getInfrastructure(), getUsers()]);
+      const [res, usersRes, ngRes] = await Promise.all([getInfrastructure(), getUsers(), getNodeGroups()]);
       setData(res);
       setApprovedUsers(usersRes.users.filter((u) => u.is_approved));
+      setNodeGroups(ngRes.groups);
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to fetch");
@@ -220,6 +222,71 @@ export default function InfraPage() {
             데이터를 불러오는 중...
           </div>
         ) : (
+          <>
+          {/* Node Group Scaling */}
+          <div className="mb-4 rounded-lg border border-gray-200 bg-white shadow-sm">
+            <div className="border-b border-gray-200 px-4 py-3">
+              <h3 className="text-sm font-semibold text-gray-900">노드그룹 관리</h3>
+            </div>
+            <div className="divide-y divide-gray-100">
+              {nodeGroups.map((ng) => (
+                <div key={ng.name} className="flex items-center justify-between px-4 py-3">
+                  <div>
+                    <span className="text-sm font-medium text-gray-900">{ng.name}</span>
+                    <span className="ml-2 rounded bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">{ng.instance_type}</span>
+                    <span className={`ml-2 rounded px-2 py-0.5 text-xs font-medium ${ng.status === "ACTIVE" ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-700"}`}>
+                      {ng.status}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-gray-500">
+                      현재 {ng.desired_size}대 (min {ng.min_size} / max {ng.max_size})
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={async () => {
+                          if (ng.desired_size <= 0) return;
+                          const newSize = ng.desired_size - 1;
+                          if (confirm(`${ng.name} 노드를 ${ng.desired_size}대 → ${newSize}대로 축소합니다.\n시스템 Pod이 있는 노드가 제거될 수 있으니 주의하세요.`)) {
+                            try { await scaleNodeGroup(ng.name, newSize); fetchData(); } catch (err) { setError(err instanceof Error ? err.message : "스케일링 실패"); }
+                          }
+                        }}
+                        disabled={ng.desired_size <= 0}
+                        className="rounded border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-30"
+                      >
+                        -1
+                      </button>
+                      <span className="w-8 text-center text-sm font-bold">{ng.desired_size}</span>
+                      <button
+                        onClick={async () => {
+                          const newSize = ng.desired_size + 1;
+                          if (newSize > ng.max_size) { setError(`최대 ${ng.max_size}대까지 가능합니다`); return; }
+                          try { await scaleNodeGroup(ng.name, newSize); fetchData(); } catch (err) { setError(err instanceof Error ? err.message : "스케일링 실패"); }
+                        }}
+                        disabled={ng.desired_size >= ng.max_size}
+                        className="rounded border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-30"
+                      >
+                        +1
+                      </button>
+                      {ng.desired_size > 0 && (
+                        <button
+                          onClick={async () => {
+                            if (confirm(`${ng.name} 노드를 모두 종료(0대)합니다.\n시스템 Pod이 있으면 서비스 장애가 발생합니다!`)) {
+                              try { await scaleNodeGroup(ng.name, 0); fetchData(); } catch (err) { setError(err instanceof Error ? err.message : "스케일링 실패"); }
+                            }
+                          }}
+                          className="ml-1 rounded bg-red-50 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-100"
+                        >
+                          전체 종료
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
           {/* Pod 할당 */}
           <div className="mb-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
             <h3 className="mb-2 text-sm font-semibold text-gray-900">Pod 할당</h3>
@@ -271,6 +338,7 @@ export default function InfraPage() {
               <NodeCard key={node.node_name} node={node} allNodes={data.nodes} onAction={fetchData} />
             ))}
           </div>
+          </>
         )}
       </main>
     </div>
