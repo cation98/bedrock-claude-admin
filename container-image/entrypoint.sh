@@ -79,8 +79,11 @@ fi
 # ---------------------------------------------------------------------------
 # 4b) TANGO DB .pgpass 설정 (패스워드 내 ! 특수문자 처리)
 # ---------------------------------------------------------------------------
-echo "aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com:5432:postgres:claude_readonly:TangoReadOnly2026" > /home/node/.pgpass
+echo "aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com:5432:postgres:claude_readonly:${TANGO_DB_PASSWORD}" > /home/node/.pgpass
 chmod 600 /home/node/.pgpass
+
+# 비밀번호 환경변수 제거 (보안)
+unset TANGO_DB_PASSWORD
 
 # ---------------------------------------------------------------------------
 # 5) psql-tango 스크립트 생성 (TANGO DB 접속 단축 명령)
@@ -88,7 +91,6 @@ chmod 600 /home/node/.pgpass
 mkdir -p /home/node/.local/bin
 cat > /home/node/.local/bin/psql-tango << 'DBSCRIPT'
 #!/bin/sh
-export PGPASSWORD="$TANGO_DB_PASSWORD"
 exec psql "host=aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com dbname=postgres user=claude_readonly sslmode=require" "$@"
 DBSCRIPT
 chmod +x /home/node/.local/bin/psql-tango
@@ -142,16 +144,6 @@ fi
 # ---------------------------------------------------------------------------
 # 6) 환영 메시지
 # ---------------------------------------------------------------------------
-# DB 접속 스크립트
-mkdir -p /home/node/.local/bin
-
-cat > /home/node/.local/bin/psql-tango << 'DBSCRIPT'
-#!/bin/sh
-export PGPASSWORD="TangoReadOnly2026"
-exec psql "host=aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com dbname=postgres user=claude_readonly sslmode=require" "$@"
-DBSCRIPT
-chmod +x /home/node/.local/bin/psql-tango
-
 cat > /home/node/.local/bin/psql-safety << 'DBSCRIPT'
 #!/bin/sh
 exec psql "$DATABASE_URL" "$@"
