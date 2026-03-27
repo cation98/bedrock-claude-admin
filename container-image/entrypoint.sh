@@ -134,7 +134,7 @@ export PATH="/home/node/.local/bin:$PATH"
 # ---------------------------------------------------------------------------
 if [ ! -f /home/node/workspace/.plugins-installed ]; then
     echo "  플러그인 설치 중..."
-    claude plugin install superpowers --marketplace superpowers-marketplace -y 2>/dev/null || true
+    claude plugin install superpowers 2>/dev/null || true
     touch /home/node/workspace/.plugins-installed
     echo "  플러그인 설치 완료"
 fi
