@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { getActiveSessions, type Session } from "@/lib/api";
+import { getActiveSessions, adminTerminateSession, type Session } from "@/lib/api";
 import { isAuthenticated, logout, getUser } from "@/lib/auth";
 import StatsCard from "@/components/stats-card";
 import SessionTable from "@/components/session-table";
@@ -109,7 +109,16 @@ export default function DashboardPage() {
             </h2>
             <span className="text-xs text-gray-400">10초마다 자동 갱신</span>
           </div>
-          <SessionTable sessions={sessions} loading={loading} />
+          <SessionTable sessions={sessions} loading={loading} onTerminate={async (sessionId) => {
+            if (confirm('이 세션의 Pod을 종료하시겠습니까?\n대화 내용은 EFS에 백업되어 복원 가능합니다.')) {
+              try {
+                await adminTerminateSession(sessionId);
+                fetchSessions();
+              } catch (e: unknown) {
+                console.error(e);
+              }
+            }
+          }} />
         </div>
       </main>
     </div>
