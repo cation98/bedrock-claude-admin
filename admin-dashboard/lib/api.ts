@@ -56,6 +56,30 @@ export function login(data: LoginRequest): Promise<LoginResponse> {
   });
 }
 
+// ---------- 2FA Auth ----------
+
+export interface LoginStep1Response {
+  requires_2fa: boolean;
+  code_id: string;
+  phone_masked: string;
+  message: string;
+}
+
+export interface Verify2faRequest {
+  code_id: string;
+  code: string;
+}
+
+// Note: login() may return EITHER LoginResponse (bypass) OR LoginStep1Response (2FA needed)
+// The caller checks for requires_2fa field
+
+export function verify2fa(data: Verify2faRequest): Promise<LoginResponse> {
+  return request<LoginResponse>("/api/v1/auth/verify-2fa", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
 export interface MeResponse {
   username: string;
   name: string;
