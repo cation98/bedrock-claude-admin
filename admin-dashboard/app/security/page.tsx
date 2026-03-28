@@ -43,10 +43,11 @@ const LEVEL_OPTIONS: {
   { value: "custom", label: "Custom", desc: "관리자 정의 권한 (직접 설정)", descClass: "text-xs text-purple-500" },
 ];
 
-const DB_KEYS = ["db_safety", "db_tango"] as const;
+const DB_KEYS = ["db_safety", "db_tango", "db_doculog"] as const;
 const DB_LABELS: Record<string, string> = {
   db_safety: "Safety DB",
   db_tango: "Tango DB",
+  db_doculog: "Docu-Log DB",
 };
 
 const SKILL_KEYS = ["db", "report", "excel", "share", "sms", "webapp"] as const;
@@ -65,6 +66,7 @@ const LEVEL_DEFAULTS: Record<
   {
     db_safety: boolean;
     db_tango: boolean;
+    db_doculog: boolean;
     skills: string[];
     can_see_schema: boolean;
   }
@@ -72,18 +74,21 @@ const LEVEL_DEFAULTS: Record<
   basic: {
     db_safety: false,
     db_tango: false,
+    db_doculog: false,
     skills: ["report", "share"],
     can_see_schema: false,
   },
   standard: {
     db_safety: true,
     db_tango: true,
+    db_doculog: true,
     skills: ["db", "report", "excel", "share", "sms", "webapp"],
     can_see_schema: true,
   },
   full: {
     db_safety: true,
     db_tango: true,
+    db_doculog: true,
     skills: ["db", "report", "excel", "share", "sms", "webapp"],
     can_see_schema: true,
   },
@@ -129,15 +134,17 @@ export default function SecurityPage() {
   const [detailDbTables, setDetailDbTables] = useState<Record<string, string[]>>({
     db_safety: ["*"],
     db_tango: ["*"],
+    db_doculog: ["*"],
   });
   const [detailSkills, setDetailSkills] = useState<Record<string, boolean>>({});
   const [detailSchemaExposure, setDetailSchemaExposure] = useState(false);
   const [saving, setSaving] = useState(false);
 
   // Available tables from API
-  const [availableTables, setAvailableTables] = useState<{ safety: TableInfo[]; tango: TableInfo[] }>({
+  const [availableTables, setAvailableTables] = useState<{ safety: TableInfo[]; tango: TableInfo[]; doculog: TableInfo[] }>({
     safety: [],
     tango: [],
+    doculog: [],
   });
 
   // Table filter for search
@@ -164,10 +171,12 @@ export default function SecurityPage() {
     setDetailDbAccess({
       db_safety: parsePolicyField(p.security_policy, "db_safety", false),
       db_tango: parsePolicyField(p.security_policy, "db_tango", false),
+      db_doculog: parsePolicyField(p.security_policy, "db_doculog", false),
     });
     setDetailDbTables({
       db_safety: parsePolicyField<string[]>(p.security_policy, "db_safety_tables", ["*"]),
       db_tango: parsePolicyField<string[]>(p.security_policy, "db_tango_tables", ["*"]),
+      db_doculog: parsePolicyField<string[]>(p.security_policy, "db_doculog_tables", ["*"]),
     });
     const skills: Record<string, boolean> = {};
     for (const k of SKILL_KEYS) {
@@ -183,7 +192,7 @@ export default function SecurityPage() {
     try {
       const [policyRes, tablesRes] = await Promise.all([
         getSecurityPolicies(),
-        getSecurityTables().catch(() => ({ safety: [], tango: [] })),
+        getSecurityTables().catch(() => ({ safety: [], tango: [], doculog: [] })),
       ]);
       setPolicies(policyRes.policies);
       setAvailableTables(tablesRes);
@@ -262,10 +271,12 @@ export default function SecurityPage() {
     setDetailDbAccess({
       db_safety: defaults.db_safety,
       db_tango: defaults.db_tango,
+      db_doculog: defaults.db_doculog,
     });
     setDetailDbTables({
       db_safety: ["*"],
       db_tango: ["*"],
+      db_doculog: ["*"],
     });
     const skills: Record<string, boolean> = {};
     for (const k of SKILL_KEYS) {
@@ -308,8 +319,10 @@ export default function SecurityPage() {
         security_level: detailLevel,
         db_safety: detailDbAccess.db_safety ?? false,
         db_tango: detailDbAccess.db_tango ?? false,
+        db_doculog: detailDbAccess.db_doculog ?? false,
         db_safety_tables: detailDbTables.db_safety ?? ["*"],
         db_tango_tables: detailDbTables.db_tango ?? ["*"],
+        db_doculog_tables: detailDbTables.db_doculog ?? ["*"],
         db_platform: false, // always OFF
         schema_exposure: detailSchemaExposure,
       };
@@ -351,6 +364,7 @@ export default function SecurityPage() {
   function getTablesForDb(dbKey: string): TableInfo[] {
     if (dbKey === "db_safety") return availableTables.safety;
     if (dbKey === "db_tango") return availableTables.tango;
+    if (dbKey === "db_doculog") return availableTables.doculog;
     return [];
   }
 

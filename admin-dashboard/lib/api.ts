@@ -407,6 +407,6 @@ export interface TableInfo {
   description: string;
 }
 
-export function getSecurityTables(): Promise<{ safety: TableInfo[]; tango: TableInfo[] }> {
-  return request<{ safety: TableInfo[]; tango: TableInfo[] }>("/api/v1/security/tables");
+export function getSecurityTables(): Promise<{ safety: TableInfo[]; tango: TableInfo[]; doculog: TableInfo[] }> {
+  return request<{ safety: TableInfo[]; tango: TableInfo[]; doculog: TableInfo[] }>("/api/v1/security/tables");
 }
