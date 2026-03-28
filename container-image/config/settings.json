@@ -3,8 +3,13 @@
     "PreToolUse": [
       {
         "matcher": "Bash",
-        "command": "/home/node/.claude/hooks/security-hook.sh",
-        "timeout": 5000
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/node/.claude/hooks/security-hook.sh",
+            "timeout": 5000
+          }
+        ]
       }
     ]
   },
