@@ -17,7 +17,7 @@
 3. **시스템 변경 금지**: Pod의 네트워크 설정, 보안 설정, 시스템 파일을 변경하지 마세요.
 
 ### 허용 행위
-- 사내 DB 조회 (psql-tango, psql $DATABASE_URL) — ReadOnly
+- 사내 DB 조회 (psql-tango, psql-doculog, psql $DATABASE_URL) — ReadOnly
 - AWS Bedrock API 호출 (Claude 모델) — IRSA 자동 인증
 - 파일 생성/편집 (~/workspace/ 내) — 로컬 작업
 - pip/npm 패키지 설치 — 개발 목적
@@ -168,6 +168,46 @@ psql-tango -c "SELECT * FROM opark_daily_report LIMIT 5;"
 | `opark_evchrgequipmaster` | 전기차 충전 장비 |
 | `opark_fronthaulequipmaster` | Fronthaul 장비 |
 
+### 4. Docu-Log 문서활동 분석 DB
+
+문서활동 로그 267일간 4,616,363건 분석 결과. 부서별 업무 현황, 업무 중복, 반복 패턴 질의 가능.
+
+```bash
+# ✅ 올바른 방법
+psql-doculog -c "쿼리"
+```
+
+**주요 테이블**:
+
+| 테이블 | 설명 | 건수 |
+|--------|------|------|
+| `document_logs` | 문서활동 로그 원본 + 분석 컬럼 | 4,616,363 |
+| `task_embeddings` | 업무명 임베딩 벡터 (768dim) | 359,968 |
+| `mv_pre_reorg` | 2025년 개편 전 데이터 뷰 | 4,037,324 |
+
+**핵심 컬럼**:
+
+| 컬럼 | 설명 |
+|------|------|
+| `fn_task_normalized` | 핵심 분석 단위 — 날짜/버전 제거된 업무명 |
+| `fn_doc_type` | 문서 유형 (현황/보고서/점검/계획 등 13종) |
+| `department` | 소속 부서 (192개) |
+| `dept_function` | 부서 기능 (품질혁신, Access관제 등) |
+| `dept_region` | 부서 지역 (서울, 경남 등 18개) |
+| `log_type` | 활동 유형 (편집, 생성, 읽기 등) |
+
+**자주 쓰는 쿼리**:
+```sql
+-- 부서기능별 주요 업무 Top 10
+psql-doculog -c "SELECT fn_task_normalized, COUNT(*) FROM document_logs WHERE dept_function = '품질혁신' GROUP BY 1 ORDER BY 2 DESC LIMIT 10;"
+
+-- 부서간 업무 중복
+psql-doculog -c "SELECT dept_function, COUNT(DISTINCT fn_task_normalized) FROM document_logs GROUP BY 1 ORDER BY 2 DESC;"
+
+-- 유사 업무 시맨틱 검색
+psql-doculog -c "SET hnsw.ef_search = 100; SELECT e2.fn_task_normalized, ROUND((1-(e1.embedding<=>e2.embedding))::numeric,4) AS sim FROM task_embeddings e1 CROSS JOIN LATERAL (SELECT fn_task_normalized,embedding FROM task_embeddings WHERE fn_task_normalized!=e1.fn_task_normalized ORDER BY embedding<=>e1.embedding LIMIT 5) e2 WHERE e1.fn_task_normalized='안전점검';"
+```
+
 ## 업무 키워드 → 데이터 소스 매핑
 
 | 키워드 | DB | 접속 명령 | 주요 테이블 |
@@ -178,12 +218,14 @@ psql-tango -c "SELECT * FROM opark_daily_report LIMIT 5;"
 | 업무일지, Opark, 일일보고 | **TANGO DB** | `psql-tango` | `opark_daily_report` |
 | 안전점검, 순찰 | **Safety DB** | `psql $DATABASE_URL` | `safety_activity_patrolsafetyinspection_*` |
 | 작업상태, 작업중지 | **Safety DB** | `psql $DATABASE_URL` | `safety_activity_workstatus`, `safety_activity_workstophistory` |
+| 문서활동, 문서로그, 업무패턴 | **Docu-Log DB** | `psql-doculog` | `document_logs`, `task_embeddings` |
 
 ### DB 공통 규칙
 1. **TANGO DB → `psql-tango -c "쿼리"`** (절대 `$TANGO_DATABASE_URL` 직접 사용 금지)
 2. **Safety DB → `psql $DATABASE_URL -c "쿼리"`**
-3. 대량 데이터 → `LIMIT` 사용
-4. 한글 데이터 포함
+3. **Docu-Log DB → `psql-doculog -c "쿼리"`**
+4. 대량 데이터 → `LIMIT` 사용
+5. 한글 데이터 포함
 
 ## 웹 터미널 조작 안내
 
@@ -194,6 +236,7 @@ psql-tango -c "SELECT * FROM opark_daily_report LIMIT 5;"
 ## 사용 가능한 도구
 
 - **psql-tango**: TANGO 알람 DB 접속
+- **psql-doculog**: Docu-Log 문서활동 분석 DB 접속
 - **psql $DATABASE_URL**: 안전관리 DB 접속
 - **Python 3**: pandas, matplotlib, openpyxl 설치됨
 - **git**: 버전 관리

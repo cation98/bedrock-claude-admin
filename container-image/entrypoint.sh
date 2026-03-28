@@ -29,7 +29,7 @@ echo "  User:     ${USER_DISPLAY_NAME} (${USER_ID})"
 echo "  Bedrock:  ${CLAUDE_CODE_USE_BEDROCK:-not set}"
 echo "  Region:   ${AWS_REGION:-not set}"
 echo "  Model:    ${ANTHROPIC_DEFAULT_SONNET_MODEL:-default}"
-echo "  DB:       Safety + TANGO Alarm"
+echo "  DB:       Safety + TANGO Alarm + Docu-Log"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # 글로벌 CLAUDE.md (~/.claude/CLAUDE.md)에 사용자 프로필 추가
@@ -80,6 +80,11 @@ fi
 # 4b) TANGO DB .pgpass 설정 (패스워드 내 ! 특수문자 처리)
 # ---------------------------------------------------------------------------
 echo "aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com:5432:postgres:claude_readonly:${TANGO_DB_PASSWORD}" > /home/node/.pgpass
+# Docu-Log DB entry
+if [ -n "${DOCULOG_DB_PASSWORD:-}" ]; then
+    echo "aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com:5432:doculog:doculog_reader:${DOCULOG_DB_PASSWORD}" >> /home/node/.pgpass
+    unset DOCULOG_DB_PASSWORD
+fi
 chmod 600 /home/node/.pgpass
 
 # 비밀번호 환경변수 제거 (보안)
@@ -94,6 +99,13 @@ cat > /home/node/.local/bin/psql-tango << 'DBSCRIPT'
 exec psql "host=aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com dbname=postgres user=claude_readonly sslmode=require" "$@"
 DBSCRIPT
 chmod +x /home/node/.local/bin/psql-tango
+
+# psql-doculog 스크립트 (Docu-Log 문서활동 분석 DB 접속 단축 명령)
+cat > /home/node/.local/bin/psql-doculog << 'DBSCRIPT'
+#!/bin/sh
+exec psql "host=aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com dbname=doculog user=doculog_reader sslmode=require" "$@"
+DBSCRIPT
+chmod +x /home/node/.local/bin/psql-doculog
 
 # backup-chat / restore-chat 스크립트
 cat > /home/node/.local/bin/backup-chat << 'BSCRIPT'
@@ -156,7 +168,7 @@ echo 'export PATH="/home/node/.local/bin:$PATH"' >> /home/node/.bashrc
 cat >> /home/node/.bashrc << WELCOME
 echo ""
 echo "  Claude Code Terminal — ${USER_DISPLAY_NAME} 님"
-echo "  claude / psql-safety / psql-tango / /report / /excel"
+echo "  claude / psql-safety / psql-tango / psql-doculog / /report / /excel"
 echo ""
 cd ~
 WELCOME

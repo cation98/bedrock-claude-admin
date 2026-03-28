@@ -252,6 +252,12 @@ TANGO_TABLE_DESCRIPTIONS = {
     "opark_fronthaulequipmaster": "Fronthaul 장비",
 }
 
+DOCULOG_TABLE_DESCRIPTIONS = {
+    "document_logs": "문서활동 로그 원본 + 분석 컬럼 (4.6M rows)",
+    "task_embeddings": "업무명 임베딩 벡터 (768dim, 360K)",
+    "mv_pre_reorg": "2025년 개편 전 데이터 뷰",
+}
+
 # Blacklisted tables (never shown, never accessible)
 BLACKLISTED_TABLES = {
     "auth_user", "accounts_userprofile", "accounts_passwordhistory",
@@ -280,10 +286,10 @@ async def list_tables(
     _admin=Depends(_require_admin),
     settings: Settings = Depends(get_settings),
 ):
-    """Safety/TANGO DB의 테이블 목록 조회 (시스템 테이블 제외, 설명 포함)."""
+    """Safety/TANGO/Docu-Log DB의 테이블 목록 조회 (시스템 테이블 제외, 설명 포함)."""
     import psycopg2
 
-    result = {"safety": [], "tango": []}
+    result = {"safety": [], "tango": [], "doculog": []}
 
     # Safety DB
     try:
@@ -324,5 +330,32 @@ async def list_tables(
             conn.close()
     except Exception as e:
         logger.warning(f"Failed to list tango tables: {e}")
+
+    # Docu-Log DB
+    try:
+        doculog_url = settings.doculog_database_url
+        if doculog_url:
+            conn = psycopg2.connect(doculog_url)
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT table_name FROM information_schema.tables
+                WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+                ORDER BY table_name
+            """)
+            for (table_name,) in cur.fetchall():
+                result["doculog"].append({
+                    "name": table_name,
+                    "description": DOCULOG_TABLE_DESCRIPTIONS.get(table_name, ""),
+                })
+            # Also include materialized views
+            cur.execute("SELECT matviewname FROM pg_matviews WHERE schemaname = 'public'")
+            for (mv,) in cur.fetchall():
+                result["doculog"].append({
+                    "name": mv,
+                    "description": DOCULOG_TABLE_DESCRIPTIONS.get(mv, "(materialized view)"),
+                })
+            conn.close()
+    except Exception as e:
+        logger.warning(f"Failed to list doculog tables: {e}")
 
     return result

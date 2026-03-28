@@ -9,6 +9,7 @@ SECURITY_TEMPLATES = {
         "db_access": {
             "safety": {"allowed": False, "tables": []},
             "tango": {"allowed": False, "tables": []},
+            "doculog": {"allowed": False, "tables": []},
             "platform": {"allowed": False, "tables": []},
         },
         "allowed_skills": ["report", "share"],
@@ -20,6 +21,7 @@ SECURITY_TEMPLATES = {
         "db_access": {
             "safety": {"allowed": True, "tables": ["*"]},
             "tango": {"allowed": True, "tables": ["*"]},
+            "doculog": {"allowed": True, "tables": ["*"]},
             "platform": {"allowed": False, "tables": []},
         },
         "allowed_skills": ["*"],
@@ -31,6 +33,7 @@ SECURITY_TEMPLATES = {
         "db_access": {
             "safety": {"allowed": True, "tables": ["*"]},
             "tango": {"allowed": True, "tables": ["*"]},
+            "doculog": {"allowed": True, "tables": ["*"]},
             "platform": {"allowed": False, "tables": []},
         },
         "allowed_skills": ["*"],

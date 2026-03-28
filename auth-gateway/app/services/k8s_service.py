@@ -150,6 +150,16 @@ class K8sService:
                                     )
                                 ),
                             ),
+                            # Docu-Log DB
+                            client.V1EnvVar(
+                                name="DOCULOG_DB_PASSWORD",
+                                value_from=client.V1EnvVarSource(
+                                    secret_key_ref=client.V1SecretKeySelector(
+                                        name="auth-gateway-secrets",
+                                        key="DOCULOG_DB_PASSWORD",
+                                    )
+                                ),
+                            ),
                             client.V1EnvVar(
                                 name="DATABASE_URL",
                                 value=self.settings.workshop_database_url,
