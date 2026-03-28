@@ -4,8 +4,14 @@ import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from kubernetes import client
+from kubernetes import client, config as k8s_config
 from kubernetes.stream import stream
+
+# K8s client 초기화 (incluster 또는 kubeconfig)
+try:
+    k8s_config.load_incluster_config()
+except k8s_config.ConfigException:
+    k8s_config.load_kube_config()
 from pydantic import BaseModel
 
 from app.core.config import Settings, get_settings
