@@ -554,8 +554,7 @@ export default function SecurityPage() {
                       {allTemplates.map((t) => (
                         <option key={t.name} value={t.name}>
                           {t.name}
-                          {t.isBuiltin ? "" : " (custom)"}
-                        </option>
+                                                  </option>
                       ))}
                     </select>
                     <button
@@ -650,8 +649,7 @@ export default function SecurityPage() {
                               {allTemplates.map((t) => (
                                 <option key={t.name} value={t.name}>
                                   {t.name}
-                                  {t.isBuiltin ? "" : " (custom)"}
-                                </option>
+                                                                  </option>
                               ))}
                             </select>
                           </td>
