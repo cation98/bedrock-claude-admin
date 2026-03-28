@@ -9,6 +9,7 @@ K8s 개념 정리:
   - Label: Pod에 메타데이터 부착 (사용자명, 세션 타입 등)
 """
 
+import json as _json
 import logging
 from datetime import datetime, timezone
 
@@ -47,6 +48,84 @@ class K8sService:
         safe_name = username.lower().replace("_", "-")
         return f"claude-terminal-{safe_name}"
 
+    def _build_env_vars(
+        self,
+        username: str,
+        user_display_name: str,
+        security_policy: dict | None,
+    ) -> list:
+        """Pod 환경변수 목록 생성. security_policy에 따라 DB 자격증명을 조건부 주입.
+
+        security_policy가 None이거나 빈 dict이면 모든 DB 접근을 허용 (기존 동작 유지).
+        """
+        policy = security_policy or {}
+        db_access = policy.get("db_access", {})
+        # 정책이 없으면 하위 호환: 모든 DB 접근 허용
+        safety_allowed = db_access.get("safety", {}).get("allowed", True) if db_access else True
+        tango_allowed = db_access.get("tango", {}).get("allowed", True) if db_access else True
+        doculog_allowed = db_access.get("doculog", {}).get("allowed", True) if db_access else True
+        security_level = policy.get("security_level", "standard")
+
+        env_vars = [
+            # 항상 주입: Bedrock, 모델, 사용자 정보
+            client.V1EnvVar(name="CLAUDE_CODE_USE_BEDROCK", value="1"),
+            client.V1EnvVar(name="AWS_REGION", value=self.settings.bedrock_region),
+            client.V1EnvVar(
+                name="ANTHROPIC_DEFAULT_SONNET_MODEL",
+                value=self.settings.bedrock_sonnet_model,
+            ),
+            client.V1EnvVar(
+                name="ANTHROPIC_DEFAULT_HAIKU_MODEL",
+                value=self.settings.bedrock_haiku_model,
+            ),
+            client.V1EnvVar(name="GIT_USER_NAME", value=user_display_name or username),
+            client.V1EnvVar(name="GIT_USER_EMAIL", value=f"{username}@skons.net"),
+            client.V1EnvVar(name="USER_ID", value=username),
+            client.V1EnvVar(name="USER_DISPLAY_NAME", value=user_display_name or username),
+            # 보안 정책 메타데이터 (컨테이너 내부에서 참조 가능)
+            client.V1EnvVar(name="SECURITY_LEVEL", value=security_level),
+            client.V1EnvVar(name="SECURITY_POLICY", value=_json.dumps(policy)),
+        ]
+
+        # 조건부 DB 자격증명: 정책에서 허용된 DB만 주입
+        if safety_allowed:
+            env_vars.append(client.V1EnvVar(
+                name="DATABASE_URL",
+                value=self.settings.workshop_database_url,
+            ))
+
+        if tango_allowed:
+            env_vars.append(client.V1EnvVar(
+                name="TANGO_DB_PASSWORD",
+                value_from=client.V1EnvVarSource(
+                    secret_key_ref=client.V1SecretKeySelector(
+                        name="auth-gateway-secrets",
+                        key="TANGO_DB_PASSWORD",
+                    )
+                ),
+            ))
+            env_vars.append(client.V1EnvVar(
+                name="TANGO_DATABASE_URL",
+                value=self.settings.tango_database_url,
+            ))
+
+        if doculog_allowed:
+            env_vars.append(client.V1EnvVar(
+                name="DOCULOG_DB_PASSWORD",
+                value_from=client.V1EnvVarSource(
+                    secret_key_ref=client.V1SecretKeySelector(
+                        name="auth-gateway-secrets",
+                        key="DOCULOG_DB_PASSWORD",
+                    )
+                ),
+            ))
+
+        logger.info(
+            f"Pod env for {username}: security_level={security_level}, "
+            f"safety={safety_allowed}, tango={tango_allowed}, doculog={doculog_allowed}"
+        )
+        return env_vars
+
     def create_pod(
         self,
         username: str,
@@ -54,6 +133,7 @@ class K8sService:
         user_display_name: str = "",
         ttl_seconds: int = 14400,
         target_node: str | None = None,
+        security_policy: dict | None = None,
     ) -> str:
         """사용자용 Claude Code 터미널 Pod 생성.
 
@@ -123,52 +203,9 @@ class K8sService:
                         name="terminal",
                         image=self.settings.k8s_pod_image,
                         ports=[client.V1ContainerPort(container_port=7681, name="ttyd")],
-                        env=[
-                            client.V1EnvVar(name="CLAUDE_CODE_USE_BEDROCK", value="1"),
-                            client.V1EnvVar(name="AWS_REGION", value=self.settings.bedrock_region),
-                            client.V1EnvVar(
-                                name="ANTHROPIC_DEFAULT_SONNET_MODEL",
-                                value=self.settings.bedrock_sonnet_model,
-                            ),
-                            client.V1EnvVar(
-                                name="ANTHROPIC_DEFAULT_HAIKU_MODEL",
-                                value=self.settings.bedrock_haiku_model,
-                            ),
-                            client.V1EnvVar(name="GIT_USER_NAME", value=user_display_name or username),
-                            client.V1EnvVar(name="GIT_USER_EMAIL", value=f"{username}@skons.net"),
-                            client.V1EnvVar(name="USER_ID", value=username),
-                            client.V1EnvVar(name="USER_DISPLAY_NAME", value=user_display_name or username),
-                            # TODO: 직책, 부서 정보 추가 (SSO userinfo 확장 시)
-                            # client.V1EnvVar(name="USER_POSITION", value=position),
-                            # client.V1EnvVar(name="USER_DEPARTMENT", value=department),
-                            client.V1EnvVar(
-                                name="TANGO_DB_PASSWORD",
-                                value_from=client.V1EnvVarSource(
-                                    secret_key_ref=client.V1SecretKeySelector(
-                                        name="auth-gateway-secrets",
-                                        key="TANGO_DB_PASSWORD",
-                                    )
-                                ),
-                            ),
-                            # Docu-Log DB
-                            client.V1EnvVar(
-                                name="DOCULOG_DB_PASSWORD",
-                                value_from=client.V1EnvVarSource(
-                                    secret_key_ref=client.V1SecretKeySelector(
-                                        name="auth-gateway-secrets",
-                                        key="DOCULOG_DB_PASSWORD",
-                                    )
-                                ),
-                            ),
-                            client.V1EnvVar(
-                                name="DATABASE_URL",
-                                value=self.settings.workshop_database_url,
-                            ),
-                            client.V1EnvVar(
-                                name="TANGO_DATABASE_URL",
-                                value=self.settings.tango_database_url,
-                            ),
-                        ],
+                        env=self._build_env_vars(
+                            username, user_display_name, security_policy,
+                        ),
                         # Container-level 보안: 권한 상승 차단, 불필요 capabilities 제거
                         security_context=client.V1SecurityContext(
                             allow_privilege_escalation=False,

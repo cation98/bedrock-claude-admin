@@ -291,12 +291,19 @@ async def create_session(
     user_pod_ttl = user.pod_ttl if user else "4h"
     ttl_seconds = POD_TTL_SECONDS_MAP.get(user_pod_ttl, 14400)
 
+    # 사용자 보안 정책 조회 → Pod 생성 시 DB 자격증명 조건부 주입
+    from app.schemas.security import SECURITY_TEMPLATES
+    user_security = user.security_policy if (user and user.security_policy) else SECURITY_TEMPLATES.get("standard", {})
+
     # 노드 용량 확인 → 부족하면 노드그룹 스케일업 (비차단)
     _ensure_node_capacity(username)
 
-    # K8s Pod 생성 (사용자 프로필 주입 + 동적 TTL)
+    # K8s Pod 생성 (사용자 프로필 주입 + 동적 TTL + 보안 정책)
     try:
-        pod_name = k8s.create_pod(username, user_pod_ttl, user_display_name, ttl_seconds=ttl_seconds)
+        pod_name = k8s.create_pod(
+            username, user_pod_ttl, user_display_name,
+            ttl_seconds=ttl_seconds, security_policy=user_security,
+        )
     except K8sServiceError as e:
         raise HTTPException(status_code=500, detail=str(e))
 

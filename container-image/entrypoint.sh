@@ -29,7 +29,12 @@ echo "  User:     ${USER_DISPLAY_NAME} (${USER_ID})"
 echo "  Bedrock:  ${CLAUDE_CODE_USE_BEDROCK:-not set}"
 echo "  Region:   ${AWS_REGION:-not set}"
 echo "  Model:    ${ANTHROPIC_DEFAULT_SONNET_MODEL:-default}"
-echo "  DB:       Safety + TANGO Alarm + Docu-Log"
+echo "  Security: ${SECURITY_LEVEL:-standard}"
+DB_LIST=""
+[ -n "${DATABASE_URL:-}" ] && DB_LIST="${DB_LIST}Safety "
+[ -n "${TANGO_DB_PASSWORD:-}" ] && DB_LIST="${DB_LIST}TANGO "
+[ -n "${DOCULOG_DB_PASSWORD:-}" ] && DB_LIST="${DB_LIST}Docu-Log "
+echo "  DB:       ${DB_LIST:-none}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # 글로벌 CLAUDE.md (~/.claude/CLAUDE.md)에 사용자 프로필 추가
@@ -77,34 +82,56 @@ if [ -d /home/node/workspace/.serena-backup ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 4b) TANGO DB .pgpass 설정 (패스워드 내 ! 특수문자 처리)
+# 4b) DB .pgpass 설정 — 보안 정책에 따라 허용된 DB만 자격증명 설정
+#     환경변수가 없으면 해당 DB 항목을 추가하지 않음
 # ---------------------------------------------------------------------------
-echo "aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com:5432:postgres:claude_readonly:${TANGO_DB_PASSWORD}" > /home/node/.pgpass
-# Docu-Log DB entry
+> /home/node/.pgpass
+
+if [ -n "${TANGO_DB_PASSWORD:-}" ]; then
+    echo "aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com:5432:postgres:claude_readonly:${TANGO_DB_PASSWORD}" >> /home/node/.pgpass
+    unset TANGO_DB_PASSWORD
+fi
+
 if [ -n "${DOCULOG_DB_PASSWORD:-}" ]; then
     echo "aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com:5432:doculog:doculog_reader:${DOCULOG_DB_PASSWORD}" >> /home/node/.pgpass
     unset DOCULOG_DB_PASSWORD
 fi
+
 chmod 600 /home/node/.pgpass
 
-# 비밀번호 환경변수 제거 (보안)
-unset TANGO_DB_PASSWORD
-
 # ---------------------------------------------------------------------------
-# 5) psql-tango 스크립트 생성 (TANGO DB 접속 단축 명령)
+# 5) psql 스크립트 생성 — 보안 정책에 따라 실제 스크립트 또는 접근거부 스텁
 # ---------------------------------------------------------------------------
 mkdir -p /home/node/.local/bin
-cat > /home/node/.local/bin/psql-tango << 'DBSCRIPT'
+
+# TANGO_DATABASE_URL이 있으면 TANGO DB 접근 허용됨
+if [ -n "${TANGO_DATABASE_URL:-}" ]; then
+    cat > /home/node/.local/bin/psql-tango << 'DBSCRIPT'
 #!/bin/sh
 exec psql "host=aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com dbname=postgres user=claude_readonly sslmode=require" "$@"
 DBSCRIPT
+else
+    cat > /home/node/.local/bin/psql-tango << 'DBSCRIPT'
+#!/bin/sh
+echo "TANGO DB 접근 권한이 없습니다. 관리자에게 문의하세요." >&2
+exit 1
+DBSCRIPT
+fi
 chmod +x /home/node/.local/bin/psql-tango
 
-# psql-doculog 스크립트 (Docu-Log 문서활동 분석 DB 접속 단축 명령)
-cat > /home/node/.local/bin/psql-doculog << 'DBSCRIPT'
+# DOCULOG_DB_PASSWORD가 .pgpass에 기록되었으면 접근 허용 (이미 unset됨 → .pgpass 존재 여부로 판별)
+if grep -q "doculog_reader" /home/node/.pgpass 2>/dev/null; then
+    cat > /home/node/.local/bin/psql-doculog << 'DBSCRIPT'
 #!/bin/sh
 exec psql "host=aiagentdb.cbe68e22if9p.ap-northeast-2.rds.amazonaws.com dbname=doculog user=doculog_reader sslmode=require" "$@"
 DBSCRIPT
+else
+    cat > /home/node/.local/bin/psql-doculog << 'DBSCRIPT'
+#!/bin/sh
+echo "Docu-Log DB 접근 권한이 없습니다. 관리자에게 문의하세요." >&2
+exit 1
+DBSCRIPT
+fi
 chmod +x /home/node/.local/bin/psql-doculog
 
 # backup-chat / restore-chat 스크립트
@@ -156,19 +183,34 @@ fi
 # ---------------------------------------------------------------------------
 # 6) 환영 메시지
 # ---------------------------------------------------------------------------
-cat > /home/node/.local/bin/psql-safety << 'DBSCRIPT'
+if [ -n "${DATABASE_URL:-}" ]; then
+    cat > /home/node/.local/bin/psql-safety << 'DBSCRIPT'
 #!/bin/sh
 exec psql "$DATABASE_URL" "$@"
 DBSCRIPT
+else
+    cat > /home/node/.local/bin/psql-safety << 'DBSCRIPT'
+#!/bin/sh
+echo "Safety DB 접근 권한이 없습니다. 관리자에게 문의하세요." >&2
+exit 1
+DBSCRIPT
+fi
 chmod +x /home/node/.local/bin/psql-safety
 export PATH="/home/node/.local/bin:$PATH"
 echo 'export PATH="/home/node/.local/bin:$PATH"' >> /home/node/.bashrc
 
-# 환영 메시지 (unquoted: USER_DISPLAY_NAME 확장)
+# 사용 가능한 DB 명령 목록 구성
+AVAIL_CMDS="claude"
+[ -n "${DATABASE_URL:-}" ] && AVAIL_CMDS="${AVAIL_CMDS} / psql-safety"
+[ -n "${TANGO_DATABASE_URL:-}" ] && AVAIL_CMDS="${AVAIL_CMDS} / psql-tango"
+grep -q "doculog_reader" /home/node/.pgpass 2>/dev/null && AVAIL_CMDS="${AVAIL_CMDS} / psql-doculog"
+AVAIL_CMDS="${AVAIL_CMDS} / /report / /excel"
+
+# 환영 메시지 (unquoted: USER_DISPLAY_NAME, AVAIL_CMDS 확장)
 cat >> /home/node/.bashrc << WELCOME
 echo ""
 echo "  Claude Code Terminal — ${USER_DISPLAY_NAME} 님"
-echo "  claude / psql-safety / psql-tango / psql-doculog / /report / /excel"
+echo "  ${AVAIL_CMDS}"
 echo ""
 cd ~
 WELCOME
