@@ -221,13 +221,16 @@ export default function SecurityPage() {
       setPolicies(policiesRes.policies);
       setAvailableTables(tablesRes);
 
-      // Merge built-in + custom into allTemplates
-      const builtIn: MergedTemplate[] = templatesRes.templates.map((t) => ({
-        name: t.name,
-        description: t.description,
-        policy: t.security_policy,
-        isBuiltin: true,
-      }));
+      // Merge built-in + custom into allTemplates (custom overrides built-in with same name)
+      const customMap = new Map(customRes.templates.map((t) => [t.name, t]));
+      const builtIn: MergedTemplate[] = templatesRes.templates
+        .filter((t) => !customMap.has(t.name))  // skip built-in if custom override exists
+        .map((t) => ({
+          name: t.name,
+          description: t.description,
+          policy: t.security_policy,
+          isBuiltin: true,
+        }));
       const custom: MergedTemplate[] = customRes.templates.map((t) => ({
         name: t.name,
         description: t.description,
@@ -917,7 +920,7 @@ export default function SecurityPage() {
                             <input
                               type="checkbox"
                               checked={editSkills.includes(key)}
-                              disabled={isSelectedBuiltin}
+                              disabled={false}
                               onChange={(e) => {
                                 setEditSkills((prev) =>
                                   e.target.checked
@@ -943,7 +946,7 @@ export default function SecurityPage() {
                         <input
                           type="checkbox"
                           checked={editSchema}
-                          disabled={isSelectedBuiltin}
+                          disabled={false}
                           onChange={(e) => {
                             setEditSchema(e.target.checked);
                             setEditDirty(true);
