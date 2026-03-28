@@ -428,9 +428,10 @@ export default function SecurityPage() {
         await applySecurityTemplate(selectedUserId, customLevelName.trim() as SecurityLevel);
         setSuccess(`커스텀 정책 "${customLevelName.trim()}"이(가) 생성 및 적용되었습니다.`);
       } else if (KNOWN_LEVELS.includes(detailLevel as typeof KNOWN_LEVELS[number])) {
-        // Built-in template — apply directly
-        await applySecurityTemplate(selectedUserId, detailLevel as SecurityLevel);
-        setSuccess("보안 템플릿이 적용되었습니다.");
+        // Built-in level selected — save the actual form values (not the template)
+        // This allows admin to select "Standard" but uncheck specific DBs
+        await updateSecurityPolicy(selectedUserId, { ...policy, security_level: detailLevel });
+        setSuccess("보안 정책이 저장되었습니다.");
       } else {
         // Existing custom template or direct policy update
         // If the checkbox to update the template is on, update the template definition too
