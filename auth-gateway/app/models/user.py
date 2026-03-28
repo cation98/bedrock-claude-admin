@@ -27,3 +27,21 @@ class User(Base):
     storage_retention = Column(String(10), default="30d", nullable=False)  # 7d, 30d, 90d, unlimited
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     security_policy = Column(JSON, nullable=True, default=None)
+
+
+class SecurityTemplate(Base):
+    """관리자가 생성하는 재사용 가능한 보안 정책 템플릿."""
+
+    __tablename__ = "security_templates"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(50), unique=True, nullable=False)  # e.g., "문서Log분석"
+    description = Column(String(200), nullable=True)
+    policy = Column(JSON, nullable=False)  # Same structure as user.security_policy
+    created_by = Column(String(50), nullable=True)  # admin username
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )

@@ -5,7 +5,11 @@ Endpoints:
   GET    /api/v1/security/policies/{user_id}         -- 단일 사용자 보안 정책 조회
   PUT    /api/v1/security/policies/{user_id}         -- 보안 정책 수정
   POST   /api/v1/security/templates/apply/{user_id}  -- 템플릿 적용
-  GET    /api/v1/security/templates                  -- 템플릿 목록
+  GET    /api/v1/security/templates                  -- 템플릿 목록 (built-in + custom)
+  GET    /api/v1/security/custom-templates            -- custom 템플릿 목록
+  POST   /api/v1/security/custom-templates            -- custom 템플릿 생성
+  PUT    /api/v1/security/custom-templates/{id}       -- custom 템플릿 수정
+  DELETE /api/v1/security/custom-templates/{id}       -- custom 템플릿 삭제
   GET    /api/v1/security/tables                     -- Safety/TANGO DB 테이블 목록
 """
 
@@ -18,7 +22,7 @@ from app.core.config import Settings, get_settings
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.audit_log import AuditAction
-from app.models.user import User
+from app.models.user import SecurityTemplate, User
 from app.schemas.security import (
     SECURITY_TEMPLATES,
     TEMPLATE_DESCRIPTIONS,
@@ -146,20 +150,26 @@ async def apply_template(
     _admin: dict = Depends(_require_admin),
     db: Session = Depends(get_db),
 ):
-    """보안 템플릿을 사용자에게 적용."""
-    if req.template_name not in SECURITY_TEMPLATES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid template: {req.template_name}. "
-            f"Available: {', '.join(SECURITY_TEMPLATES.keys())}",
-        )
+    """보안 템플릿을 사용자에게 적용 (built-in + custom 지원)."""
+    # Check built-in templates first
+    if req.template_name in SECURITY_TEMPLATES:
+        policy = SECURITY_TEMPLATES[req.template_name]
+    else:
+        # Fall back to custom templates from DB
+        custom = db.query(SecurityTemplate).filter(SecurityTemplate.name == req.template_name).first()
+        if not custom:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Template '{req.template_name}' not found in built-in or custom templates",
+            )
+        policy = custom.policy
 
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
     old_level = _get_security_level(user)
-    user.security_policy = SECURITY_TEMPLATES[req.template_name]
+    user.security_policy = policy
     db.commit()
     db.refresh(user)
 
@@ -184,18 +194,180 @@ async def apply_template(
 @router.get("/templates")
 async def list_templates(
     _admin: dict = Depends(_require_admin),
+    db: Session = Depends(get_db),
 ):
-    """사용 가능한 보안 템플릿 목록."""
-    return SecurityTemplateListResponse(
-        templates=[
-            SecurityTemplateItem(
-                name=name,
-                description=TEMPLATE_DESCRIPTIONS.get(name, ""),
-                security_policy=policy,
-            )
-            for name, policy in SECURITY_TEMPLATES.items()
+    """사용 가능한 보안 템플릿 목록 (built-in + custom)."""
+    # Built-in templates
+    built_in = [
+        SecurityTemplateItem(
+            name=name,
+            description=TEMPLATE_DESCRIPTIONS.get(name, ""),
+            security_policy=policy,
+        )
+        for name, policy in SECURITY_TEMPLATES.items()
+    ]
+
+    # Custom templates from DB
+    custom_rows = db.query(SecurityTemplate).order_by(SecurityTemplate.name).all()
+    custom = [
+        SecurityTemplateItem(
+            name=t.name,
+            description=t.description or "",
+            security_policy=t.policy,
+        )
+        for t in custom_rows
+    ]
+
+    return SecurityTemplateListResponse(templates=built_in + custom)
+
+
+# ==================== Custom 템플릿 CRUD ====================
+
+
+@router.get("/custom-templates")
+async def list_custom_templates(
+    _admin: dict = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """모든 custom 보안 정책 템플릿 목록."""
+    templates = db.query(SecurityTemplate).order_by(SecurityTemplate.name).all()
+    return {
+        "templates": [
+            {
+                "id": t.id,
+                "name": t.name,
+                "description": t.description,
+                "policy": t.policy,
+                "created_by": t.created_by,
+            }
+            for t in templates
         ]
+    }
+
+
+@router.post("/custom-templates")
+async def create_custom_template(
+    req: dict,
+    _admin: dict = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """새 custom 보안 정책 템플릿 생성."""
+    if not req.get("name"):
+        raise HTTPException(status_code=400, detail="Template name is required")
+    if not req.get("policy"):
+        raise HTTPException(status_code=400, detail="Template policy is required")
+
+    # Reject names that collide with built-in templates
+    if req["name"] in SECURITY_TEMPLATES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"'{req['name']}' is a built-in template name and cannot be used",
+        )
+
+    existing = db.query(SecurityTemplate).filter(SecurityTemplate.name == req["name"]).first()
+    if existing:
+        raise HTTPException(status_code=400, detail=f"'{req['name']}' 템플릿이 이미 존재합니다")
+
+    template = SecurityTemplate(
+        name=req["name"],
+        description=req.get("description", ""),
+        policy=req["policy"],
+        created_by=_admin["sub"],
     )
+    db.add(template)
+    db.commit()
+    db.refresh(template)
+
+    log_audit(
+        db,
+        _admin["sub"],
+        AuditAction.SECURITY_TEMPLATE,
+        target=req["name"],
+        detail="custom template created",
+    )
+    db.commit()
+
+    logger.info(f"Custom template '{template.name}' created by {_admin['sub']}")
+    return {"id": template.id, "name": template.name, "policy": template.policy}
+
+
+@router.put("/custom-templates/{template_id}")
+async def update_custom_template(
+    template_id: int,
+    req: dict,
+    _admin: dict = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """custom 템플릿 수정."""
+    template = db.query(SecurityTemplate).filter(SecurityTemplate.id == template_id).first()
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    # If renaming, reject built-in name collisions
+    if "name" in req and req["name"] in SECURITY_TEMPLATES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"'{req['name']}' is a built-in template name and cannot be used",
+        )
+
+    if "name" in req:
+        # Check uniqueness against other custom templates
+        conflict = (
+            db.query(SecurityTemplate)
+            .filter(SecurityTemplate.name == req["name"], SecurityTemplate.id != template_id)
+            .first()
+        )
+        if conflict:
+            raise HTTPException(status_code=400, detail=f"'{req['name']}' 템플릿이 이미 존재합니다")
+        template.name = req["name"]
+
+    if "description" in req:
+        template.description = req["description"]
+    if "policy" in req:
+        template.policy = req["policy"]
+
+    db.commit()
+    db.refresh(template)
+
+    log_audit(
+        db,
+        _admin["sub"],
+        AuditAction.SECURITY_TEMPLATE,
+        target=template.name,
+        detail="custom template updated",
+    )
+    db.commit()
+
+    logger.info(f"Custom template '{template.name}' updated by {_admin['sub']}")
+    return {"id": template.id, "name": template.name, "policy": template.policy}
+
+
+@router.delete("/custom-templates/{template_id}")
+async def delete_custom_template(
+    template_id: int,
+    _admin: dict = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """custom 템플릿 삭제."""
+    template = db.query(SecurityTemplate).filter(SecurityTemplate.id == template_id).first()
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    name = template.name
+    db.delete(template)
+    db.commit()
+
+    log_audit(
+        db,
+        _admin["sub"],
+        AuditAction.SECURITY_TEMPLATE,
+        target=name,
+        detail="custom template deleted",
+    )
+    db.commit()
+
+    logger.info(f"Custom template '{name}' deleted by {_admin['sub']}")
+    return {"deleted": True, "name": name}
 
 
 # ==================== 테이블 목록 ====================
