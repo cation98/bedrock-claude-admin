@@ -81,6 +81,7 @@ export default function SecurityPage() {
   /* ── Left panel: user policies ── */
   const [policies, setPolicies] = useState<SecurityPolicyWithUser[]>([]);
   const [checkedUsers, setCheckedUsers] = useState<Set<number>>(new Set());
+  const [searchQuery, setSearchQuery] = useState("");
 
   /* ── Right panel: template management ── */
   const [allTemplates, setAllTemplates] = useState<MergedTemplate[]>([]);
@@ -281,6 +282,19 @@ export default function SecurityPage() {
     (p) => !KNOWN_LEVELS.includes(p.security_level as (typeof KNOWN_LEVELS)[number]),
   ).length;
 
+  /* ── Filtered policies for search ── */
+  const filteredPolicies = policies.filter((p) => {
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    return (
+      (p.name || "").toLowerCase().includes(q) ||
+      p.username.toLowerCase().includes(q) ||
+      (p.region_name || "").toLowerCase().includes(q) ||
+      (p.team_name || "").toLowerCase().includes(q) ||
+      p.security_level.toLowerCase().includes(q)
+    );
+  });
+
   /* ── Left panel: quick dropdown per user ── */
   async function handleQuickApply(userId: number, templateName: string) {
     if (!templateName) return;
@@ -344,6 +358,26 @@ export default function SecurityPage() {
           policy: { ...policy, security_level: editName.trim() },
         });
         setSuccess(`정책 "${editName.trim()}"이(가) 수정되었습니다.`);
+      } else if (selectedTemplateObj && selectedTemplateObj.isBuiltin) {
+        // Built-in template edited: save as a custom template override
+        // Check if a custom override already exists
+        const existingCustom = allTemplates.find(
+          (t) => !t.isBuiltin && t.name === selectedTemplateObj.name,
+        );
+        if (existingCustom?.id) {
+          await updateCustomTemplate(existingCustom.id, {
+            name: selectedTemplateObj.name,
+            description: editDesc.trim(),
+            policy: { ...policy, security_level: selectedTemplateObj.name },
+          });
+        } else {
+          await createCustomTemplate({
+            name: selectedTemplateObj.name,
+            description: editDesc.trim(),
+            policy: { ...policy, security_level: selectedTemplateObj.name },
+          });
+        }
+        setSuccess(`기본 정책 "${selectedTemplateObj.name}"이(가) 커스텀 오버라이드로 저장되었습니다.`);
       }
 
       setEditDirty(false);
@@ -389,10 +423,10 @@ export default function SecurityPage() {
   }
 
   function toggleAllUsers() {
-    if (checkedUsers.size === policies.length) {
+    if (checkedUsers.size === filteredPolicies.length) {
       setCheckedUsers(new Set());
     } else {
-      setCheckedUsers(new Set(policies.map((p) => p.user_id)));
+      setCheckedUsers(new Set(filteredPolicies.map((p) => p.user_id)));
     }
   }
 
@@ -490,9 +524,56 @@ export default function SecurityPage() {
                 <span className="text-xs text-gray-400">30초마다 자동 갱신</span>
               </div>
 
-              {policies.length === 0 ? (
+              {/* Search + Bulk action toolbar */}
+              <div className="flex items-center justify-between gap-3 border-b border-gray-200 px-4 py-3">
+                {/* Left: search */}
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="사용자 검색 (이름, 사번, 소속)..."
+                    className="rounded-md border border-gray-300 px-3 py-1.5 text-sm w-64 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                  {searchQuery && (
+                    <span className="text-xs text-gray-400">{filteredPolicies.length}건</span>
+                  )}
+                </div>
+
+                {/* Right: bulk action (visible when users are checked) */}
+                {checkedUsers.size > 0 && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-blue-600">{checkedUsers.size}명 선택</span>
+                    <select
+                      id="bulkPolicy"
+                      className="rounded-md border border-gray-300 px-2 py-1.5 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    >
+                      {allTemplates.map((t) => (
+                        <option key={t.name} value={t.name}>
+                          {t.name}
+                          {t.isBuiltin ? "" : " (custom)"}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={handleBulkApply}
+                      className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-blue-700 transition-colors"
+                    >
+                      일괄 적용
+                    </button>
+                    <button
+                      onClick={() => setCheckedUsers(new Set())}
+                      className="text-sm text-gray-500 hover:text-gray-700"
+                    >
+                      선택 해제
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {filteredPolicies.length === 0 ? (
                 <div className="flex items-center justify-center py-12 text-gray-400">
-                  사용자가 없습니다.
+                  {searchQuery ? "검색 결과가 없습니다." : "사용자가 없습니다."}
                 </div>
               ) : (
                 <div className="overflow-x-auto">
@@ -503,7 +584,7 @@ export default function SecurityPage() {
                           <input
                             type="checkbox"
                             checked={
-                              policies.length > 0 && checkedUsers.size === policies.length
+                              filteredPolicies.length > 0 && checkedUsers.size === filteredPolicies.length
                             }
                             onChange={toggleAllUsers}
                             className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
@@ -524,7 +605,7 @@ export default function SecurityPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200 bg-white">
-                      {policies.map((p) => (
+                      {filteredPolicies.map((p) => (
                         <tr key={p.user_id} className="hover:bg-gray-50">
                           <td className="px-4 py-3">
                             <input
@@ -578,37 +659,6 @@ export default function SecurityPage() {
                 </div>
               )}
 
-              {/* Bulk action bar */}
-              {checkedUsers.size > 0 && (
-                <div className="flex items-center gap-3 border-t border-gray-200 px-4 py-3">
-                  <span className="text-sm font-medium text-gray-700">
-                    {checkedUsers.size}명 선택됨
-                  </span>
-                  <select
-                    id="bulkPolicy"
-                    className="rounded-md border border-gray-300 px-2 py-1 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  >
-                    {allTemplates.map((t) => (
-                      <option key={t.name} value={t.name}>
-                        {t.name}
-                        {t.isBuiltin ? "" : " (custom)"}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    onClick={handleBulkApply}
-                    className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-blue-700 transition-colors"
-                  >
-                    일괄 적용
-                  </button>
-                  <button
-                    onClick={() => setCheckedUsers(new Set())}
-                    className="text-sm text-gray-500 hover:text-gray-700"
-                  >
-                    선택 해제
-                  </button>
-                </div>
-              )}
             </div>
 
             {/* ═══════════════════════════════════════
@@ -687,11 +737,9 @@ export default function SecurityPage() {
                     <h3 className="text-sm font-semibold text-gray-900">
                       {isCreatingNew
                         ? "새 정책 만들기"
-                        : isSelectedBuiltin
-                          ? `${selectedTemplate} (읽기 전용)`
-                          : `${selectedTemplate} 편집`}
+                        : `${selectedTemplate} 편집`}
                     </h3>
-                    {editDirty && !isSelectedBuiltin && (
+                    {editDirty && (
                       <span className="text-xs font-medium text-amber-600">변경됨</span>
                     )}
                   </div>
@@ -723,20 +771,16 @@ export default function SecurityPage() {
                       <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1">
                         설명
                       </label>
-                      {isSelectedBuiltin ? (
-                        <p className="text-sm text-gray-600">{editDesc || "-"}</p>
-                      ) : (
-                        <input
-                          type="text"
-                          placeholder="정책 설명"
-                          value={editDesc}
-                          onChange={(e) => {
-                            setEditDesc(e.target.value);
-                            setEditDirty(true);
-                          }}
-                          className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        />
-                      )}
+                      <input
+                        type="text"
+                        placeholder="정책 설명"
+                        value={editDesc}
+                        onChange={(e) => {
+                          setEditDesc(e.target.value);
+                          setEditDirty(true);
+                        }}
+                        className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
                     </div>
 
                     {/* DB Access */}
@@ -758,7 +802,7 @@ export default function SecurityPage() {
                                   <input
                                     type="checkbox"
                                     checked={isAllowed}
-                                    disabled={isSelectedBuiltin}
+
                                     onChange={(e) => {
                                       setEditDbAccess((prev) => ({
                                         ...prev,
@@ -766,14 +810,14 @@ export default function SecurityPage() {
                                       }));
                                       setEditDirty(true);
                                     }}
-                                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
+                                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                                   />
                                   {DB_LABELS[key]}
                                 </label>
                                 {isAllowed && (
                                   <select
                                     value={isAll ? "all" : "custom"}
-                                    disabled={isSelectedBuiltin}
+
                                     onChange={(e) => {
                                       setEditDbAccess((prev) => ({
                                         ...prev,
@@ -784,7 +828,7 @@ export default function SecurityPage() {
                                       }));
                                       setEditDirty(true);
                                     }}
-                                    className="text-xs border rounded px-1.5 py-0.5 disabled:opacity-50"
+                                    className="text-xs border rounded px-1.5 py-0.5"
                                   >
                                     <option value="all">전체</option>
                                     <option value="custom">선택...</option>
@@ -824,11 +868,11 @@ export default function SecurityPage() {
                                           <input
                                             type="checkbox"
                                             checked={tables.includes(t.name)}
-                                            disabled={isSelectedBuiltin}
+        
                                             onChange={(e) =>
                                               toggleTable(key, t.name, e.target.checked)
                                             }
-                                            className="h-3 w-3 rounded border-gray-300 text-blue-600 disabled:opacity-50"
+                                            className="h-3 w-3 rounded border-gray-300 text-blue-600"
                                           />
                                           <span className="font-mono text-gray-700">
                                             {t.name}
@@ -882,7 +926,7 @@ export default function SecurityPage() {
                                 );
                                 setEditDirty(true);
                               }}
-                              className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
+                              className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                             />
                             {SKILL_LABELS[key]}
                           </label>
@@ -904,38 +948,30 @@ export default function SecurityPage() {
                             setEditSchema(e.target.checked);
                             setEditDirty(true);
                           }}
-                          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
+                          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                         />
                         DB 스키마 정보 제공
                       </label>
                     </fieldset>
 
                     {/* Action Buttons */}
-                    {!isSelectedBuiltin && (
-                      <div className="flex gap-2 pt-2">
+                    <div className="flex gap-2 pt-2">
+                      <button
+                        onClick={handleSaveTemplate}
+                        disabled={saving}
+                        className="flex-1 rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                      >
+                        {saving ? "저장 중..." : isCreatingNew ? "생성" : "저장"}
+                      </button>
+                      {!isCreatingNew && selectedTemplateObj && !isSelectedBuiltin && (
                         <button
-                          onClick={handleSaveTemplate}
-                          disabled={saving}
-                          className="flex-1 rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                          onClick={handleDeleteTemplate}
+                          className="rounded-md border border-red-300 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 transition-colors"
                         >
-                          {saving ? "저장 중..." : isCreatingNew ? "생성" : "저장"}
+                          삭제
                         </button>
-                        {!isCreatingNew && selectedTemplateObj && (
-                          <button
-                            onClick={handleDeleteTemplate}
-                            className="rounded-md border border-red-300 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 transition-colors"
-                          >
-                            삭제
-                          </button>
-                        )}
-                      </div>
-                    )}
-
-                    {isSelectedBuiltin && (
-                      <div className="rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-500">
-                        기본 정책은 수정할 수 없습니다. 커스텀 정책을 만들어 사용하세요.
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
