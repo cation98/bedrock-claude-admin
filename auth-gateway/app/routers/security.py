@@ -257,16 +257,19 @@ async def create_custom_template(
     if not req.get("policy"):
         raise HTTPException(status_code=400, detail="Template policy is required")
 
-    # Reject names that collide with built-in templates
-    if req["name"] in SECURITY_TEMPLATES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"'{req['name']}' is a built-in template name and cannot be used",
-        )
-
+    # Built-in 이름도 custom으로 override 가능 (admin이 기본 정책 수정 시 사용)
     existing = db.query(SecurityTemplate).filter(SecurityTemplate.name == req["name"]).first()
     if existing:
-        raise HTTPException(status_code=400, detail=f"'{req['name']}' 템플릿이 이미 존재합니다")
+        # 이미 존재하면 업데이트
+        existing.description = req.get("description", existing.description)
+        existing.policy = req["policy"]
+        existing.created_by = _admin["sub"]
+        db.commit()
+        db.refresh(existing)
+        log_audit(db, _admin["sub"], AuditAction.SECURITY_TEMPLATE,
+                  target=req["name"], detail="custom template updated (upsert)")
+        db.commit()
+        return {"id": existing.id, "name": existing.name, "policy": existing.policy}
 
     template = SecurityTemplate(
         name=req["name"],
@@ -303,12 +306,7 @@ async def update_custom_template(
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
 
-    # If renaming, reject built-in name collisions
-    if "name" in req and req["name"] in SECURITY_TEMPLATES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"'{req['name']}' is a built-in template name and cannot be used",
-        )
+    # Built-in 이름으로 rename 허용 (admin이 기본 정책 override)
 
     if "name" in req:
         # Check uniqueness against other custom templates
