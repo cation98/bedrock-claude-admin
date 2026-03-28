@@ -94,16 +94,6 @@ const LEVEL_DEFAULTS: Record<
   },
 };
 
-function parsePolicyField<T>(policy: Record<string, unknown>, key: string, fallback: T): T {
-  return (policy[key] as T) ?? fallback;
-}
-
-/** Determine the radio selection for a given security_level string */
-function resolveRadioSelection(level: string): string {
-  if (KNOWN_LEVELS.includes(level as typeof KNOWN_LEVELS[number])) return level;
-  return "custom";
-}
-
 /** Badge renderer — purple fallback for custom levels */
 function levelBadge(level: string) {
   const colors = LEVEL_BADGE[level] || "bg-purple-100 text-purple-700";
@@ -159,31 +149,43 @@ export default function SecurityPage() {
 
   /* ── Populate form fields from a policy object ── */
   const initFormFromPolicy = useCallback((p: SecurityPolicyWithUser) => {
-    const radio = resolveRadioSelection(p.security_level);
-    setSelectedRadio(radio);
-    if (radio === "custom") {
-      setDetailLevel(p.security_level);
-      setCustomLevelName(p.security_level);
-    } else {
-      setDetailLevel(p.security_level);
-      setCustomLevelName("");
-    }
+    const level = p.security_level;
+    const isCustom = !KNOWN_LEVELS.includes(level as typeof KNOWN_LEVELS[number]);
+
+    setSelectedRadio(isCustom ? "custom" : level);
+    setDetailLevel(level);
+    setCustomLevelName(isCustom ? level : "");
+
+    // Backend stores db access in nested structure: db_access.safety.allowed / .tables
+    const dbAccess = (p.security_policy as Record<string, unknown>)?.db_access as
+      | Record<string, { allowed?: boolean; tables?: string[] }>
+      | undefined;
+
     setDetailDbAccess({
-      db_safety: parsePolicyField(p.security_policy, "db_safety", false),
-      db_tango: parsePolicyField(p.security_policy, "db_tango", false),
-      db_doculog: parsePolicyField(p.security_policy, "db_doculog", false),
+      db_safety: dbAccess?.safety?.allowed ?? false,
+      db_tango: dbAccess?.tango?.allowed ?? false,
+      db_doculog: dbAccess?.doculog?.allowed ?? false,
     });
     setDetailDbTables({
-      db_safety: parsePolicyField<string[]>(p.security_policy, "db_safety_tables", ["*"]),
-      db_tango: parsePolicyField<string[]>(p.security_policy, "db_tango_tables", ["*"]),
-      db_doculog: parsePolicyField<string[]>(p.security_policy, "db_doculog_tables", ["*"]),
+      db_safety: dbAccess?.safety?.tables ?? ["*"],
+      db_tango: dbAccess?.tango?.tables ?? ["*"],
+      db_doculog: dbAccess?.doculog?.tables ?? ["*"],
     });
+
+    // Skills: backend stores allowed_skills as string[] (["*"] or ["db","report",...])
+    const allowedSkills = (p.security_policy as Record<string, unknown>)?.allowed_skills as
+      | string[]
+      | undefined;
     const skills: Record<string, boolean> = {};
+    const isAllSkills = !allowedSkills || allowedSkills.includes("*");
     for (const k of SKILL_KEYS) {
-      skills[k] = parsePolicyField(p.security_policy, `skill_${k}`, false);
+      skills[k] = isAllSkills || allowedSkills!.includes(k);
     }
     setDetailSkills(skills);
-    setDetailSchemaExposure(parsePolicyField(p.security_policy, "schema_exposure", false));
+
+    setDetailSchemaExposure(
+      ((p.security_policy as Record<string, unknown>)?.can_see_schema as boolean) ?? false,
+    );
     setTableFilter("");
   }, []);
 
@@ -315,20 +317,31 @@ export default function SecurityPage() {
     clearMessages();
     setSaving(true);
     try {
+      // Build allowed_skills list from checkbox state
+      const enabledSkills = SKILL_KEYS.filter((k) => detailSkills[k]);
+      const allSkillsOn = enabledSkills.length === SKILL_KEYS.length;
+
       const policyData: Record<string, unknown> = {
         security_level: detailLevel,
-        db_safety: detailDbAccess.db_safety ?? false,
-        db_tango: detailDbAccess.db_tango ?? false,
-        db_doculog: detailDbAccess.db_doculog ?? false,
-        db_safety_tables: detailDbTables.db_safety ?? ["*"],
-        db_tango_tables: detailDbTables.db_tango ?? ["*"],
-        db_doculog_tables: detailDbTables.db_doculog ?? ["*"],
-        db_platform: false, // always OFF
-        schema_exposure: detailSchemaExposure,
+        db_access: {
+          safety: {
+            allowed: detailDbAccess.db_safety ?? false,
+            tables: detailDbAccess.db_safety ? (detailDbTables.db_safety ?? ["*"]) : [],
+          },
+          tango: {
+            allowed: detailDbAccess.db_tango ?? false,
+            tables: detailDbAccess.db_tango ? (detailDbTables.db_tango ?? ["*"]) : [],
+          },
+          doculog: {
+            allowed: detailDbAccess.db_doculog ?? false,
+            tables: detailDbAccess.db_doculog ? (detailDbTables.db_doculog ?? ["*"]) : [],
+          },
+          platform: { allowed: false, tables: [] },
+        },
+        allowed_skills: allSkillsOn ? ["*"] : enabledSkills,
+        can_see_schema: detailSchemaExposure,
+        restricted_topics: [],
       };
-      for (const k of SKILL_KEYS) {
-        policyData[`skill_${k}`] = detailSkills[k] ?? false;
-      }
       await updateSecurityPolicy(selectedUserId, policyData);
       setSuccess("보안 정책이 저장되었습니다.");
       setFormDirty(false);
@@ -491,17 +504,21 @@ export default function SecurityPage() {
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-sm">
                             <select
-                              value={
-                                KNOWN_LEVELS.includes(p.security_level as typeof KNOWN_LEVELS[number])
-                                  ? p.security_level
-                                  : "custom"
-                              }
+                              value=""
                               onClick={(e) => e.stopPropagation()}
-                              onChange={(e) =>
-                                handleQuickTemplate(p.user_id, e.target.value)
-                              }
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                if (!val) return;
+                                handleQuickTemplate(p.user_id, val);
+                                e.target.value = "";
+                              }}
                               className="rounded-md border border-gray-300 px-2 py-1 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                             >
+                              <option value="">
+                                {KNOWN_LEVELS.includes(p.security_level as typeof KNOWN_LEVELS[number])
+                                  ? LEVEL_LABEL[p.security_level] ?? p.security_level
+                                  : p.security_level}
+                              </option>
                               <option value="basic">Basic</option>
                               <option value="standard">Standard</option>
                               <option value="full">Full</option>
