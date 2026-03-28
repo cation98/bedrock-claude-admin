@@ -400,6 +400,40 @@ export function getSecurityTemplates(): Promise<{ templates: { name: string; des
   return request<{ templates: { name: string; description: string; security_policy: Record<string, unknown> }[] }>("/api/v1/security/templates");
 }
 
+// ---------- Security: Custom Templates ----------
+
+export interface CustomTemplate {
+  id: number;
+  name: string;
+  description: string;
+  policy: Record<string, unknown>;
+  created_by: string;
+}
+
+export function getCustomTemplates(): Promise<{ templates: CustomTemplate[] }> {
+  return request<{ templates: CustomTemplate[] }>("/api/v1/security/custom-templates");
+}
+
+export function createCustomTemplate(data: { name: string; description: string; policy: Record<string, unknown> }): Promise<CustomTemplate> {
+  return request<CustomTemplate>("/api/v1/security/custom-templates", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function updateCustomTemplate(id: number, data: Record<string, unknown>): Promise<CustomTemplate> {
+  return request<CustomTemplate>(`/api/v1/security/custom-templates/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export function deleteCustomTemplate(id: number): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(`/api/v1/security/custom-templates/${id}`, {
+    method: "DELETE",
+  });
+}
+
 // ---------- Security: Table Info ----------
 
 export interface TableInfo {

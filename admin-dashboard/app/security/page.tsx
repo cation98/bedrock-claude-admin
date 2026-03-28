@@ -8,9 +8,13 @@ import {
   getSecurityTables,
   applySecurityTemplate,
   updateSecurityPolicy,
+  getCustomTemplates,
+  createCustomTemplate,
+  updateCustomTemplate,
   type SecurityPolicyWithUser,
   type SecurityLevel,
   type TableInfo,
+  type CustomTemplate,
 } from "@/lib/api";
 import { isAuthenticated, logout, getUser } from "@/lib/auth";
 import StatsCard from "@/components/stats-card";
@@ -31,7 +35,7 @@ const LEVEL_LABEL: Record<string, string> = {
   full: "Full",
 };
 
-const LEVEL_OPTIONS: {
+const BUILTIN_LEVEL_OPTIONS: {
   value: string;
   label: string;
   desc: string;
@@ -40,7 +44,6 @@ const LEVEL_OPTIONS: {
   { value: "basic", label: "Basic", desc: "스킬만 사용, DB 직접접근 불가", descClass: "text-xs text-gray-400" },
   { value: "standard", label: "Standard", desc: "허용 DB/테이블 접근, 전체 스킬", descClass: "text-xs text-gray-400" },
   { value: "full", label: "Full", desc: "전체 접근 (주의: 모든 데이터 열람 가능)", descClass: "text-xs text-amber-500" },
-  { value: "custom", label: "Custom", desc: "관리자 정의 권한 (직접 설정)", descClass: "text-xs text-purple-500" },
 ];
 
 const DB_KEYS = ["db_safety", "db_tango", "db_doculog"] as const;
@@ -137,6 +140,11 @@ export default function SecurityPage() {
     doculog: [],
   });
 
+  // Custom templates
+  const [customTemplates, setCustomTemplates] = useState<CustomTemplate[]>([]);
+  // When saving with a custom template selected, also update the template definition
+  const [updateTemplateOnSave, setUpdateTemplateOnSave] = useState(false);
+
   // Table filter for search
   const [tableFilter, setTableFilter] = useState("");
 
@@ -150,11 +158,13 @@ export default function SecurityPage() {
   /* ── Populate form fields from a policy object ── */
   const initFormFromPolicy = useCallback((p: SecurityPolicyWithUser) => {
     const level = p.security_level;
-    const isCustom = !KNOWN_LEVELS.includes(level as typeof KNOWN_LEVELS[number]);
+    const isBuiltin = KNOWN_LEVELS.includes(level as typeof KNOWN_LEVELS[number]);
 
-    setSelectedRadio(isCustom ? "custom" : level);
+    // If the level matches a built-in, select that radio; otherwise select the custom template name directly
+    setSelectedRadio(isBuiltin ? level : level);
     setDetailLevel(level);
-    setCustomLevelName(isCustom ? level : "");
+    setCustomLevelName(isBuiltin ? "" : level);
+    setUpdateTemplateOnSave(false);
 
     // Backend stores db access in nested structure: db_access.safety.allowed / .tables
     const dbAccess = (p.security_policy as Record<string, unknown>)?.db_access as
@@ -189,15 +199,46 @@ export default function SecurityPage() {
     setTableFilter("");
   }, []);
 
+  /* ── Populate form fields from a raw policy object (e.g. custom template) ── */
+  const initFormFromTemplatePolicy = useCallback((policy: Record<string, unknown>) => {
+    const dbAccess = policy?.db_access as
+      | Record<string, { allowed?: boolean; tables?: string[] }>
+      | undefined;
+
+    setDetailDbAccess({
+      db_safety: dbAccess?.safety?.allowed ?? false,
+      db_tango: dbAccess?.tango?.allowed ?? false,
+      db_doculog: dbAccess?.doculog?.allowed ?? false,
+    });
+    setDetailDbTables({
+      db_safety: dbAccess?.safety?.tables ?? ["*"],
+      db_tango: dbAccess?.tango?.tables ?? ["*"],
+      db_doculog: dbAccess?.doculog?.tables ?? ["*"],
+    });
+
+    const allowedSkills = policy?.allowed_skills as string[] | undefined;
+    const skills: Record<string, boolean> = {};
+    const isAllSkills = !allowedSkills || allowedSkills.includes("*");
+    for (const k of SKILL_KEYS) {
+      skills[k] = isAllSkills || allowedSkills!.includes(k);
+    }
+    setDetailSkills(skills);
+
+    setDetailSchemaExposure((policy?.can_see_schema as boolean) ?? false);
+    setTableFilter("");
+  }, []);
+
   /* ── Data fetch — NEVER touches form state ── */
   const fetchData = useCallback(async () => {
     try {
-      const [policyRes, tablesRes] = await Promise.all([
+      const [policyRes, tablesRes, ctRes] = await Promise.all([
         getSecurityPolicies(),
         getSecurityTables().catch(() => ({ safety: [], tango: [], doculog: [] })),
+        getCustomTemplates().catch(() => ({ templates: [] })),
       ]);
       setPolicies(policyRes.policies);
       setAvailableTables(tablesRes);
+      setCustomTemplates(ctRes.templates);
 
       // If a user is selected AND form is NOT dirty, silently sync form from fresh data
       const currentSelectedId = selectedUserIdRef.current;
@@ -258,47 +299,79 @@ export default function SecurityPage() {
   function handleLevelChange(radio: string) {
     setSelectedRadio(radio);
     setFormDirty(true);
+    setUpdateTemplateOnSave(false);
 
-    if (radio === "custom") {
-      // Don't auto-fill — admin sets everything manually
-      setDetailLevel(customLevelName || "custom");
+    // "Create new custom" flow
+    if (radio === "__new__") {
+      setDetailLevel("__new__");
+      setCustomLevelName("");
+      // Clear all checkboxes for a fresh start
+      setDetailDbAccess({ db_safety: false, db_tango: false, db_doculog: false });
+      setDetailDbTables({ db_safety: ["*"], db_tango: ["*"], db_doculog: ["*"] });
+      const skills: Record<string, boolean> = {};
+      for (const k of SKILL_KEYS) skills[k] = false;
+      setDetailSkills(skills);
+      setDetailSchemaExposure(false);
       return;
     }
 
+    // Built-in level selected
     const defaults = LEVEL_DEFAULTS[radio];
-    if (!defaults) return;
-
-    setDetailLevel(radio);
-    setCustomLevelName("");
-    setDetailDbAccess({
-      db_safety: defaults.db_safety,
-      db_tango: defaults.db_tango,
-      db_doculog: defaults.db_doculog,
-    });
-    setDetailDbTables({
-      db_safety: ["*"],
-      db_tango: ["*"],
-      db_doculog: ["*"],
-    });
-    const skills: Record<string, boolean> = {};
-    for (const k of SKILL_KEYS) {
-      skills[k] = defaults.skills.includes(k);
+    if (defaults) {
+      setDetailLevel(radio);
+      setCustomLevelName("");
+      setDetailDbAccess({
+        db_safety: defaults.db_safety,
+        db_tango: defaults.db_tango,
+        db_doculog: defaults.db_doculog,
+      });
+      setDetailDbTables({ db_safety: ["*"], db_tango: ["*"], db_doculog: ["*"] });
+      const skills: Record<string, boolean> = {};
+      for (const k of SKILL_KEYS) skills[k] = defaults.skills.includes(k);
+      setDetailSkills(skills);
+      setDetailSchemaExposure(defaults.can_see_schema);
+      return;
     }
-    setDetailSkills(skills);
-    setDetailSchemaExposure(defaults.can_see_schema);
+
+    // Existing custom template selected — load its policy into the form
+    const ct = customTemplates.find((t) => t.name === radio);
+    if (ct) {
+      setDetailLevel(ct.name);
+      setCustomLevelName(ct.name);
+      initFormFromTemplatePolicy(ct.policy);
+      return;
+    }
   }
 
   async function handleQuickTemplate(userId: number, level: string) {
     clearMessages();
-    if (level === "custom") {
-      // "Custom" in the quick dropdown opens the detail panel instead
+
+    // "__new_custom__" opens detail panel in new-custom mode
+    if (level === "__new_custom__") {
       setSelectedUserId(userId);
       const policy = policies.find((p) => p.user_id === userId);
       if (policy) initFormFromPolicy(policy);
-      setSelectedRadio("custom");
-      setFormDirty(false);
+      handleLevelChange("__new__");
       return;
     }
+
+    // Existing custom template — apply it directly
+    const ct = customTemplates.find((t) => t.name === level);
+    if (ct) {
+      const confirmed = window.confirm(`커스텀 정책 "${ct.name}"을(를) 적용하시겠습니까?`);
+      if (!confirmed) return;
+      try {
+        await applySecurityTemplate(userId, ct.name as SecurityLevel);
+        setSuccess(`"${ct.name}" 정책이 적용되었습니다.`);
+        setFormDirty(false);
+        fetchData();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "템플릿 적용 실패");
+      }
+      return;
+    }
+
+    // Built-in template
     const label = LEVEL_LABEL[level] ?? level;
     const confirmed = window.confirm(`보안 등급을 ${label}(으)로 변경하시겠습니까?`);
     if (!confirmed) return;
@@ -312,39 +385,71 @@ export default function SecurityPage() {
     }
   }
 
+  /* ── Build policy data from current form state ── */
+  function buildPolicyFromForm(): Record<string, unknown> {
+    const enabledSkills = SKILL_KEYS.filter((k) => detailSkills[k]);
+    const allSkillsOn = enabledSkills.length === SKILL_KEYS.length;
+    return {
+      db_access: {
+        safety: {
+          allowed: detailDbAccess.db_safety ?? false,
+          tables: detailDbAccess.db_safety ? (detailDbTables.db_safety ?? ["*"]) : [],
+        },
+        tango: {
+          allowed: detailDbAccess.db_tango ?? false,
+          tables: detailDbAccess.db_tango ? (detailDbTables.db_tango ?? ["*"]) : [],
+        },
+        doculog: {
+          allowed: detailDbAccess.db_doculog ?? false,
+          tables: detailDbAccess.db_doculog ? (detailDbTables.db_doculog ?? ["*"]) : [],
+        },
+        platform: { allowed: false, tables: [] },
+      },
+      allowed_skills: allSkillsOn ? ["*"] : enabledSkills,
+      can_see_schema: detailSchemaExposure,
+      restricted_topics: [],
+    };
+  }
+
   async function handleSaveDetail() {
     if (selectedUserId === null) return;
     clearMessages();
     setSaving(true);
     try {
-      // Build allowed_skills list from checkbox state
-      const enabledSkills = SKILL_KEYS.filter((k) => detailSkills[k]);
-      const allSkillsOn = enabledSkills.length === SKILL_KEYS.length;
+      const policy = buildPolicyFromForm();
 
-      const policyData: Record<string, unknown> = {
-        security_level: detailLevel,
-        db_access: {
-          safety: {
-            allowed: detailDbAccess.db_safety ?? false,
-            tables: detailDbAccess.db_safety ? (detailDbTables.db_safety ?? ["*"]) : [],
-          },
-          tango: {
-            allowed: detailDbAccess.db_tango ?? false,
-            tables: detailDbAccess.db_tango ? (detailDbTables.db_tango ?? ["*"]) : [],
-          },
-          doculog: {
-            allowed: detailDbAccess.db_doculog ?? false,
-            tables: detailDbAccess.db_doculog ? (detailDbTables.db_doculog ?? ["*"]) : [],
-          },
-          platform: { allowed: false, tables: [] },
-        },
-        allowed_skills: allSkillsOn ? ["*"] : enabledSkills,
-        can_see_schema: detailSchemaExposure,
-        restricted_topics: [],
-      };
-      await updateSecurityPolicy(selectedUserId, policyData);
-      setSuccess("보안 정책이 저장되었습니다.");
+      if (detailLevel === "__new__" && customLevelName.trim()) {
+        // Create a new custom template, then apply it to the user
+        await createCustomTemplate({
+          name: customLevelName.trim(),
+          description: "",
+          policy: { ...policy, security_level: customLevelName.trim() },
+        });
+        await applySecurityTemplate(selectedUserId, customLevelName.trim() as SecurityLevel);
+        setSuccess(`커스텀 정책 "${customLevelName.trim()}"이(가) 생성 및 적용되었습니다.`);
+      } else if (KNOWN_LEVELS.includes(detailLevel as typeof KNOWN_LEVELS[number])) {
+        // Built-in template — apply directly
+        await applySecurityTemplate(selectedUserId, detailLevel as SecurityLevel);
+        setSuccess("보안 템플릿이 적용되었습니다.");
+      } else {
+        // Existing custom template or direct policy update
+        // If the checkbox to update the template is on, update the template definition too
+        if (updateTemplateOnSave) {
+          const ct = customTemplates.find((t) => t.name === detailLevel);
+          if (ct) {
+            await updateCustomTemplate(ct.id, {
+              name: ct.name,
+              description: ct.description,
+              policy: { ...policy, security_level: detailLevel },
+            });
+          }
+        }
+        await updateSecurityPolicy(selectedUserId, { ...policy, security_level: detailLevel });
+        setSuccess("보안 정책이 저장되었습니다.");
+      }
+
       setFormDirty(false);
+      setUpdateTemplateOnSave(false);
       fetchData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "저장 실패");
@@ -522,7 +627,16 @@ export default function SecurityPage() {
                               <option value="basic">Basic</option>
                               <option value="standard">Standard</option>
                               <option value="full">Full</option>
-                              <option value="custom">Custom...</option>
+                              {customTemplates.length > 0 && (
+                                <option disabled>──────────</option>
+                              )}
+                              {customTemplates.map((ct) => (
+                                <option key={ct.id} value={ct.name}>
+                                  {ct.name}
+                                </option>
+                              ))}
+                              <option disabled>──────────</option>
+                              <option value="__new_custom__">+ 새 정책 만들기</option>
                             </select>
                           </td>
                         </tr>
@@ -564,14 +678,13 @@ export default function SecurityPage() {
                       보안 등급
                     </legend>
                     <div className="flex flex-col gap-2">
-                      {LEVEL_OPTIONS.map((opt) => (
+                      {/* Built-in levels */}
+                      {BUILTIN_LEVEL_OPTIONS.map((opt) => (
                         <label
                           key={opt.value}
                           className={`flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2 text-sm ${
                             selectedRadio === opt.value
-                              ? opt.value === "custom"
-                                ? "border-purple-500 bg-purple-50 text-purple-700"
-                                : "border-blue-500 bg-blue-50 text-blue-700"
+                              ? "border-blue-500 bg-blue-50 text-blue-700"
                               : "border-gray-300 text-gray-600 hover:bg-gray-50"
                           }`}
                         >
@@ -586,26 +699,86 @@ export default function SecurityPage() {
                           <div className="flex-1">
                             <span className="font-medium">{opt.label}</span>
                             <p className={opt.descClass}>{opt.desc}</p>
-                            {/* Custom name input */}
-                            {opt.value === "custom" && selectedRadio === "custom" && (
-                              <div className="mt-2">
-                                <input
-                                  type="text"
-                                  placeholder="등급 이름 (예: 경영진전용)"
-                                  value={customLevelName}
-                                  onChange={(e) => {
-                                    setCustomLevelName(e.target.value);
-                                    setDetailLevel(e.target.value || "custom");
-                                    setFormDirty(true);
-                                  }}
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500"
-                                />
-                              </div>
-                            )}
                           </div>
                         </label>
                       ))}
+
+                      {/* Separator + Custom templates */}
+                      {customTemplates.length > 0 && (
+                        <div className="text-xs text-gray-400 mt-3 mb-1 border-t pt-2">
+                          Custom 보안 정책
+                        </div>
+                      )}
+
+                      {customTemplates.map((ct) => (
+                        <label
+                          key={ct.id}
+                          className={`flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2 text-sm ${
+                            selectedRadio === ct.name
+                              ? "border-purple-500 bg-purple-50 text-purple-700"
+                              : "border-gray-300 text-gray-600 hover:bg-gray-50"
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            name="security_level"
+                            value={ct.name}
+                            checked={selectedRadio === ct.name}
+                            onChange={() => handleLevelChange(ct.name)}
+                            className="sr-only"
+                          />
+                          <div className="flex-1">
+                            <span className="font-medium">{ct.name}</span>
+                            <p className="text-xs text-gray-400">
+                              {ct.description || "관리자 정의 정책"}
+                            </p>
+                          </div>
+                        </label>
+                      ))}
+
+                      {/* New custom template */}
+                      <div
+                        className={`rounded-md border px-3 py-2 text-sm cursor-pointer ${
+                          selectedRadio === "__new__"
+                            ? "border-purple-500 bg-purple-50"
+                            : "border-gray-300 hover:bg-purple-50"
+                        }`}
+                        onClick={() => handleLevelChange("__new__")}
+                      >
+                        <span className="text-purple-600 font-medium text-sm">
+                          + 새 Custom 정책 만들기
+                        </span>
+                      </div>
+
+                      {/* Custom name input when creating new */}
+                      {selectedRadio === "__new__" && (
+                        <input
+                          type="text"
+                          placeholder="정책 이름 (예: 경영진전용)"
+                          value={customLevelName}
+                          onChange={(e) => {
+                            setCustomLevelName(e.target.value);
+                            setFormDirty(true);
+                          }}
+                          className="mt-1 w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                        />
+                      )}
+
+                      {/* Update template checkbox — shown when an existing custom template is selected and form is dirty */}
+                      {formDirty &&
+                        !KNOWN_LEVELS.includes(selectedRadio as typeof KNOWN_LEVELS[number]) &&
+                        selectedRadio !== "__new__" &&
+                        customTemplates.some((ct) => ct.name === selectedRadio) && (
+                          <label className="flex items-center gap-2 mt-1 text-xs text-purple-600 bg-purple-50 rounded px-2 py-1.5 border border-purple-200">
+                            <input
+                              type="checkbox"
+                              checked={updateTemplateOnSave}
+                              onChange={(e) => setUpdateTemplateOnSave(e.target.checked)}
+                              className="h-3.5 w-3.5 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                            />
+                            이 정책의 템플릿도 함께 수정
+                          </label>
+                        )}
                     </div>
                   </fieldset>
 
