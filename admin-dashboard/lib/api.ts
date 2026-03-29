@@ -328,6 +328,54 @@ export function getTokenUsage(): Promise<TokenUsageResponse> {
   return request<TokenUsageResponse>("/api/v1/admin/token-usage");
 }
 
+// ---------- Token Usage Daily/Monthly ----------
+
+export interface DailyUsageUser {
+  username: string;
+  user_name: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+  cost_krw: number;
+  session_minutes: number;
+  last_activity_at: string | null;
+}
+
+export interface DailyUsageResponse {
+  date: string;
+  users: DailyUsageUser[];
+  total_input: number;
+  total_output: number;
+  total_tokens: number;
+  total_cost_usd: number;
+  total_cost_krw: number;
+}
+
+export interface MonthlyUsageResponse {
+  month: string;
+  users: DailyUsageUser[];
+  total_input: number;
+  total_output: number;
+  total_tokens: number;
+  total_cost_usd: number;
+  total_cost_krw: number;
+}
+
+export function getTokenUsageDaily(date?: string): Promise<DailyUsageResponse> {
+  const q = date ? `?date=${date}` : "";
+  return request<DailyUsageResponse>(`/api/v1/admin/token-usage/daily${q}`);
+}
+
+export function getTokenUsageMonthly(month?: string): Promise<MonthlyUsageResponse> {
+  const q = month ? `?month=${month}` : "";
+  return request<MonthlyUsageResponse>(`/api/v1/admin/token-usage/monthly${q}`);
+}
+
+export function takeTokenSnapshot(): Promise<{ saved: number; date: string }> {
+  return request<{ saved: number; date: string }>("/api/v1/admin/token-usage/snapshot", { method: "POST" });
+}
+
 // ---------- Admin: Infrastructure ----------
 
 export interface PodInfo {
