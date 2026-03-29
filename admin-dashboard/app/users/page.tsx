@@ -12,6 +12,7 @@ import {
   rejectUser,
   searchMembers,
   addMemberDirectly,
+  updateUserPhone,
   type User,
   type OGuardProfile,
 } from "@/lib/api";
@@ -476,6 +477,9 @@ export default function UsersPage() {
                           역할
                         </th>
                         <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                          전화번호
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                           Pod TTL
                         </th>
                         <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
@@ -498,6 +502,25 @@ export default function UsersPage() {
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-sm">
                             {roleBadge(u.role)}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3 text-sm">
+                            <input
+                              type="tel"
+                              defaultValue={u.phone_number || ""}
+                              placeholder="010-0000-0000"
+                              onBlur={async (e) => {
+                                const val = e.target.value.trim();
+                                if (val !== (u.phone_number || "")) {
+                                  try {
+                                    await updateUserPhone(u.id, val);
+                                    setSuccess(`${u.name || u.username} 전화번호 저장됨`);
+                                    fetchData();
+                                  } catch { setError("전화번호 저장 실패"); }
+                                }
+                              }}
+                              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                              className="w-32 rounded border border-gray-300 px-2 py-0.5 text-xs focus:border-blue-500 focus:outline-none"
+                            />
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-sm">
                             <select

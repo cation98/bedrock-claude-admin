@@ -163,6 +163,7 @@ export interface User {
   id: number;
   username: string;
   name: string | null;
+  phone_number: string | null;
   region_name: string | null;
   team_name: string | null;
   job_name: string | null;
@@ -203,6 +204,13 @@ export function updateUserTtl(userId: number, podTtl: string): Promise<User> {
 export function revokeUser(userId: number): Promise<User> {
   return request<User>(`/api/v1/users/${userId}/approve`, {
     method: "DELETE",
+  });
+}
+
+export function updateUserPhone(userId: number, phoneNumber: string): Promise<User> {
+  return request<User>(`/api/v1/users/${userId}/phone`, {
+    method: "PATCH",
+    body: JSON.stringify({ phone_number: phoneNumber }),
   });
 }
 

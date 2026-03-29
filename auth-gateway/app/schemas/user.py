@@ -37,6 +37,7 @@ class UserResponse(BaseModel):
     id: int
     username: str
     name: str | None
+    phone_number: str | None = None
     region_name: str | None = None
     team_name: str | None = None
     job_name: str | None = None

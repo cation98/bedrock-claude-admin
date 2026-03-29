@@ -113,6 +113,30 @@ async def update_user_ttl(
     db.commit()
     db.refresh(user)
 
+    logger.info(f"User {user.username} TTL updated to {request.pod_ttl}")
+    return UserResponse.model_validate(user)
+
+
+class PhoneUpdateRequest(BaseModel):
+    phone_number: str
+
+
+@router.patch("/{user_id}/phone", response_model=UserResponse)
+async def update_user_phone(
+    user_id: int,
+    request: PhoneUpdateRequest,
+    _admin: dict = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """사용자 전화번호 변경 (관리자용, 2FA SMS 발송용)."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.phone_number = request.phone_number
+    db.commit()
+    db.refresh(user)
+
     logger.info(f"User {user.username} pod_ttl updated to {request.pod_ttl}")
     return UserResponse.model_validate(user)
 
