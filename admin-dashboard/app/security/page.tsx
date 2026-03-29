@@ -100,7 +100,6 @@ export default function SecurityPage() {
   });
   const [editSkills, setEditSkills] = useState<string[]>([]);
   const [editSchema, setEditSchema] = useState(true);
-  const [editNodeTier, setEditNodeTier] = useState("standard");
   const [editDirty, setEditDirty] = useState(false);
 
   /* ── General state ── */
@@ -159,7 +158,6 @@ export default function SecurityPage() {
     }
 
     setEditSchema((t.policy?.can_see_schema as boolean) ?? false);
-    setEditNodeTier((t.policy?.node_tier as string) || "standard");
     setTableFilter("");
     setEditDirty(false);
   }, []);
@@ -175,7 +173,6 @@ export default function SecurityPage() {
     });
     setEditSkills([]);
     setEditSchema(false);
-    setEditNodeTier("standard");
     setTableFilter("");
     setEditDirty(false);
   }, []);
@@ -204,7 +201,6 @@ export default function SecurityPage() {
       allowed_skills: allSkillsOn ? ["*"] : editSkills,
       can_see_schema: editSchema,
       restricted_topics: [],
-      node_tier: editNodeTier,
     };
   }
 
@@ -957,24 +953,6 @@ export default function SecurityPage() {
                         />
                         DB 스키마 정보 제공
                       </label>
-                    </fieldset>
-
-                    {/* Node Tier */}
-                    <fieldset>
-                      <legend className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">
-                        노드 등급
-                      </legend>
-                      <select
-                        value={editNodeTier}
-                        onChange={(e) => {
-                          setEditNodeTier(e.target.value);
-                          setEditDirty(true);
-                        }}
-                        className="rounded-md border border-gray-300 px-3 py-1.5 text-sm w-full"
-                      >
-                        <option value="standard">Standard (m5.large) -- 기본</option>
-                        <option value="premium">Premium (m5.xlarge) -- 고사양</option>
-                      </select>
                     </fieldset>
 
                     {/* Action Buttons */}

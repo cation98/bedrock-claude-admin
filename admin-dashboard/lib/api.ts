@@ -547,6 +547,67 @@ export function triggerStartup(nodes: number): Promise<{ status: string }> {
   return request<{ status: string }>(`/api/v1/schedule/startup?desired_nodes=${nodes}`, { method: "POST" });
 }
 
+// ---------- Infra Policy ----------
+
+export interface InfraTemplatePolicy {
+  nodegroup: string;
+  node_selector: Record<string, string> | null;
+  max_pods_per_node: number;
+  cpu_request: string;
+  cpu_limit: string;
+  memory_request: string;
+  memory_limit: string;
+  shared_dir_writable: boolean;
+}
+
+export interface InfraTemplateItem {
+  id?: number;
+  name: string;
+  description: string;
+  policy: InfraTemplatePolicy;
+  is_builtin: boolean;
+}
+
+export interface InfraAssignment {
+  user_id: number;
+  username: string;
+  name: string | null;
+  infra_policy_name: string;
+  infra_policy: Record<string, unknown>;
+}
+
+export function getInfraTemplates(): Promise<{ templates: InfraTemplateItem[] }> {
+  return request<{ templates: InfraTemplateItem[] }>("/api/v1/infra-policy/templates");
+}
+
+export function createInfraTemplate(data: { name: string; description: string; policy: InfraTemplatePolicy }): Promise<InfraTemplateItem> {
+  return request<InfraTemplateItem>("/api/v1/infra-policy/templates", {
+    method: "POST", body: JSON.stringify(data),
+  });
+}
+
+export function updateInfraTemplate(id: number, data: Record<string, unknown>): Promise<InfraTemplateItem> {
+  return request<InfraTemplateItem>(`/api/v1/infra-policy/templates/${id}`, {
+    method: "PUT", body: JSON.stringify(data),
+  });
+}
+
+export function deleteInfraTemplate(id: number): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(`/api/v1/infra-policy/templates/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export function getInfraAssignments(): Promise<{ assignments: InfraAssignment[] }> {
+  return request<{ assignments: InfraAssignment[] }>("/api/v1/infra-policy/assignments");
+}
+
+export function assignInfraPolicy(data: { usernames: string[]; template_name: string }): Promise<{ assigned: number }> {
+  return request<{ assigned: number }>("/api/v1/infra-policy/assign", {
+    method: "POST", body: JSON.stringify(data),
+  });
+}
+
 // ---------- Security: Table Info ----------
 
 export interface TableInfo {
