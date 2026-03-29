@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.core.config import get_settings
 from app.core.database import Base, engine
-from app.routers import admin, auth, sessions, users, sms, skills, telegram, security, app_proxy
+from app.routers import admin, auth, sessions, users, sms, skills, telegram, security, scheduling, app_proxy
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -43,6 +43,7 @@ app.include_router(sms.router)
 app.include_router(skills.router)
 app.include_router(telegram.router)
 app.include_router(security.router)
+app.include_router(scheduling.router)
 # app_proxy는 catch-all 경로이므로 반드시 마지막에 등록
 app.include_router(app_proxy.router)
 

@@ -229,6 +229,185 @@ async def telegram_webhook(
         return JSONResponse({"ok": True})
 
     # ------------------------------------------------------------------
+    # /연장요청 — 사용자가 시간 연장을 요청
+    # ------------------------------------------------------------------
+    if text.startswith("/연장요청"):
+        parts = text.split()
+        hours = 2  # 기본 2시간
+        if len(parts) >= 2:
+            try:
+                hours = int(parts[1])
+                if hours < 1 or hours > 8:
+                    hours = 2
+            except ValueError:
+                hours = 2
+
+        from app.routers.scheduling import ExtensionRequest, ADMIN_USERNAME, _notify_admin_extension
+        from app.models.user import User
+
+        # 이미 대기 중인 요청 확인
+        existing = (
+            db.query(ExtensionRequest)
+            .filter(
+                ExtensionRequest.username == mapping.username,
+                ExtensionRequest.status == "pending",
+            )
+            .first()
+        )
+        if existing:
+            await send_telegram_message(
+                chat_id,
+                "이미 연장 요청이 대기 중입니다. 관리자 승인을 기다려주세요.",
+                settings,
+            )
+            return JSONResponse({"ok": True})
+
+        user = db.query(User).filter(User.username == mapping.username).first()
+        user_name = user.name if user else mapping.username
+
+        req = ExtensionRequest(
+            username=mapping.username,
+            user_name=user_name,
+            requested_hours=hours,
+        )
+        db.add(req)
+        db.commit()
+        db.refresh(req)
+
+        # 관리자에게 텔레그램 알림
+        await _notify_admin_extension(
+            mapping.username, user_name, hours, req.id, settings, db,
+        )
+
+        await send_telegram_message(
+            chat_id,
+            f"✅ {hours}시간 연장을 요청했습니다 (요청 #{req.id}).\n관리자 승인을 기다려주세요.",
+            settings,
+        )
+        return JSONResponse({"ok": True})
+
+    # ------------------------------------------------------------------
+    # /승인 {id} — 관리자가 연장 승인
+    # ------------------------------------------------------------------
+    if text.startswith("/승인"):
+        from app.routers.scheduling import (
+            ExtensionRequest, ADMIN_USERNAME,
+            _notify_user_extension_result,
+        )
+        from datetime import timezone as _tz
+
+        # 관리자 권한 확인
+        if mapping.username != ADMIN_USERNAME:
+            await send_telegram_message(
+                chat_id, "관리자만 사용할 수 있는 명령입니다.", settings,
+            )
+            return JSONResponse({"ok": True})
+
+        parts = text.split()
+        if len(parts) < 2:
+            await send_telegram_message(
+                chat_id, "사용법: /승인 요청번호\n예: /승인 1", settings,
+            )
+            return JSONResponse({"ok": True})
+
+        try:
+            req_id = int(parts[1])
+        except ValueError:
+            await send_telegram_message(
+                chat_id, "요청번호는 숫자여야 합니다.", settings,
+            )
+            return JSONResponse({"ok": True})
+
+        req = db.query(ExtensionRequest).filter(ExtensionRequest.id == req_id).first()
+        if not req:
+            await send_telegram_message(
+                chat_id, f"요청 #{req_id}을 찾을 수 없습니다.", settings,
+            )
+            return JSONResponse({"ok": True})
+
+        if req.status != "pending":
+            await send_telegram_message(
+                chat_id, f"요청 #{req_id}은 이미 {req.status} 상태입니다.", settings,
+            )
+            return JSONResponse({"ok": True})
+
+        req.status = "approved"
+        req.resolved_at = datetime.now(_tz.utc)
+        req.resolved_by = mapping.username
+        db.commit()
+
+        await _notify_user_extension_result(
+            req.username, "approved", req.requested_hours, settings, db,
+        )
+
+        await send_telegram_message(
+            chat_id,
+            f"✅ 승인 완료 — {req.user_name}({req.username}) {req.requested_hours}시간 연장",
+            settings,
+        )
+        return JSONResponse({"ok": True})
+
+    # ------------------------------------------------------------------
+    # /거절 {id} — 관리자가 연장 거절
+    # ------------------------------------------------------------------
+    if text.startswith("/거절"):
+        from app.routers.scheduling import (
+            ExtensionRequest, ADMIN_USERNAME,
+            _notify_user_extension_result,
+        )
+        from datetime import timezone as _tz
+
+        if mapping.username != ADMIN_USERNAME:
+            await send_telegram_message(
+                chat_id, "관리자만 사용할 수 있는 명령입니다.", settings,
+            )
+            return JSONResponse({"ok": True})
+
+        parts = text.split()
+        if len(parts) < 2:
+            await send_telegram_message(
+                chat_id, "사용법: /거절 요청번호\n예: /거절 1", settings,
+            )
+            return JSONResponse({"ok": True})
+
+        try:
+            req_id = int(parts[1])
+        except ValueError:
+            await send_telegram_message(
+                chat_id, "요청번호는 숫자여야 합니다.", settings,
+            )
+            return JSONResponse({"ok": True})
+
+        req = db.query(ExtensionRequest).filter(ExtensionRequest.id == req_id).first()
+        if not req:
+            await send_telegram_message(
+                chat_id, f"요청 #{req_id}을 찾을 수 없습니다.", settings,
+            )
+            return JSONResponse({"ok": True})
+
+        if req.status != "pending":
+            await send_telegram_message(
+                chat_id, f"요청 #{req_id}은 이미 {req.status} 상태입니다.", settings,
+            )
+            return JSONResponse({"ok": True})
+
+        req.status = "rejected"
+        req.resolved_at = datetime.now(_tz.utc)
+        req.resolved_by = mapping.username
+        db.commit()
+
+        await _notify_user_extension_result(
+            req.username, "rejected", 0, settings, db,
+        )
+
+        await send_telegram_message(
+            chat_id,
+            f"❌ 거절 완료 — {req.user_name}({req.username}) 연장 요청 거절됨",
+            settings,
+        )
+        return JSONResponse({"ok": True})
+
+    # ------------------------------------------------------------------
     # 단체방 멘션/답글 필터링
     # 개인 DM은 항상 응답, 단체방은 멘션 또는 reply 시에만
     # ------------------------------------------------------------------
