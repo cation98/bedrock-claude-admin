@@ -3,7 +3,17 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { getActiveSessions, adminTerminateSession, type Session } from "@/lib/api";
+import {
+  getActiveSessions,
+  adminTerminateSession,
+  getExtensionRequests,
+  approveExtension,
+  rejectExtension,
+  triggerShutdownWarning,
+  triggerShutdown,
+  type Session,
+  type ExtensionRequest,
+} from "@/lib/api";
 import { isAuthenticated, logout, getUser } from "@/lib/auth";
 import StatsCard from "@/components/stats-card";
 import SessionTable from "@/components/session-table";
@@ -16,6 +26,8 @@ export default function DashboardPage() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [extensionRequests, setExtensionRequests] = useState<ExtensionRequest[]>([]);
 
   const fetchSessions = useCallback(async () => {
     try {
@@ -30,15 +42,35 @@ export default function DashboardPage() {
     }
   }, []);
 
+  const fetchExtensions = useCallback(async () => {
+    try {
+      const res = await getExtensionRequests();
+      setExtensionRequests(res.requests);
+    } catch {
+      /* ignore — extensions are supplementary */
+    }
+  }, []);
+
   useEffect(() => {
     if (!isAuthenticated()) {
       router.replace("/");
       return;
     }
     fetchSessions();
-    const timer = setInterval(fetchSessions, REFRESH_INTERVAL);
+    fetchExtensions();
+    const timer = setInterval(() => {
+      fetchSessions();
+      fetchExtensions();
+    }, REFRESH_INTERVAL);
     return () => clearInterval(timer);
-  }, [router, fetchSessions]);
+  }, [router, fetchSessions, fetchExtensions]);
+
+  // Auto-dismiss success message after 3 seconds
+  useEffect(() => {
+    if (!success) return;
+    const t = setTimeout(() => setSuccess(""), 3000);
+    return () => clearTimeout(t);
+  }, [success]);
 
   const user = getUser();
 
@@ -112,6 +144,12 @@ export default function DashboardPage() {
           </div>
         )}
 
+        {success && (
+          <div className="mb-6 rounded-md bg-green-50 px-4 py-3 text-sm text-green-600">
+            {success}
+          </div>
+        )}
+
         {/* Stats */}
         <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-3">
           <StatsCard label="활성 세션" value={runningSessions} />
@@ -137,6 +175,121 @@ export default function DashboardPage() {
               }
             }
           }} />
+        </div>
+
+        {/* 스케줄링 + 연장 요청 관리 */}
+        <div className="mt-8 rounded-lg border border-gray-200 bg-white shadow-sm">
+          <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
+            <h2 className="text-sm font-semibold text-gray-900">스케줄링 관리</h2>
+            <div className="flex gap-2">
+              <button
+                onClick={async () => {
+                  if (confirm("종료 30분 전 경고를 발송하시겠습니까?")) {
+                    try {
+                      const res = await triggerShutdownWarning(30);
+                      setSuccess(`경고가 ${res.warned}명에게 발송되었습니다.`);
+                    } catch (e: unknown) {
+                      setError(e instanceof Error ? e.message : "경고 발송 실패");
+                    }
+                  }
+                }}
+                className="rounded bg-yellow-50 px-3 py-1 text-xs font-medium text-yellow-700 hover:bg-yellow-100"
+              >
+                경고 발송
+              </button>
+              <button
+                onClick={async () => {
+                  if (confirm("모든 세션을 종료하시겠습니까?")) {
+                    try {
+                      const res = await triggerShutdown();
+                      setSuccess(`${res.terminated}개 세션이 종료되었습니다.`);
+                      fetchSessions();
+                    } catch (e: unknown) {
+                      setError(e instanceof Error ? e.message : "세션 종료 실패");
+                    }
+                  }
+                }}
+                className="rounded bg-red-50 px-3 py-1 text-xs font-medium text-red-600 hover:bg-red-100"
+              >
+                전체 종료
+              </button>
+            </div>
+          </div>
+
+          {/* 연장 요청 목록 */}
+          <div className="p-4">
+            <h3 className="mb-2 text-xs font-semibold uppercase text-gray-500">
+              연장 요청
+            </h3>
+            {extensionRequests.length === 0 ? (
+              <p className="text-sm text-gray-400">연장 요청이 없습니다.</p>
+            ) : (
+              <div className="space-y-2">
+                {extensionRequests.map((req) => (
+                  <div
+                    key={req.id}
+                    className={`flex items-center justify-between rounded-lg border p-3 ${
+                      req.status === "pending"
+                        ? "border-yellow-200 bg-yellow-50"
+                        : req.status === "approved"
+                          ? "border-green-200 bg-green-50"
+                          : "border-gray-200 bg-gray-50"
+                    }`}
+                  >
+                    <div>
+                      <span className="text-sm font-medium">
+                        {req.user_name || req.username}
+                      </span>
+                      <span className="ml-1 text-xs text-gray-400">
+                        ({req.username})
+                      </span>
+                      <span className="ml-2 text-xs text-gray-500">
+                        {req.requested_hours}시간 연장
+                      </span>
+                      <span className="ml-2 text-xs text-gray-400">
+                        {new Date(req.requested_at).toLocaleString("ko-KR")}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {req.status === "pending" ? (
+                        <>
+                          <button
+                            onClick={async () => {
+                              await approveExtension(req.id);
+                              fetchExtensions();
+                            }}
+                            className="rounded bg-green-600 px-3 py-1 text-xs font-medium text-white hover:bg-green-700"
+                          >
+                            승인
+                          </button>
+                          <button
+                            onClick={async () => {
+                              await rejectExtension(req.id);
+                              fetchExtensions();
+                            }}
+                            className="rounded bg-red-50 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-100"
+                          >
+                            거절
+                          </button>
+                        </>
+                      ) : (
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                            req.status === "approved"
+                              ? "bg-green-100 text-green-700"
+                              : "bg-gray-100 text-gray-500"
+                          }`}
+                        >
+                          {req.status === "approved" ? "승인됨" : "거절됨"}
+                          {req.resolved_by && ` (${req.resolved_by})`}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </main>
     </div>

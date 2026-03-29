@@ -176,6 +176,38 @@ async def execute_startup(
 
 
 # ===========================================================================
+# Extension request list (admin)
+# ===========================================================================
+
+@router.get("/extensions")
+async def list_extensions(
+    status_filter: str = None,
+    _admin: dict = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """연장 요청 목록 조회."""
+    query = db.query(ExtensionRequest).order_by(ExtensionRequest.requested_at.desc())
+    if status_filter:
+        query = query.filter(ExtensionRequest.status == status_filter)
+    requests = query.limit(50).all()
+    return {
+        "requests": [
+            {
+                "id": r.id,
+                "username": r.username,
+                "user_name": r.user_name,
+                "requested_hours": r.requested_hours,
+                "status": r.status,
+                "requested_at": r.requested_at.isoformat() if r.requested_at else None,
+                "resolved_at": r.resolved_at.isoformat() if r.resolved_at else None,
+                "resolved_by": r.resolved_by,
+            }
+            for r in requests
+        ]
+    }
+
+
+# ===========================================================================
 # Extension request endpoints
 # ===========================================================================
 

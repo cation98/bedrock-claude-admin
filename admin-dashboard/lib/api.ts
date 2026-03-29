@@ -510,6 +510,43 @@ export function deleteCustomTemplate(id: number): Promise<{ deleted: boolean }> 
   });
 }
 
+// ---------- Scheduling + Extension ----------
+
+export interface ExtensionRequest {
+  id: number;
+  username: string;
+  user_name: string | null;
+  requested_hours: number;
+  status: string;  // pending, approved, rejected
+  requested_at: string;
+  resolved_at: string | null;
+  resolved_by: string | null;
+}
+
+export function getExtensionRequests(): Promise<{ requests: ExtensionRequest[] }> {
+  return request<{ requests: ExtensionRequest[] }>("/api/v1/schedule/extensions");
+}
+
+export function approveExtension(requestId: number): Promise<{ status: string }> {
+  return request<{ status: string }>(`/api/v1/schedule/extension/approve/${requestId}`, { method: "POST" });
+}
+
+export function rejectExtension(requestId: number): Promise<{ status: string }> {
+  return request<{ status: string }>(`/api/v1/schedule/extension/reject/${requestId}`, { method: "POST" });
+}
+
+export function triggerShutdownWarning(minutes: number): Promise<{ warned: number }> {
+  return request<{ warned: number }>(`/api/v1/schedule/shutdown-warning?minutes_before=${minutes}`, { method: "POST" });
+}
+
+export function triggerShutdown(): Promise<{ terminated: number }> {
+  return request<{ terminated: number }>("/api/v1/schedule/shutdown", { method: "POST" });
+}
+
+export function triggerStartup(nodes: number): Promise<{ status: string }> {
+  return request<{ status: string }>(`/api/v1/schedule/startup?desired_nodes=${nodes}`, { method: "POST" });
+}
+
 // ---------- Security: Table Info ----------
 
 export interface TableInfo {
