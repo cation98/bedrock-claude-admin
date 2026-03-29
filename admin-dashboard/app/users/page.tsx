@@ -78,6 +78,7 @@ export default function UsersPage() {
   const [searchResults, setSearchResults] = useState<OGuardProfile[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [addTtl, setAddTtl] = useState("4h");
+  const [addPhones, setAddPhones] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -116,9 +117,11 @@ export default function UsersPage() {
 
   const handleAddMember = async (username: string) => {
     try {
-      await addMemberDirectly(username, addTtl);
-      setSuccess(`${username} 허용목록에 추가 완료`);
+      const phone = addPhones[username]?.trim() || undefined;
+      await addMemberDirectly(username, addTtl, phone);
+      setSuccess(`${username} 허용목록에 추가 완료${phone ? ` (전화: ${phone})` : ""}`);
       setSearchResults((prev) => prev.filter((r) => r.username !== username));
+      setAddPhones((prev) => { const next = { ...prev }; delete next[username]; return next; });
       fetchData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "추가 실패");
@@ -298,6 +301,7 @@ export default function UsersPage() {
                           <th className="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500">이름</th>
                           <th className="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500">소속</th>
                           <th className="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500">직책</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500">전화번호</th>
                           <th className="px-3 py-2 text-right text-xs font-medium uppercase text-gray-500">추가</th>
                         </tr>
                       </thead>
@@ -310,6 +314,17 @@ export default function UsersPage() {
                               <td className="px-3 py-2 text-sm text-gray-900">{r.first_name ?? "-"}</td>
                               <td className="px-3 py-2 text-sm text-gray-600">{r.region_name ?? "-"} / {r.team_name ?? "-"}</td>
                               <td className="px-3 py-2 text-sm text-gray-600">{r.job_name ?? "-"}</td>
+                              <td className="px-3 py-2">
+                                {!alreadyAdded && (
+                                  <input
+                                    type="tel"
+                                    placeholder="010-0000-0000"
+                                    value={addPhones[r.username] || ""}
+                                    onChange={(e) => setAddPhones((prev) => ({ ...prev, [r.username]: e.target.value }))}
+                                    className="w-32 rounded border border-gray-300 px-2 py-0.5 text-xs"
+                                  />
+                                )}
+                              </td>
                               <td className="px-3 py-2 text-right">
                                 {alreadyAdded ? (
                                   <span className="text-xs text-gray-400">등록됨</span>

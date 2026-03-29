@@ -212,6 +212,7 @@ async def search_members(
 class DirectAddRequest(BaseModel):
     username: str
     pod_ttl: str = "4h"
+    phone_number: str | None = None
 
 
 @router.post("/add-member", response_model=UserResponse)
@@ -229,6 +230,8 @@ async def add_member_directly(
         existing.is_approved = True
         existing.pod_ttl = req.pod_ttl
         existing.approved_at = datetime.now(timezone.utc)
+        if req.phone_number:
+            existing.phone_number = req.phone_number
         db.commit()
         db.refresh(existing)
         logger.info(f"Existing user {existing.username} directly approved")
@@ -258,6 +261,7 @@ async def add_member_directly(
     user = User(
         username=req.username.upper(),
         name=profile.get("first_name"),
+        phone_number=req.phone_number,
         region_name=profile.get("region_name"),
         team_name=profile.get("team_name"),
         job_name=profile.get("job_name"),

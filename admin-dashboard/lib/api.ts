@@ -231,10 +231,10 @@ export function searchMembers(q: string): Promise<OGuardSearchResponse> {
   return request<OGuardSearchResponse>(`/api/v1/users/search-members?q=${encodeURIComponent(q)}`);
 }
 
-export function addMemberDirectly(username: string, podTtl: string): Promise<User> {
+export function addMemberDirectly(username: string, podTtl: string, phoneNumber?: string): Promise<User> {
   return request<User>("/api/v1/users/add-member", {
     method: "POST",
-    body: JSON.stringify({ username, pod_ttl: podTtl }),
+    body: JSON.stringify({ username, pod_ttl: podTtl, phone_number: phoneNumber || null }),
   });
 }
 
