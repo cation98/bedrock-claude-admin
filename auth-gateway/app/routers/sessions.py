@@ -37,9 +37,6 @@ logger = logging.getLogger(__name__)
 
 # ---------- 노드 용량 확인 및 오토스케일링 ----------
 
-# 시연자(presenter) 전용 사번 목록 — k8s_service.py의 nodeSelector 로직과 동일
-PRESENTER_USERS = {"N1102359", "N1001065"}
-
 # EKS 클러스터 정보
 EKS_CLUSTER_NAME = "bedrock-claude-eks"
 EKS_REGION = "ap-northeast-2"
@@ -80,7 +77,7 @@ def _parse_memory_to_bytes(mem_str: str) -> int:
     return int(mem_str)
 
 
-def _ensure_node_capacity(username: str) -> None:
+def _ensure_node_capacity(username: str, security_policy: dict | None = None) -> None:
     """Pod 생성 전 대상 노드그룹에 충분한 CPU 여유가 있는지 확인.
 
     여유가 부족하면 해당 노드그룹의 desiredSize를 +1 스케일업한다.
@@ -88,10 +85,15 @@ def _ensure_node_capacity(username: str) -> None:
     대기하다가 노드가 준비되면 자동 스케줄링된다.
 
     IRSA(platform-admin-sa)의 eks:UpdateNodegroupConfig 권한을 사용한다.
+
+    Args:
+        username: 사번
+        security_policy: DB 보안 정책. node_tier="premium"이면 presenter 노드 사용.
     """
-    is_presenter = username.upper() in PRESENTER_USERS
-    node_label_selector = "role=presenter" if is_presenter else None
-    nodegroup_name = NODEGROUP_MAP["presenter"] if is_presenter else NODEGROUP_MAP["user"]
+    node_tier = (security_policy or {}).get("node_tier", "standard")
+    is_premium = node_tier == "premium"
+    node_label_selector = "role=presenter" if is_premium else None
+    nodegroup_name = NODEGROUP_MAP["presenter"] if is_premium else NODEGROUP_MAP["user"]
 
     try:
         # K8s API로 해당 라벨의 노드 목록 조회
@@ -311,7 +313,7 @@ async def create_session(
     user_security = user.security_policy if (user and user.security_policy) else SECURITY_TEMPLATES.get("standard", {})
 
     # 노드 용량 확인 → 부족하면 노드그룹 스케일업 (비차단)
-    _ensure_node_capacity(username)
+    _ensure_node_capacity(username, security_policy=user_security)
 
     # K8s Pod 생성 (사용자 프로필 주입 + 동적 TTL + 보안 정책)
     try:

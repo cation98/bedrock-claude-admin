@@ -15,6 +15,7 @@ SECURITY_TEMPLATES = {
         "allowed_skills": ["report", "share"],
         "can_see_schema": False,
         "restricted_topics": [],
+        "node_tier": "standard",
     },
     "standard": {
         "security_level": "standard",
@@ -27,6 +28,7 @@ SECURITY_TEMPLATES = {
         "allowed_skills": ["*"],
         "can_see_schema": True,
         "restricted_topics": [],
+        "node_tier": "standard",
     },
     "full": {
         "security_level": "full",
@@ -39,6 +41,7 @@ SECURITY_TEMPLATES = {
         "allowed_skills": ["*"],
         "can_see_schema": True,
         "restricted_topics": [],
+        "node_tier": "standard",
     },
 }
 
@@ -60,6 +63,7 @@ class SecurityPolicyData(BaseModel):
     allowed_skills: list[str] = ["*"]
     can_see_schema: bool = True
     restricted_topics: list[str] = []
+    node_tier: str = "standard"  # "standard" = m5.large, "premium" = m5.xlarge
 
 
 class SecurityPolicyUpdateRequest(BaseModel):
