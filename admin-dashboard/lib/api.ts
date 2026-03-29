@@ -267,6 +267,34 @@ export function terminatePod(username: string): Promise<{ username: string; stat
   });
 }
 
+export interface UserUsageHistory {
+  date: string;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+  cost_krw: number;
+  session_minutes: number;
+}
+
+export interface UserUsageHistoryResponse {
+  username: string;
+  days: number;
+  history: UserUsageHistory[];
+}
+
+export function getUserUsageHistory(username: string, from?: string, to?: string): Promise<UserUsageHistoryResponse> {
+  const params = new URLSearchParams();
+  if (from && to) {
+    const d1 = new Date(from);
+    const d2 = new Date(to);
+    const diffDays = Math.ceil((d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    params.set("days", String(Math.max(diffDays, 1)));
+  }
+  const q = params.toString() ? `?${params.toString()}` : "";
+  return request<UserUsageHistoryResponse>(`/api/v1/admin/token-usage/user/${username}${q}`);
+}
+
 // ---------- Admin: Node Group Scaling ----------
 
 export interface NodeGroupInfo {

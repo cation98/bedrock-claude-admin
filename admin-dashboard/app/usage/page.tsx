@@ -12,6 +12,8 @@ import {
   type DailyUsageResponse,
   type MonthlyUsageResponse,
   type DailyUsageUser,
+  getUserUsageHistory,
+  type UserUsageHistory,
 } from "@/lib/api";
 import { isAuthenticated, logout, getUser } from "@/lib/auth";
 import StatsCard from "@/components/stats-card";
@@ -52,6 +54,17 @@ export default function UsagePage() {
   const [error, setError] = useState("");
   const [snapshotMsg, setSnapshotMsg] = useState("");
 
+  // 개인별 일별 추이
+  const [detailUser, setDetailUser] = useState<string | null>(null);
+  const [detailUserName, setDetailUserName] = useState("");
+  const [detailFrom, setDetailFrom] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() - 30);
+    return d.toISOString().slice(0, 10);
+  });
+  const [detailTo, setDetailTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const [detailHistory, setDetailHistory] = useState<UserUsageHistory[]>([]);
+  const [detailLoading, setDetailLoading] = useState(false);
+
   const fetchRealtime = useCallback(async () => {
     try {
       const res = await getTokenUsage();
@@ -89,6 +102,26 @@ export default function UsagePage() {
       setLoading(false);
     }
   }, [selectedMonth]);
+
+  const fetchUserDetail = useCallback(async (username: string) => {
+    setDetailLoading(true);
+    try {
+      const res = await getUserUsageHistory(username, detailFrom, detailTo);
+      // Filter by date range
+      setDetailHistory(
+        (res.history || []).filter((h) => h.date >= detailFrom && h.date <= detailTo)
+      );
+    } catch {
+      setDetailHistory([]);
+    } finally {
+      setDetailLoading(false);
+    }
+  }, [detailFrom, detailTo]);
+
+  // Fetch detail when user/dates change
+  useEffect(() => {
+    if (detailUser) fetchUserDetail(detailUser);
+  }, [detailUser, detailFrom, detailTo, fetchUserDetail]);
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -311,7 +344,8 @@ export default function UsagePage() {
                 </thead>
                 <tbody className="divide-y divide-gray-200">
                   {users?.map((u) => (
-                    <tr key={u.username} className="hover:bg-gray-50">
+                    <tr key={u.username} className={`hover:bg-gray-50 cursor-pointer ${detailUser === u.username ? "bg-blue-50" : ""}`}
+                      onClick={() => { setDetailUser(u.username); setDetailUserName(u.user_name || u.username); }}>
                       <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-gray-900">
                         {u.user_name ?? u.username}
                         <span className="ml-1 text-xs text-gray-400">({u.username})</span>
@@ -366,6 +400,74 @@ export default function UsagePage() {
             </div>
           )}
         </div>
+
+        {/* 개인별 일별 추이 패널 */}
+        {detailUser && (
+          <div className="mt-6 rounded-lg border border-blue-200 bg-white shadow-sm">
+            <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
+              <h2 className="text-sm font-semibold text-gray-900">
+                {detailUserName} ({detailUser}) 일별 추이
+              </h2>
+              <div className="flex items-center gap-3">
+                <label className="text-xs text-gray-500">시작:</label>
+                <input type="date" value={detailFrom}
+                  onChange={(e) => setDetailFrom(e.target.value)}
+                  className="rounded border border-gray-300 px-2 py-1 text-sm" />
+                <label className="text-xs text-gray-500">종료:</label>
+                <input type="date" value={detailTo}
+                  onChange={(e) => setDetailTo(e.target.value)}
+                  className="rounded border border-gray-300 px-2 py-1 text-sm" />
+                <button onClick={() => setDetailUser(null)}
+                  className="text-gray-400 hover:text-gray-600 text-sm">✕ 닫기</button>
+              </div>
+            </div>
+            {detailLoading ? (
+              <div className="flex items-center justify-center py-8 text-gray-400">불러오는 중...</div>
+            ) : detailHistory.length === 0 ? (
+              <div className="flex items-center justify-center py-8 text-gray-400">해당 기간에 데이터가 없습니다</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500">날짜</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-500">Input</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-500">Output</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-500">Total</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-500">USD</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-500">KRW</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-500">사용시간</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {detailHistory.map((h) => (
+                      <tr key={h.date} className="hover:bg-gray-50">
+                        <td className="whitespace-nowrap px-4 py-2 text-sm text-gray-900">{h.date}</td>
+                        <td className="whitespace-nowrap px-4 py-2 text-right text-sm tabular-nums text-gray-600">{fmt(h.input_tokens)}</td>
+                        <td className="whitespace-nowrap px-4 py-2 text-right text-sm tabular-nums text-gray-600">{fmt(h.output_tokens)}</td>
+                        <td className="whitespace-nowrap px-4 py-2 text-right text-sm tabular-nums font-medium text-gray-900">{fmt(h.total_tokens)}</td>
+                        <td className="whitespace-nowrap px-4 py-2 text-right text-sm tabular-nums text-gray-600">${h.cost_usd.toFixed(4)}</td>
+                        <td className="whitespace-nowrap px-4 py-2 text-right text-sm tabular-nums text-gray-600">{fmt(h.cost_krw)}원</td>
+                        <td className="whitespace-nowrap px-4 py-2 text-right text-sm tabular-nums text-gray-600">{formatMinutes(h.session_minutes)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="bg-gray-50">
+                    <tr className="font-semibold">
+                      <td className="px-4 py-2 text-sm">합계 ({detailHistory.length}일)</td>
+                      <td className="px-4 py-2 text-right text-sm tabular-nums">{fmt(detailHistory.reduce((s, h) => s + h.input_tokens, 0))}</td>
+                      <td className="px-4 py-2 text-right text-sm tabular-nums">{fmt(detailHistory.reduce((s, h) => s + h.output_tokens, 0))}</td>
+                      <td className="px-4 py-2 text-right text-sm tabular-nums">{fmt(detailHistory.reduce((s, h) => s + h.total_tokens, 0))}</td>
+                      <td className="px-4 py-2 text-right text-sm tabular-nums">${detailHistory.reduce((s, h) => s + h.cost_usd, 0).toFixed(4)}</td>
+                      <td className="px-4 py-2 text-right text-sm tabular-nums">{fmt(detailHistory.reduce((s, h) => s + h.cost_krw, 0))}원</td>
+                      <td className="px-4 py-2 text-right text-sm tabular-nums">{formatMinutes(detailHistory.reduce((s, h) => s + h.session_minutes, 0))}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
       </main>
     </div>
   );
