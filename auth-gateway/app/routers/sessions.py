@@ -53,6 +53,9 @@ NODEGROUP_MAP = {
 # Pod 생성에 필요한 최소 여유 CPU (millicores)
 MIN_FREE_CPU_MILLICORES = 1000
 
+# 노드당 최대 사용자 Pod 수 (app=claude-terminal)
+MAX_USER_PODS_PER_NODE = 3
+
 
 def _parse_cpu_to_millicores(cpu_str: str) -> int:
     """K8s CPU 문자열을 millicore 정수로 변환.
@@ -138,6 +141,18 @@ def _ensure_node_capacity(username: str) -> None:
                 f"Node {node_name}: allocatable={allocatable_cpu}m, "
                 f"used={used_cpu}m, free={free_cpu}m"
             )
+
+            # 노드당 사용자 Pod(app=claude-terminal) 수 제한 확인
+            user_pod_count = len([
+                p for p in pods
+                if p.metadata.labels and p.metadata.labels.get("app") == "claude-terminal"
+            ])
+            if user_pod_count >= MAX_USER_PODS_PER_NODE:
+                logger.info(
+                    f"Node {node_name} has {user_pod_count} user pods "
+                    f"(max {MAX_USER_PODS_PER_NODE}). Skipping."
+                )
+                continue  # 이 노드는 Pod 수 제한 초과 — 다음 노드 시도
 
             if free_cpu >= MIN_FREE_CPU_MILLICORES:
                 # 충분한 여유가 있는 노드 발견 — 스케일업 불필요
