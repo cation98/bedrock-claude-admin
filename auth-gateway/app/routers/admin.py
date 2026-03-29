@@ -689,6 +689,100 @@ async def drain_node(
     raise HTTPException(status_code=400, detail="노드그룹을 확인할 수 없습니다")
 
 
+# ==================== Auto Scale-Down ====================
+
+@router.post("/auto-scale-down")
+async def auto_scale_down(
+    _admin: dict = Depends(_require_admin),
+    settings: Settings = Depends(get_settings),
+):
+    """사용자 Pod 없는 노드 자동 축소 (system-node 보호)."""
+    v1 = client.CoreV1Api()
+
+    # Get all nodes
+    nodes = v1.list_node().items
+
+    # Get all user pods
+    user_pods = v1.list_namespaced_pod(
+        namespace=settings.k8s_namespace,
+        label_selector="app=claude-terminal",
+    ).items
+
+    # Map: node_name -> user pod count
+    node_pod_count = {}
+    for pod in user_pods:
+        if pod.status.phase in ("Running", "Pending"):
+            node = pod.spec.node_name or "unscheduled"
+            node_pod_count[node] = node_pod_count.get(node, 0) + 1
+
+    # Find empty non-system nodes
+    scaled_down = []
+    for node in nodes:
+        name = node.metadata.name
+        labels = node.metadata.labels or {}
+        role = labels.get("role", "")
+
+        # Skip system nodes
+        if role == "system":
+            continue
+
+        # Skip if node is already cordoned/unschedulable
+        if node.spec.unschedulable:
+            continue
+
+        # Skip if node has user pods
+        if node_pod_count.get(name, 0) > 0:
+            continue
+
+        # Check if node has platform/ingress pods (system protection)
+        all_pods = v1.list_pod_for_all_namespaces(
+            field_selector=f"spec.nodeName={name}"
+        ).items
+        has_system_pods = any(
+            p.metadata.namespace in ("platform", "ingress-nginx")
+            for p in all_pods
+        )
+        if has_system_pods:
+            logger.info(f"Node {name} has system pods, skipping scale-down")
+            continue
+
+        # This node is empty and safe to remove
+        ng_name = labels.get("eks.amazonaws.com/nodegroup", "")
+        if not ng_name:
+            continue
+
+        try:
+            # Cordon the node
+            body = {"spec": {"unschedulable": True}}
+            v1.patch_node(name, body)
+
+            # Scale down nodegroup
+            eks = _get_eks_client()
+            cluster_name = "bedrock-claude-eks"
+            ng = eks.describe_nodegroup(clusterName=cluster_name, nodegroupName=ng_name)["nodegroup"]
+            current = ng["scalingConfig"]["desiredSize"]
+            new_desired = max(0, current - 1)
+            new_min = min(ng["scalingConfig"]["minSize"], new_desired)
+
+            eks.update_nodegroup_config(
+                clusterName=cluster_name,
+                nodegroupName=ng_name,
+                scalingConfig={
+                    "minSize": new_min,
+                    "maxSize": int(ng["scalingConfig"]["maxSize"]),
+                    "desiredSize": new_desired,
+                },
+            )
+
+            scaled_down.append({"node": name, "nodegroup": ng_name, "new_desired": new_desired})
+            logger.info(f"Auto scale-down: {name} ({ng_name}) → {new_desired}")
+
+        except Exception as e:
+            logger.error(f"Failed to scale down {name}: {e}")
+
+    return {"scaled_down": scaled_down, "checked_nodes": len(nodes)}
+
+
 # ==================== Audit Logs ====================
 
 @router.get("/audit-logs")
