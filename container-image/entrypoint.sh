@@ -37,6 +37,57 @@ DB_LIST=""
 echo "  DB:       ${DB_LIST:-none}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+# ---------------------------------------------------------------------------
+# 2a) CLAUDE.md 동적 생성 (보안 등급 기반)
+#     sections 디렉토리의 파일을 조합하여 CLAUDE.md를 생성
+#     SECURITY_LEVEL에 따라 DB 섹션 포함 여부 결정
+# ---------------------------------------------------------------------------
+SECURITY_LEVEL="${SECURITY_LEVEL:-standard}"
+SECTIONS_DIR="/home/node/.claude/claude-md-sections"
+CLAUDE_MD="/home/node/.claude/CLAUDE.md"
+
+if [ -d "${SECTIONS_DIR}" ]; then
+    # Start with header
+    cp "${SECTIONS_DIR}/00-header.md" "${CLAUDE_MD}"
+
+    # Security rules with level injection
+    sed "s/{SECURITY_LEVEL}/${SECURITY_LEVEL}/g" "${SECTIONS_DIR}/10-security-rules.md" >> "${CLAUDE_MD}"
+
+    # DB sections: conditional on environment variables
+    if [ "${SECURITY_LEVEL}" != "basic" ]; then
+        echo "" >> "${CLAUDE_MD}"
+        cat "${SECTIONS_DIR}/50-db-common-rules.md" >> "${CLAUDE_MD}"
+
+        if [ -n "${DATABASE_URL:-}" ]; then
+            echo "" >> "${CLAUDE_MD}"
+            cat "${SECTIONS_DIR}/30-safety-db.md" >> "${CLAUDE_MD}"
+        fi
+
+        if [ -n "${TANGO_DB_PASSWORD:-}" ] || grep -q "claude_readonly" /home/node/.pgpass 2>/dev/null; then
+            echo "" >> "${CLAUDE_MD}"
+            cat "${SECTIONS_DIR}/20-tango-db.md" >> "${CLAUDE_MD}"
+            echo "" >> "${CLAUDE_MD}"
+            cat "${SECTIONS_DIR}/25-opark-db.md" >> "${CLAUDE_MD}"
+        fi
+
+        if [ -n "${DOCULOG_DB_PASSWORD:-}" ] || grep -q "doculog_reader" /home/node/.pgpass 2>/dev/null; then
+            echo "" >> "${CLAUDE_MD}"
+            cat "${SECTIONS_DIR}/35-doculog-db.md" >> "${CLAUDE_MD}"
+        fi
+
+        echo "" >> "${CLAUDE_MD}"
+        cat "${SECTIONS_DIR}/40-keyword-mapping.md" >> "${CLAUDE_MD}"
+    fi
+
+    # Always include web terminal, tools, webapp sections
+    echo "" >> "${CLAUDE_MD}"
+    cat "${SECTIONS_DIR}/60-web-terminal.md" >> "${CLAUDE_MD}"
+
+    echo "  CLAUDE.md 생성 완료 (level=${SECURITY_LEVEL})"
+else
+    echo "  WARNING: sections dir not found, using fallback CLAUDE.md"
+fi
+
 # 글로벌 CLAUDE.md (~/.claude/CLAUDE.md)에 사용자 프로필 추가
 cat >> /home/node/.claude/CLAUDE.md << USERPROFILE
 

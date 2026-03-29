@@ -104,7 +104,10 @@ RUN pip3 install --no-cache-dir --break-system-packages serena || true
 # Claude Code 설정 + Skills
 # -----------------------------------------------------------------------------
 COPY --chown=node:node config/settings.json /home/node/.claude/settings.json
-COPY --chown=node:node config/CLAUDE.md /home/node/.claude/CLAUDE.md
+# CLAUDE.md sections for dynamic assembly (entrypoint.sh assembles at runtime)
+COPY --chown=node:node config/claude-md-sections/ /home/node/.claude/claude-md-sections/
+# Minimal fallback (overwritten by entrypoint)
+COPY --chown=node:node config/CLAUDE.md.minimal /home/node/.claude/CLAUDE.md
 
 # Security hook: PreToolUse에서 위험 명령 차단
 RUN mkdir -p /home/node/.claude/hooks
