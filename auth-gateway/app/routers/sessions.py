@@ -77,7 +77,7 @@ def _parse_memory_to_bytes(mem_str: str) -> int:
     return int(mem_str)
 
 
-def _ensure_node_capacity(username: str, security_policy: dict | None = None) -> None:
+def _ensure_node_capacity(username: str, security_policy: dict | None = None, infra_policy: dict | None = None) -> None:
     """Pod 생성 전 대상 노드그룹에 충분한 CPU 여유가 있는지 확인.
 
     여유가 부족하면 해당 노드그룹의 desiredSize를 +1 스케일업한다.
@@ -88,19 +88,22 @@ def _ensure_node_capacity(username: str, security_policy: dict | None = None) ->
 
     Args:
         username: 사번
-        security_policy: DB 보안 정책. node_tier="premium"이면 presenter 노드 사용.
+        security_policy: DB 보안 정책 (DB 자격증명 제어용).
+        infra_policy: 인프라 정책. 노드그룹, 노드 셀렉터, Pod 수 제한 등.
     """
-    node_tier = (security_policy or {}).get("node_tier", "standard")
-    is_premium = node_tier == "premium"
-    node_label_selector = "role=presenter" if is_premium else None
-    nodegroup_name = NODEGROUP_MAP["presenter"] if is_premium else NODEGROUP_MAP["user"]
+    from app.models.infra_policy import INFRA_TEMPLATES as INFRA_DEFAULTS
+    infra = infra_policy or INFRA_DEFAULTS["standard"]
+    target_nodegroup = infra.get("nodegroup", "bedrock-claude-nodes")
+    node_label = infra.get("node_selector")  # e.g., {"role": "presenter"} or None
+    max_pods = infra.get("max_pods_per_node", 3)
 
     try:
         # K8s API로 해당 라벨의 노드 목록 조회
         v1 = k8s_client.CoreV1Api()
 
-        if node_label_selector:
-            nodes = v1.list_node(label_selector=node_label_selector).items
+        if node_label:
+            label_str = ",".join(f"{k}={v}" for k, v in node_label.items())
+            nodes = v1.list_node(label_selector=label_str).items
         else:
             # 일반 사용자: role 라벨이 없는(= presenter/system이 아닌) 노드
             # bedrock-claude-nodes 노드그룹의 노드는 별도 role 라벨이 없음
@@ -113,9 +116,9 @@ def _ensure_node_capacity(username: str, security_policy: dict | None = None) ->
         if not nodes:
             # 노드가 0개 — 스케일업 필요
             logger.warning(
-                f"No nodes found for nodegroup '{nodegroup_name}'. Scaling up by 1."
+                f"No nodes found for nodegroup '{target_nodegroup}'. Scaling up by 1."
             )
-            _scale_up_nodegroup(nodegroup_name)
+            _scale_up_nodegroup(target_nodegroup)
             return
 
         # 각 노드의 allocatable CPU에서 실행 중인 Pod의 CPU request 합계를 빼서 여유 계산
@@ -149,10 +152,10 @@ def _ensure_node_capacity(username: str, security_policy: dict | None = None) ->
                 p for p in pods
                 if p.metadata.labels and p.metadata.labels.get("app") == "claude-terminal"
             ])
-            if user_pod_count >= MAX_USER_PODS_PER_NODE:
+            if user_pod_count >= max_pods:
                 logger.info(
                     f"Node {node_name} has {user_pod_count} user pods "
-                    f"(max {MAX_USER_PODS_PER_NODE}). Skipping."
+                    f"(max {max_pods}). Skipping."
                 )
                 continue  # 이 노드는 Pod 수 제한 초과 — 다음 노드 시도
 
@@ -165,9 +168,9 @@ def _ensure_node_capacity(username: str, security_policy: dict | None = None) ->
 
         # 모든 노드가 부족 — 스케일업
         logger.warning(
-            f"All nodes in nodegroup '{nodegroup_name}' lack capacity. Scaling up by 1."
+            f"All nodes in nodegroup '{target_nodegroup}' lack capacity. Scaling up by 1."
         )
-        _scale_up_nodegroup(nodegroup_name)
+        _scale_up_nodegroup(target_nodegroup)
 
     except Exception as e:
         # 용량 확인/스케일업 실패는 Pod 생성을 막지 않는다.
@@ -312,14 +315,19 @@ async def create_session(
     from app.schemas.security import SECURITY_TEMPLATES
     user_security = user.security_policy if (user and user.security_policy) else SECURITY_TEMPLATES.get("standard", {})
 
-    # 노드 용량 확인 → 부족하면 노드그룹 스케일업 (비차단)
-    _ensure_node_capacity(username, security_policy=user_security)
+    # 사용자 인프라 정책 조회 → Pod 리소스/노드 배치 결정
+    from app.models.infra_policy import INFRA_TEMPLATES as INFRA_DEFAULTS
+    user_infra = user.infra_policy if (user and user.infra_policy) else INFRA_DEFAULTS["standard"]
 
-    # K8s Pod 생성 (사용자 프로필 주입 + 동적 TTL + 보안 정책)
+    # 노드 용량 확인 → 부족하면 노드그룹 스케일업 (비차단)
+    _ensure_node_capacity(username, security_policy=user_security, infra_policy=user_infra)
+
+    # K8s Pod 생성 (사용자 프로필 주입 + 동적 TTL + 보안 정책 + 인프라 정책)
     try:
         pod_name = k8s.create_pod(
             username, user_pod_ttl, user_display_name,
             ttl_seconds=ttl_seconds, security_policy=user_security,
+            infra_policy=user_infra,
         )
     except K8sServiceError as e:
         raise HTTPException(status_code=500, detail=str(e))

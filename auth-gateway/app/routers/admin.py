@@ -349,12 +349,15 @@ async def assign_pod(
 
     from app.schemas.user import POD_TTL_SECONDS_MAP
     from app.schemas.security import SECURITY_TEMPLATES
+    from app.models.infra_policy import INFRA_TEMPLATES as INFRA_DEFAULTS
     ttl = POD_TTL_SECONDS_MAP.get(user.pod_ttl, 14400)
     user_security = user.security_policy if user.security_policy else SECURITY_TEMPLATES.get("standard", {})
+    user_infra = user.infra_policy if user.infra_policy else INFRA_DEFAULTS["standard"]
     pod_name = k8s.create_pod(
         req.username.upper(), "daily", user.name or req.username,
         ttl_seconds=ttl, target_node=req.node_name,
         security_policy=user_security,
+        infra_policy=user_infra,
     )
 
     # 세션 레코드
@@ -430,14 +433,17 @@ async def move_pod(
         db.close()
         raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
 
-    # 대상 노드에 재생성 (보안 정책 유지)
+    # 대상 노드에 재생성 (보안 정책 + 인프라 정책 유지)
     from app.schemas.user import POD_TTL_SECONDS_MAP
     from app.schemas.security import SECURITY_TEMPLATES
+    from app.models.infra_policy import INFRA_TEMPLATES as INFRA_DEFAULTS
     ttl = POD_TTL_SECONDS_MAP.get(user.pod_ttl, 14400)
     user_security = user.security_policy if user.security_policy else SECURITY_TEMPLATES.get("standard", {})
+    user_infra = user.infra_policy if user.infra_policy else INFRA_DEFAULTS["standard"]
     k8s.create_pod(req.username.upper(), "daily", user.name or req.username,
                    ttl_seconds=ttl, target_node=req.target_node,
-                   security_policy=user_security)
+                   security_policy=user_security,
+                   infra_policy=user_infra)
 
     # 세션 업데이트
     session = db.query(TerminalSession).filter(TerminalSession.pod_name == pod_name).first()

@@ -134,6 +134,7 @@ class K8sService:
         ttl_seconds: int = 14400,
         target_node: str | None = None,
         security_policy: dict | None = None,
+        infra_policy: dict | None = None,
     ) -> str:
         """사용자용 Claude Code 터미널 Pod 생성.
 
@@ -154,18 +155,20 @@ class K8sService:
             logger.info(f"Pod {pod_name} already exists, reusing")
             return pod_name
 
-        # 보안 정책 기반 노드 등급 결정 (DB에서 관리, 하드코딩 제거)
-        node_tier = (security_policy or {}).get("node_tier", "standard")
-        is_premium = node_tier == "premium"
+        # 인프라 정책 기반 Pod 리소스 결정 (DB에서 관리, 하드코딩 제거)
+        from app.models.infra_policy import INFRA_TEMPLATES
+        infra = infra_policy or INFRA_TEMPLATES["standard"]
 
-        # Premium 사용자: presenter 전용 노드 + 고사양 리소스
-        node_selector = {"role": "presenter"} if (not target_node and is_premium) else None
-        cpu_req = "3" if is_premium else self.settings.k8s_pod_cpu_request
-        mem_req = "8Gi" if is_premium else self.settings.k8s_pod_memory_request
-        cpu_lim = "3500m" if is_premium else self.settings.k8s_pod_cpu_limit
-        mem_lim = "12Gi" if is_premium else self.settings.k8s_pod_memory_limit
-        # Premium 사용자는 공유 디렉토리 쓰기 가능
-        shared_read_only = not is_premium
+        cpu_req = infra.get("cpu_request", "500m")
+        cpu_lim = infra.get("cpu_limit", "1000m")
+        mem_req = infra.get("memory_request", "1.5Gi")
+        mem_lim = infra.get("memory_limit", "3Gi")
+        node_selector_val = infra.get("node_selector")  # dict or None
+        shared_writable = infra.get("shared_dir_writable", False)
+
+        # target_node이 지정되면 node_selector 무시 (관리자 수동 배치)
+        node_selector = node_selector_val if not target_node else None
+        shared_read_only = not shared_writable
 
         pod_manifest = client.V1Pod(
             metadata=client.V1ObjectMeta(
@@ -208,7 +211,7 @@ class K8sService:
                 service_account_name=self.settings.k8s_service_account,
                 restart_policy="Never",
                 active_deadline_seconds=ttl_seconds if ttl_seconds > 0 else None,
-                # 특정 노드 지정 또는 premium 사용자 전용 노드 배치
+                # 특정 노드 지정 또는 infra_policy 기반 노드 배치
                 node_name=target_node if target_node else None,
                 node_selector=node_selector,
                 containers=[
@@ -250,7 +253,7 @@ class K8sService:
                                 mount_path="/home/node/workspace",
                                 sub_path=f"users/{username.lower()}",
                             ),
-                            # 공유 디렉토리: premium 사용자만 쓰기 가능
+                            # 공유 디렉토리: infra_policy.shared_dir_writable에 따라 쓰기 가능
                             client.V1VolumeMount(
                                 name="user-workspace",
                                 mount_path="/home/node/workspace/shared",
