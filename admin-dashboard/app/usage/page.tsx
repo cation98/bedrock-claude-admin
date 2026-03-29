@@ -138,12 +138,13 @@ export default function UsagePage() {
       };
     }
     if (tab === "monthly" && monthlyData) {
+      const users = monthlyData.users || [];
       return {
-        total_tokens: monthlyData.total_tokens,
-        total_input: monthlyData.total_input,
-        total_output: monthlyData.total_output,
-        total_cost_usd: monthlyData.total_cost_usd,
-        total_cost_krw: monthlyData.total_cost_krw,
+        total_tokens: users.reduce((s, u) => s + (u.total_tokens || 0), 0),
+        total_input: users.reduce((s, u) => s + (u.input_tokens || 0), 0),
+        total_output: users.reduce((s, u) => s + (u.output_tokens || 0), 0),
+        total_cost_usd: users.reduce((s, u) => s + (u.cost_usd || 0), 0),
+        total_cost_krw: users.reduce((s, u) => s + (u.cost_krw || 0), 0),
       };
     }
     return null;
