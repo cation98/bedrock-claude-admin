@@ -5,22 +5,27 @@ DB 쿼리(TANGO/Safety) 결과도 포함하여 답변.
 
 Endpoints:
   POST /api/v1/telegram/webhook  — Telegram webhook
-  POST /api/v1/telegram/register — 사번 등록 (텔레그램 ID <-> 사번 매핑)
+  POST /api/v1/telegram/send     — Pod에서 사용자에게 메시지 발송
   GET  /api/v1/telegram/status   — 봇 상태 조회
 """
 
+import re
 import logging
 from datetime import datetime, timezone
 
 import httpx
 import boto3
-from fastapi import APIRouter, Request, Depends
+from fastapi import APIRouter, HTTPException, Request, Depends
 from fastapi.responses import JSONResponse
 from sqlalchemy import Column, Integer, BigInteger, String, DateTime, Text
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
+from app.core.security import get_current_user
 from app.core.database import get_db, Base
+
+# 사번 패턴: N + 6~9자리 숫자 (예: N1102359)
+SABUN_PATTERN = re.compile(r"^[Nn]\d{6,9}$")
 
 router = APIRouter(prefix="/api/v1/telegram", tags=["telegram"])
 logger = logging.getLogger(__name__)
@@ -156,7 +161,7 @@ async def telegram_webhook(
         return JSONResponse({"ok": True})
 
     # ------------------------------------------------------------------
-    # /등록 명령어 처리 — 텔레그램 ID <-> 사번 매핑
+    # /등록 명령어 처리 — 텔레그램 ID <-> 사번 매핑 (레거시 지원)
     # ------------------------------------------------------------------
     if text.startswith("/등록") or text.startswith("/register"):
         parts = text.split()
@@ -189,7 +194,7 @@ async def telegram_webhook(
 
         await send_telegram_message(
             chat_id,
-            f"등록 완료!\n사번: {sabun}\n이제 자유롭게 질문하세요.",
+            f"등록 완료! {sabun}님, 이제 자유롭게 질문하세요.",
             settings,
         )
         return JSONResponse({"ok": True})
@@ -202,8 +207,8 @@ async def telegram_webhook(
             chat_id,
             "*SKO Claude Assistant*\n\n"
             "사내 AI 어시스턴트입니다.\n\n"
-            "*시작하기:*\n"
-            "`/등록 사번` (예: /등록 N1102359)\n\n"
+            "사번을 입력하시면 바로 시작할 수 있습니다.\n"
+            "(예: N1102359)\n\n"
             "*사용 예시:*\n"
             "- 현재 고장 현황 알려줘\n"
             "- 오늘 TBM 건수는?\n"
@@ -213,7 +218,7 @@ async def telegram_webhook(
         return JSONResponse({"ok": True})
 
     # ------------------------------------------------------------------
-    # 사번 매핑 확인 — 미등록 사용자 차단
+    # 사번 매핑 확인 — 미등록 사용자는 자동 등록 유도
     # ------------------------------------------------------------------
     mapping = (
         db.query(TelegramMapping)
@@ -221,9 +226,28 @@ async def telegram_webhook(
         .first()
     )
     if not mapping:
+        # 사번 형태의 메시지면 자동 등록
+        if SABUN_PATTERN.match(text):
+            sabun = text.upper()
+            new_mapping = TelegramMapping(
+                telegram_id=telegram_id,
+                telegram_name=telegram_name.strip(),
+                username=sabun,
+            )
+            db.add(new_mapping)
+            db.commit()
+
+            await send_telegram_message(
+                chat_id,
+                f"등록 완료! {sabun}님, 이제 자유롭게 질문하세요.",
+                settings,
+            )
+            return JSONResponse({"ok": True})
+
+        # 사번이 아닌 일반 메시지 — 사번 입력 안내
         await send_telegram_message(
             chat_id,
-            "먼저 등록이 필요합니다.\n`/등록 사번` 을 입력해주세요.\n예: `/등록 N1102359`",
+            "안녕하세요! Claude Code 플랫폼 봇입니다.\n사번을 입력해주세요. (예: N1102359)",
             settings,
         )
         return JSONResponse({"ok": True})
@@ -444,6 +468,46 @@ async def telegram_webhook(
 
     await send_telegram_message(chat_id, response_text, settings)
     return JSONResponse({"ok": True})
+
+
+@router.post("/send")
+async def send_telegram_to_user(
+    request: dict,
+    current_user: dict = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+    db: Session = Depends(get_db),
+):
+    """Pod에서 특정 사용자에게 텔레그램 메시지 발송.
+
+    Body: {"username": "N1102359", "message": "hello"}
+    인증: Bearer token (Pod 내 CLAUDE_TOKEN)
+    """
+    username = request.get("username", "").upper()
+    message = request.get("message", "")
+
+    if not username or not message:
+        raise HTTPException(status_code=400, detail="username과 message를 입력하세요")
+
+    # 수신자의 텔레그램 매핑 조회
+    mapping = (
+        db.query(TelegramMapping)
+        .filter(TelegramMapping.username == username)
+        .first()
+    )
+    if not mapping:
+        raise HTTPException(
+            status_code=404,
+            detail=f"{username}이(가) 텔레그램에 등록되지 않았습니다",
+        )
+
+    # 텔레그램 메시지 발송
+    await send_telegram_message(
+        mapping.telegram_id,
+        f"[Claude Code] {message}",
+        settings,
+    )
+
+    return {"sent": True, "username": username}
 
 
 @router.get("/status")
