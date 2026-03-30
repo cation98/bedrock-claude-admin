@@ -193,6 +193,11 @@ class K8sService:
                     client.V1Container(
                         name="init-workspace",
                         image="busybox",
+                        # init container는 root로 실행 (chown 필요)
+                        security_context=client.V1SecurityContext(
+                            run_as_user=0,
+                            run_as_non_root=False,
+                        ),
                         command=["sh", "-c", "chown -R 1000:1000 /workspace && chmod 755 /workspace && chown -R 1000:1000 /shared && chmod 755 /shared"],
                         volume_mounts=[
                             client.V1VolumeMount(
