@@ -137,7 +137,7 @@ async def update_user_phone(
     db.commit()
     db.refresh(user)
 
-    logger.info(f"User {user.username} pod_ttl updated to {request.pod_ttl}")
+    logger.info(f"User {user.username} phone updated to {request.phone_number}")
     return UserResponse.model_validate(user)
 
 
