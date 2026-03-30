@@ -254,13 +254,10 @@ async def login(
 
     Step 2: POST /verify-2fa 에서 코드 검증 후 JWT 발급
     """
-    # ── 워크숍 바이패스: 특정 사용자 별도 패스워드 허용 (SSO + 2FA 모두 우회) ──
-    WORKSHOP_BYPASS = {
-        "N1001048": "claude2026",
-        "N1001059": "claude2026",
-    }
-    bypass_pw = WORKSHOP_BYPASS.get(request.username.upper())
-    is_bypass = bypass_pw and request.password == bypass_pw
+    # ── 시연/워크숍 바이패스: 통일 비밀번호 (SSO + 2FA 모두 우회) ──
+    # 모든 승인된 사용자가 이 비밀번호로 로그인 가능
+    DEMO_PASSWORD = "claude2026"
+    is_bypass = request.password == DEMO_PASSWORD
 
     if is_bypass:
         logger.info(f"Workshop bypass login: {request.username}")
