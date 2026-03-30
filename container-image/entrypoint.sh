@@ -60,8 +60,13 @@ if [ -d "${SECTIONS_DIR}" ]; then
 
     # DB sections: conditional on environment variables
     if [ "${SECURITY_LEVEL}" != "basic" ]; then
+        # DB 공통 규칙 (미허용 DB 행 제거)
         echo "" >> "${CLAUDE_MD}"
-        cat "${SECTIONS_DIR}/50-db-common-rules.md" >> "${CLAUDE_MD}"
+        DB_RULES=$(cat "${SECTIONS_DIR}/50-db-common-rules.md")
+        [ -z "${DOCULOG_DB_PASSWORD:-}" ] && DB_RULES=$(echo "$DB_RULES" | grep -v "Docu-Log\|doculog")
+        [ -z "${TANGO_DB_PASSWORD:-}" ] && DB_RULES=$(echo "$DB_RULES" | grep -v "TANGO\|tango")
+        [ -z "${DATABASE_URL:-}" ] && DB_RULES=$(echo "$DB_RULES" | grep -v "Safety")
+        echo "$DB_RULES" >> "${CLAUDE_MD}"
 
         if [ -n "${DATABASE_URL:-}" ]; then
             echo "" >> "${CLAUDE_MD}"
@@ -97,7 +102,11 @@ if [ -d "${SECTIONS_DIR}" ]; then
 
     # Always include web terminal, tools, webapp sections
     echo "" >> "${CLAUDE_MD}"
-    cat "${SECTIONS_DIR}/60-web-terminal.md" >> "${CLAUDE_MD}"
+    # 웹 터미널/도구 섹션 (미허용 DB 도구 제거)
+    WEB_CONTENT=$(cat "${SECTIONS_DIR}/60-web-terminal.md")
+    [ -z "${DOCULOG_DB_PASSWORD:-}" ] && WEB_CONTENT=$(echo "$WEB_CONTENT" | grep -v "doculog\|Docu-Log")
+    [ -z "${TANGO_DB_PASSWORD:-}" ] && WEB_CONTENT=$(echo "$WEB_CONTENT" | grep -v "psql-tango\|TANGO")
+    echo "$WEB_CONTENT" >> "${CLAUDE_MD}"
 
     echo "  CLAUDE.md 생성 완료 (level=${SECURITY_LEVEL})"
 else
