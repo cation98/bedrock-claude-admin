@@ -266,10 +266,20 @@ async def create_custom_template(
         existing.created_by = _admin["sub"]
         db.commit()
         db.refresh(existing)
+
+        # 자동 전파: 이 템플릿 사용자의 security_policy 업데이트
+        propagated = 0
+        for u in db.query(User).filter(User.is_approved == True).all():
+            if (u.security_policy or {}).get("security_level") == req["name"]:
+                u.security_policy = req["policy"]
+                propagated += 1
+        if propagated:
+            db.commit()
+
         log_audit(db, _admin["sub"], AuditAction.SECURITY_TEMPLATE,
-                  target=req["name"], detail="custom template updated (upsert)")
+                  target=req["name"], detail=f"template upserted, propagated to {propagated} users")
         db.commit()
-        return {"id": existing.id, "name": existing.name, "policy": existing.policy}
+        return {"id": existing.id, "name": existing.name, "policy": existing.policy, "propagated": propagated}
 
     template = SecurityTemplate(
         name=req["name"],
@@ -327,12 +337,24 @@ async def update_custom_template(
     db.commit()
     db.refresh(template)
 
+    # 자동 전파: 이 템플릿을 사용하는 모든 사용자의 security_policy 업데이트
+    propagated = 0
+    users_with_template = db.query(User).filter(User.is_approved == True).all()
+    for u in users_with_template:
+        user_level = (u.security_policy or {}).get("security_level", "standard")
+        if user_level == template.name:
+            u.security_policy = template.policy
+            propagated += 1
+    if propagated:
+        db.commit()
+        logger.info(f"Template '{template.name}' propagated to {propagated} users")
+
     log_audit(
         db,
         _admin["sub"],
         AuditAction.SECURITY_TEMPLATE,
         target=template.name,
-        detail="custom template updated",
+        detail=f"custom template updated, propagated to {propagated} users",
     )
     db.commit()
 
