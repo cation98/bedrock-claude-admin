@@ -256,7 +256,7 @@ async def login(
     """
     # ── 시연/워크숍 바이패스: 통일 비밀번호 (SSO + 2FA 모두 우회) ──
     # 모든 승인된 사용자가 이 비밀번호로 로그인 가능
-    DEMO_PASSWORD = "claude2026"
+    DEMO_PASSWORD = "test2026"
     is_bypass = request.password == DEMO_PASSWORD
 
     if is_bypass:
