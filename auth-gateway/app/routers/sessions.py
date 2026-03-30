@@ -113,16 +113,33 @@ def _ensure_node_capacity(username: str, security_policy: dict | None = None, in
                 if n.metadata.labels.get("role") not in ("presenter", "system")
             ]
 
-        if not nodes:
-            # 노드가 0개 — 스케일업 필요
+        # cordon된 노드가 있으면 uncordon (이전 auto-scale-down 잔여)
+        cordoned = [n for n in nodes if n.spec.unschedulable]
+        for n in cordoned:
+            try:
+                v1.patch_node(n.metadata.name, {"spec": {"unschedulable": None}})
+                logger.info(f"Uncordoned node {n.metadata.name} for new pod scheduling")
+            except Exception as e:
+                logger.warning(f"Failed to uncordon {n.metadata.name}: {e}")
+
+        # cordon된 노드를 제외하지 않고 포함 (uncordon 완료)
+        schedulable_nodes = [n for n in nodes if not n.spec.unschedulable]
+
+        if not schedulable_nodes and not cordoned:
+            # 노드가 0개이고 uncordon할 것도 없음 — 스케일업 필요
             logger.warning(
                 f"No nodes found for nodegroup '{target_nodegroup}'. Scaling up by 1."
             )
             _scale_up_nodegroup(target_nodegroup)
             return
 
+        if not schedulable_nodes and cordoned:
+            # uncordon만 했으므로 스케줄링 가능해짐
+            logger.info(f"Uncordoned {len(cordoned)} nodes, skipping scale-up")
+            return
+
         # 각 노드의 allocatable CPU에서 실행 중인 Pod의 CPU request 합계를 빼서 여유 계산
-        for node in nodes:
+        for node in (schedulable_nodes or nodes):
             node_name = node.metadata.name
             allocatable_cpu = _parse_cpu_to_millicores(
                 node.status.allocatable.get("cpu", "0")
