@@ -14,9 +14,12 @@ Endpoints:
 """
 
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+
+from app.core.config import Settings, get_settings
 
 from app.core.config import Settings, get_settings
 from app.core.database import get_db
@@ -54,6 +57,71 @@ def _get_security_level(user: User) -> str:
     """사용자의 현재 보안 등급 문자열 반환."""
     policy = _resolve_policy(user)
     return policy.get("security_level", "standard")
+
+
+def _terminate_user_pods(usernames: list[str], settings: Settings, db: Session) -> int:
+    """사용자 Pod 백업 + 종료. 정책 변경 시 강제 재시작용."""
+    from app.services.k8s_service import K8sService, K8sServiceError
+    from app.models.session import TerminalSession
+    from kubernetes import client as k8s_client, config as k8s_config
+    from kubernetes.stream import stream
+
+    try:
+        k8s_config.load_incluster_config()
+    except k8s_config.ConfigException:
+        k8s_config.load_kube_config()
+
+    v1 = k8s_client.CoreV1Api()
+    k8s = K8sService(settings)
+    namespace = settings.k8s_namespace
+    terminated = 0
+
+    for username in usernames:
+        pod_name = f"claude-terminal-{username.lower()}"
+        try:
+            pod = v1.read_namespaced_pod(pod_name, namespace)
+            if pod.status.phase not in ("Running", "Pending"):
+                continue
+
+            # 1. 백업 (대화 + serena)
+            try:
+                stream(v1.connect_get_namespaced_pod_exec,
+                    pod_name, namespace,
+                    command=["bash", "-c",
+                        "mkdir -p /home/node/workspace/.claude-backup && "
+                        "cp -r /home/node/.claude/projects/ /home/node/workspace/.claude-backup/ 2>/dev/null; "
+                        "cp /home/node/.claude/history.jsonl /home/node/workspace/.claude-backup/ 2>/dev/null; "
+                        "cp -r /home/node/.serena/ /home/node/workspace/.serena-backup/ 2>/dev/null; "
+                        "echo OK"],
+                    container="terminal",
+                    stderr=False, stdin=False, stdout=True, tty=False)
+                logger.info(f"Backup completed for {pod_name}")
+            except Exception as e:
+                logger.warning(f"Backup failed for {pod_name}: {e}")
+
+            # 2. Pod 삭제
+            k8s.delete_pod(pod_name)
+
+            # 3. 세션 상태 업데이트
+            session = db.query(TerminalSession).filter(
+                TerminalSession.pod_name == pod_name
+            ).first()
+            if session:
+                session.pod_status = "terminated"
+                session.terminated_at = datetime.now(timezone.utc)
+
+            terminated += 1
+            logger.info(f"Pod {pod_name} terminated (policy change)")
+
+        except k8s_client.rest.ApiException as e:
+            if e.status != 404:
+                logger.error(f"Failed to terminate {pod_name}: {e}")
+        except Exception as e:
+            logger.error(f"Failed to terminate {pod_name}: {e}")
+
+    if terminated:
+        db.commit()
+    return terminated
 
 
 # ==================== 정책 CRUD ====================
@@ -249,6 +317,7 @@ async def list_custom_templates(
 async def create_custom_template(
     req: dict,
     _admin: dict = Depends(_require_admin),
+    settings: Settings = Depends(get_settings),
     db: Session = Depends(get_db),
 ):
     """새 custom 보안 정책 템플릿 생성."""
@@ -267,19 +336,28 @@ async def create_custom_template(
         db.commit()
         db.refresh(existing)
 
-        # 자동 전파: 이 템플릿 사용자의 security_policy 업데이트
+        # 자동 전파: 이 템플릿 사용자의 security_policy 업데이트 + Pod 재시작
         propagated = 0
+        affected_usernames = []
         for u in db.query(User).filter(User.is_approved == True).all():
             if (u.security_policy or {}).get("security_level") == req["name"]:
                 u.security_policy = req["policy"]
                 propagated += 1
+                affected_usernames.append(u.username)
         if propagated:
             db.commit()
 
+        # 해당 사용자의 running Pod 백업 + 종료 (새 정책 강제 적용)
+        pods_terminated = 0
+        if affected_usernames:
+            pods_terminated = _terminate_user_pods(affected_usernames, settings, db)
+
         log_audit(db, _admin["sub"], AuditAction.SECURITY_TEMPLATE,
-                  target=req["name"], detail=f"template upserted, propagated to {propagated} users")
+                  target=req["name"],
+                  detail=f"template upserted, propagated to {propagated} users, {pods_terminated} pods terminated")
         db.commit()
-        return {"id": existing.id, "name": existing.name, "policy": existing.policy, "propagated": propagated}
+        return {"id": existing.id, "name": existing.name, "policy": existing.policy,
+                "propagated": propagated, "pods_terminated": pods_terminated}
 
     template = SecurityTemplate(
         name=req["name"],
@@ -309,6 +387,7 @@ async def update_custom_template(
     template_id: int,
     req: dict,
     _admin: dict = Depends(_require_admin),
+    settings: Settings = Depends(get_settings),
     db: Session = Depends(get_db),
 ):
     """custom 템플릿 수정."""
@@ -337,29 +416,33 @@ async def update_custom_template(
     db.commit()
     db.refresh(template)
 
-    # 자동 전파: 이 템플릿을 사용하는 모든 사용자의 security_policy 업데이트
+    # 자동 전파: 이 템플릿을 사용하는 모든 사용자의 security_policy 업데이트 + Pod 재시작
     propagated = 0
-    users_with_template = db.query(User).filter(User.is_approved == True).all()
-    for u in users_with_template:
+    affected_usernames = []
+    for u in db.query(User).filter(User.is_approved == True).all():
         user_level = (u.security_policy or {}).get("security_level", "standard")
         if user_level == template.name:
             u.security_policy = template.policy
             propagated += 1
+            affected_usernames.append(u.username)
     if propagated:
         db.commit()
-        logger.info(f"Template '{template.name}' propagated to {propagated} users")
+
+    pods_terminated = 0
+    if affected_usernames:
+        pods_terminated = _terminate_user_pods(affected_usernames, settings, db)
 
     log_audit(
         db,
         _admin["sub"],
         AuditAction.SECURITY_TEMPLATE,
         target=template.name,
-        detail=f"custom template updated, propagated to {propagated} users",
+        detail=f"template updated, propagated to {propagated} users, {pods_terminated} pods terminated",
     )
     db.commit()
 
-    logger.info(f"Custom template '{template.name}' updated by {_admin['sub']}")
-    return {"id": template.id, "name": template.name, "policy": template.policy}
+    return {"id": template.id, "name": template.name, "policy": template.policy,
+            "propagated": propagated, "pods_terminated": pods_terminated}
 
 
 @router.delete("/custom-templates/{template_id}")
