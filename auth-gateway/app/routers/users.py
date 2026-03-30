@@ -178,6 +178,9 @@ async def reject_user(
         raise HTTPException(status_code=400, detail="승인된 사용자는 거절할 수 없습니다. 승인 취소를 먼저 하세요.")
 
     username = user.username
+    # 관련 세션 먼저 삭제 (외래키 참조 방지)
+    from app.models.session import TerminalSession
+    db.query(TerminalSession).filter(TerminalSession.user_id == user.id).delete()
     db.delete(user)
     db.commit()
     logger.info(f"User {username} rejected and deleted")
