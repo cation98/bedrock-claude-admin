@@ -47,8 +47,13 @@ SECTIONS_DIR="/home/node/.claude/claude-md-sections"
 CLAUDE_MD="/home/node/.claude/CLAUDE.md"
 
 if [ -d "${SECTIONS_DIR}" ]; then
-    # Start with header
-    cp "${SECTIONS_DIR}/00-header.md" "${CLAUDE_MD}"
+    # Start with header (미허용 DB 참조 제거)
+    HEADER_CONTENT=$(cat "${SECTIONS_DIR}/00-header.md")
+    # 허용 DB만 표시하도록 헤더의 DB 목록 동적 생성
+    ALLOWED_DBS="psql \$DATABASE_URL"
+    [ -n "${TANGO_DB_PASSWORD:-}" ] && ALLOWED_DBS="psql-tango, ${ALLOWED_DBS}"
+    [ -n "${DOCULOG_DB_PASSWORD:-}" ] && ALLOWED_DBS="psql-doculog, ${ALLOWED_DBS}"
+    echo "$HEADER_CONTENT" | sed "s|psql-tango, psql-doculog, psql \$DATABASE_URL|${ALLOWED_DBS}|g" > "${CLAUDE_MD}"
 
     # Security rules with level injection
     sed "s/{SECURITY_LEVEL}/${SECURITY_LEVEL}/g" "${SECTIONS_DIR}/10-security-rules.md" >> "${CLAUDE_MD}"
@@ -75,8 +80,19 @@ if [ -d "${SECTIONS_DIR}" ]; then
             cat "${SECTIONS_DIR}/35-doculog-db.md" >> "${CLAUDE_MD}"
         fi
 
+        # 키워드 매핑: 미허용 DB 행 제거
         echo "" >> "${CLAUDE_MD}"
-        cat "${SECTIONS_DIR}/40-keyword-mapping.md" >> "${CLAUDE_MD}"
+        KEYWORD_CONTENT=$(cat "${SECTIONS_DIR}/40-keyword-mapping.md")
+        if [ -z "${DOCULOG_DB_PASSWORD:-}" ]; then
+            KEYWORD_CONTENT=$(echo "$KEYWORD_CONTENT" | grep -v "Docu-Log")
+        fi
+        if [ -z "${DATABASE_URL:-}" ]; then
+            KEYWORD_CONTENT=$(echo "$KEYWORD_CONTENT" | grep -v "Safety DB")
+        fi
+        if [ -z "${TANGO_DB_PASSWORD:-}" ]; then
+            KEYWORD_CONTENT=$(echo "$KEYWORD_CONTENT" | grep -v "TANGO DB")
+        fi
+        echo "$KEYWORD_CONTENT" >> "${CLAUDE_MD}"
     fi
 
     # Always include web terminal, tools, webapp sections
