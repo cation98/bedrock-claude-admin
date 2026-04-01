@@ -53,31 +53,59 @@ function Sparkline({ data, width = 140, height = 32 }: { data: number[]; width?:
     return <div style={{ width, height }} className="text-gray-300 text-xs flex items-center">—</div>;
   }
   const max = Math.max(...data) || 1;
-  const points = data.map((v, i) => {
+
+  // UTC hour 15 = KST 00:00 (day boundary)
+  const midnightUtcIdx = 15;
+  const midnightX = (midnightUtcIdx / (data.length - 1)) * width;
+
+  // Split points into yesterday (UTC 0-14) and today (UTC 15-23)
+  const yesterdayPts: string[] = [];
+  const todayPts: string[] = [];
+  data.forEach((v, i) => {
     const x = (i / (data.length - 1)) * width;
     const y = height - (v / max) * (height - 6) - 3;
-    return `${x},${y}`;
-  }).join(" ");
+    if (i < midnightUtcIdx) {
+      yesterdayPts.push(`${x},${y}`);
+    } else {
+      if (i === midnightUtcIdx && yesterdayPts.length > 0) {
+        // bridge: add last yesterday point to today for continuity
+        const lastYx = ((midnightUtcIdx - 1) / (data.length - 1)) * width;
+        const lastYy = height - ((data[midnightUtcIdx - 1] || 0) / max) * (height - 6) - 3;
+        todayPts.push(`${lastYx},${lastYy}`);
+      }
+      todayPts.push(`${x},${y}`);
+    }
+  });
 
-  // Current UTC hour for masking future data points
   const nowUtcH = new Date().getUTCHours();
 
   return (
     <div className="relative inline-block" style={{ width, height }}>
       <svg width={width} height={height} onMouseLeave={() => setHover(null)}>
-        <polyline points={points} fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        {/* KST midnight divider */}
+        <line x1={midnightX} y1={0} x2={midnightX} y2={height}
+          stroke="#d1d5db" strokeWidth="1" strokeDasharray="2,2" />
+        {/* Yesterday line (dimmed) */}
+        {yesterdayPts.length > 1 && (
+          <polyline points={yesterdayPts.join(" ")} fill="none" stroke="#93c5fd" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.5" />
+        )}
+        {/* Today line (bold) */}
+        {todayPts.length > 1 && (
+          <polyline points={todayPts.join(" ")} fill="none" stroke="#2563eb" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        )}
         {data.map((v, i) => {
           const x = (i / (data.length - 1)) * width;
           const y = height - (v / max) * (height - 6) - 3;
+          const isToday = i >= midnightUtcIdx;
           return (
             <g key={i}>
               <circle cx={x} cy={y} r="6" fill="transparent"
                 onMouseEnter={() => setHover({ i, x, y })} />
               {i <= nowUtcH && v > 0 && (
-                <circle cx={x} cy={y} r="1.5" fill="#3b82f6" opacity="0.5" />
+                <circle cx={x} cy={y} r="1.5" fill={isToday ? "#2563eb" : "#93c5fd"} opacity={isToday ? 0.7 : 0.4} />
               )}
               {hover?.i === i && (
-                <circle cx={x} cy={y} r="3" fill="#3b82f6" />
+                <circle cx={x} cy={y} r="3" fill={isToday ? "#2563eb" : "#93c5fd"} />
               )}
             </g>
           );
