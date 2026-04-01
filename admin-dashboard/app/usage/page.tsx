@@ -8,11 +8,13 @@ import {
   getTokenUsageDaily,
   getTokenUsageMonthly,
   getTokenUsageHourly,
+  getTokenUsageDailyTrend,
   takeTokenSnapshot,
   type TokenUsageResponse,
   type DailyUsageResponse,
   type MonthlyUsageResponse,
   type HourlyUsageResponse,
+  type DailyTrendItem,
   type DailyUsageUser,
   getUserUsageHistory,
   type UserUsageHistory,
@@ -42,44 +44,115 @@ function formatTime(iso: string | null): string {
   return d.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
-function Sparkline({ data, width = 120, height = 24 }: { data: number[]; width?: number; height?: number }) {
+function Sparkline({ data, width = 140, height = 32 }: { data: number[]; width?: number; height?: number }) {
+  const [hover, setHover] = useState<{ i: number; x: number; y: number } | null>(null);
+
   if (!data || data.length === 0 || data.every(v => v === 0)) {
     return <div style={{ width, height }} className="text-gray-300 text-xs flex items-center">—</div>;
   }
   const max = Math.max(...data) || 1;
   const points = data.map((v, i) => {
     const x = (i / (data.length - 1)) * width;
-    const y = height - (v / max) * (height - 4) - 2;
+    const y = height - (v / max) * (height - 6) - 3;
     return `${x},${y}`;
   }).join(" ");
 
-  // Build invisible wider hit-area circles + tooltip rects for hover
   const currentHour = new Date().getHours();
 
   return (
-    <svg width={width} height={height} className="inline-block">
-      <polyline
-        points={points}
-        fill="none"
-        stroke="#3b82f6"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      {data.map((v, i) => {
-        const x = (i / (data.length - 1)) * width;
-        const y = height - (v / max) * (height - 4) - 2;
-        return (
-          <g key={i}>
-            <circle cx={x} cy={y} r="4" fill="transparent" className="peer" />
-            <title>{`${String(i).padStart(2, "0")}시: ${v.toLocaleString()} tokens`}</title>
-            {i <= currentHour && v > 0 && (
-              <circle cx={x} cy={y} r="1.5" fill="#3b82f6" opacity="0.5" />
-            )}
-          </g>
-        );
-      })}
-    </svg>
+    <div className="relative inline-block" style={{ width, height }}>
+      <svg width={width} height={height} onMouseLeave={() => setHover(null)}>
+        <polyline points={points} fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        {data.map((v, i) => {
+          const x = (i / (data.length - 1)) * width;
+          const y = height - (v / max) * (height - 6) - 3;
+          return (
+            <g key={i}>
+              <circle cx={x} cy={y} r="6" fill="transparent"
+                onMouseEnter={() => setHover({ i, x, y })} />
+              {i <= currentHour && v > 0 && (
+                <circle cx={x} cy={y} r="1.5" fill="#3b82f6" opacity="0.5" />
+              )}
+              {hover?.i === i && (
+                <circle cx={x} cy={y} r="3" fill="#3b82f6" />
+              )}
+            </g>
+          );
+        })}
+      </svg>
+      {hover && (
+        <div
+          className="absolute z-10 rounded bg-gray-900 px-2 py-1 text-xs text-white shadow-lg whitespace-nowrap pointer-events-none"
+          style={{ left: Math.min(hover.x, width - 70), top: -28 }}
+        >
+          {String(hover.i).padStart(2, "0")}:00 — {data[hover.i].toLocaleString()} tokens
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TrendChart({ data, label }: { data: DailyTrendItem[]; label: string }) {
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+
+  if (!data || data.length === 0) {
+    return <div className="flex items-center justify-center py-8 text-gray-400 text-sm">추이 데이터가 없습니다</div>;
+  }
+
+  const maxTokens = Math.max(...data.map(d => d.total_tokens)) || 1;
+  const chartW = 700;
+  const chartH = 120;
+  const barW = Math.max(4, (chartW - data.length * 2) / data.length);
+  const totalTokens = data.reduce((s, d) => s + d.total_tokens, 0);
+  const totalCostKrw = data.reduce((s, d) => s + d.cost_krw, 0);
+
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white shadow-sm mb-6">
+      <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
+        <h2 className="text-sm font-semibold text-gray-900">{label} (최근 {data.length}일)</h2>
+        <div className="flex gap-4 text-xs text-gray-500">
+          <span>총 토큰: <strong className="text-gray-900">{fmt(totalTokens)}</strong></span>
+          <span>총 비용: <strong className="text-gray-900">{fmt(totalCostKrw)}원</strong></span>
+        </div>
+      </div>
+      <div className="px-4 py-3 overflow-x-auto">
+        <div className="relative" style={{ width: chartW, height: chartH + 24 }} onMouseLeave={() => setHoverIdx(null)}>
+          <svg width={chartW} height={chartH}>
+            {data.map((d, i) => {
+              const barH = (d.total_tokens / maxTokens) * (chartH - 8);
+              const x = i * (barW + 2);
+              const y = chartH - barH;
+              const isHover = hoverIdx === i;
+              return (
+                <g key={d.date} onMouseEnter={() => setHoverIdx(i)}>
+                  <rect x={x} y={y} width={barW} height={barH} rx={2}
+                    fill={isHover ? "#2563eb" : "#93c5fd"} className="transition-colors" />
+                </g>
+              );
+            })}
+          </svg>
+          <div className="flex justify-between mt-1" style={{ width: chartW }}>
+            {data.filter((_, i) => i % 5 === 0 || i === data.length - 1).map((d) => (
+              <span key={d.date} className="text-[10px] text-gray-400">{d.date.slice(5)}</span>
+            ))}
+          </div>
+          {hoverIdx !== null && data[hoverIdx] && (
+            <div
+              className="absolute z-10 rounded-lg bg-gray-900 px-3 py-2 text-xs text-white shadow-lg pointer-events-none"
+              style={{
+                left: Math.min(hoverIdx * (barW + 2), chartW - 180),
+                top: -8,
+              }}
+            >
+              <div className="font-medium">{data[hoverIdx].date}</div>
+              <div>토큰: {fmt(data[hoverIdx].total_tokens)} (in {fmt(data[hoverIdx].input_tokens)} / out {fmt(data[hoverIdx].output_tokens)})</div>
+              <div>비용: ${data[hoverIdx].cost_usd.toFixed(2)} / {fmt(data[hoverIdx].cost_krw)}원</div>
+              <div>활성 사용자: {data[hoverIdx].active_users}명</div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -109,6 +182,9 @@ export default function UsagePage() {
   const [detailTo, setDetailTo] = useState(() => new Date().toISOString().slice(0, 10));
   const [detailHistory, setDetailHistory] = useState<UserUsageHistory[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
+
+  // Daily trend (company-wide)
+  const [trendData, setTrendData] = useState<DailyTrendItem[]>([]);
 
   // Pagination & search
   const [usageSearch, setUsageSearch] = useState("");
@@ -186,6 +262,11 @@ export default function UsagePage() {
     if (tab === "realtime") fetchRealtime();
     else if (tab === "daily") fetchDaily();
     else fetchMonthly();
+
+    // Fetch company-wide trend for daily/monthly tabs
+    if (tab === "daily" || tab === "monthly") {
+      getTokenUsageDailyTrend(30).then(res => setTrendData(res.trend)).catch(() => {});
+    }
   }, [tab, selectedDate, selectedMonth, router, fetchRealtime, fetchDaily, fetchMonthly]);
 
   // Auto-refresh only for realtime tab
@@ -387,6 +468,11 @@ export default function UsagePage() {
             <StatsCard label="비용 (USD)" value={`$${totals.total_cost_usd.toFixed(2)}`} />
             <StatsCard label="비용 (KRW)" value={`${fmt(totals.total_cost_krw)}원`} />
           </div>
+        )}
+
+        {/* Company-wide daily trend chart */}
+        {(tab === "daily" || tab === "monthly") && trendData.length > 0 && (
+          <TrendChart data={trendData} label="전사 일별 토큰 사용량 추이" />
         )}
 
         {/* User table */}

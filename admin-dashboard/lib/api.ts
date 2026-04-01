@@ -335,6 +335,27 @@ export function getUserUsageHistory(username: string, from?: string, to?: string
   return request<UserUsageHistoryResponse>(`/api/v1/admin/token-usage/user/${username}${q}`);
 }
 
+// ---------- Admin: Token Usage Daily Trend ----------
+
+export interface DailyTrendItem {
+  date: string;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+  cost_krw: number;
+  active_users: number;
+}
+
+export interface DailyTrendResponse {
+  days: number;
+  trend: DailyTrendItem[];
+}
+
+export function getTokenUsageDailyTrend(days: number = 30): Promise<DailyTrendResponse> {
+  return request<DailyTrendResponse>(`/api/v1/admin/token-usage/daily-trend?days=${days}`);
+}
+
 // ---------- Admin: Node Group Scaling ----------
 
 export interface NodeGroupInfo {

@@ -1090,6 +1090,45 @@ async def get_monthly_usage(
     }
 
 
+@router.get("/token-usage/daily-trend")
+async def get_daily_trend(
+    days: int = 30,
+    _admin: dict = Depends(_require_admin),
+):
+    """전사 일별 토큰 사용량 추이 (최근 N일)."""
+    from app.core.database import SessionLocal
+    from app.models.token_usage import TokenUsageDaily
+    from sqlalchemy import func
+
+    cutoff = date_type.today() - timedelta(days=days)
+    db = SessionLocal()
+    records = db.query(
+        TokenUsageDaily.usage_date,
+        func.sum(TokenUsageDaily.input_tokens).label("input_tokens"),
+        func.sum(TokenUsageDaily.output_tokens).label("output_tokens"),
+        func.sum(TokenUsageDaily.total_tokens).label("total_tokens"),
+        func.sum(TokenUsageDaily.cost_usd).label("cost_usd"),
+        func.sum(TokenUsageDaily.cost_krw).label("cost_krw"),
+        func.count(func.distinct(TokenUsageDaily.username)).label("active_users"),
+    ).filter(
+        TokenUsageDaily.usage_date >= cutoff,
+    ).group_by(TokenUsageDaily.usage_date).order_by(TokenUsageDaily.usage_date).all()
+    db.close()
+
+    return {
+        "days": days,
+        "trend": [{
+            "date": str(r.usage_date),
+            "input_tokens": int(r.input_tokens or 0),
+            "output_tokens": int(r.output_tokens or 0),
+            "total_tokens": int(r.total_tokens or 0),
+            "cost_usd": round(float(r.cost_usd or 0), 4),
+            "cost_krw": int(r.cost_krw or 0),
+            "active_users": r.active_users,
+        } for r in records],
+    }
+
+
 @router.get("/token-usage/user/{username}")
 async def get_user_usage_history(
     username: str,
