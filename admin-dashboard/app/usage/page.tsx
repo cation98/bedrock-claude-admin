@@ -46,43 +46,34 @@ function formatTime(iso: string | null): string {
   return d.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
-// Hourly data is stored in UTC. Convert index to KST (UTC+9) for display.
-function utcToKst(utcHour: number): string {
-  const kst = (utcHour + 9) % 24;
-  return String(kst).padStart(2, "0");
-}
-
 function Sparkline({ data, width = 140, height = 32 }: { data: number[]; width?: number; height?: number }) {
   const [hover, setHover] = useState<{ i: number; x: number; y: number } | null>(null);
 
   if (!data || data.length === 0 || data.every(v => v === 0)) {
     return <div style={{ width, height }} className="text-gray-300 text-xs flex items-center">—</div>;
   }
-
-  // Reorder data from UTC to KST: KST[0]=UTC[15], KST[1]=UTC[16], ... KST[9]=UTC[0], ...
-  const kstData = Array.from({ length: 24 }, (_, kstH) => data[(kstH + 24 - 9) % 24] || 0);
-
-  const max = Math.max(...kstData) || 1;
-  const points = kstData.map((v, i) => {
-    const x = (i / (kstData.length - 1)) * width;
+  const max = Math.max(...data) || 1;
+  const points = data.map((v, i) => {
+    const x = (i / (data.length - 1)) * width;
     const y = height - (v / max) * (height - 6) - 3;
     return `${x},${y}`;
   }).join(" ");
 
-  const currentKstHour = new Date().getHours();
+  // Current UTC hour for masking future data points
+  const nowUtcH = new Date().getUTCHours();
 
   return (
     <div className="relative inline-block" style={{ width, height }}>
       <svg width={width} height={height} onMouseLeave={() => setHover(null)}>
         <polyline points={points} fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-        {kstData.map((v, i) => {
-          const x = (i / (kstData.length - 1)) * width;
+        {data.map((v, i) => {
+          const x = (i / (data.length - 1)) * width;
           const y = height - (v / max) * (height - 6) - 3;
           return (
             <g key={i}>
               <circle cx={x} cy={y} r="6" fill="transparent"
                 onMouseEnter={() => setHover({ i, x, y })} />
-              {i <= currentKstHour && v > 0 && (
+              {i <= nowUtcH && v > 0 && (
                 <circle cx={x} cy={y} r="1.5" fill="#3b82f6" opacity="0.5" />
               )}
               {hover?.i === i && (
@@ -92,14 +83,20 @@ function Sparkline({ data, width = 140, height = 32 }: { data: number[]; width?:
           );
         })}
       </svg>
-      {hover && (
-        <div
-          className="absolute z-10 rounded bg-gray-900 px-2 py-1 text-xs text-white shadow-lg whitespace-nowrap pointer-events-none"
-          style={{ left: Math.min(hover.x, width - 70), top: -28 }}
-        >
-          {String(hover.i).padStart(2, "0")}:00 — {kstData[hover.i].toLocaleString()} tokens
-        </div>
-      )}
+      {hover && (() => {
+        const kstH = (hover.i + 9) % 24;
+        // UTC 0-14 → KST same date (yesterday from user's KST "today")
+        // UTC 15-23 → KST next date (today in KST)
+        const isYesterday = hover.i + 9 < 24;
+        return (
+          <div
+            className="absolute z-10 rounded bg-gray-900 px-2 py-1 text-xs text-white shadow-lg whitespace-nowrap pointer-events-none"
+            style={{ left: Math.min(hover.x, width - 100), top: -28 }}
+          >
+            {String(kstH).padStart(2, "0")}시{isYesterday ? " (전일)" : ""} — {data[hover.i].toLocaleString()} tokens
+          </div>
+        );
+      })()}
     </div>
   );
 }
