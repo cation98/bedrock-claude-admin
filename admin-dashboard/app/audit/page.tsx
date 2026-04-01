@@ -301,7 +301,7 @@ export default function AuditPage() {
             <>
               {/* Stats cards */}
               <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-3">
-                <StatsCard label="총 프롬프트" value={summary.total_prompts.toLocaleString()} />
+                <StatsCard label="총 프롬프트" value={(summary.total_prompts ?? 0).toLocaleString()} />
                 <StatsCard label="사용자 수" value={summary.users.length} />
                 <StatsCard label="플래그 수" value={summary.total_flags} />
               </div>
@@ -357,7 +357,7 @@ export default function AuditPage() {
                               <span className="ml-1 text-xs text-gray-400">({u.username})</span>
                             </td>
                             <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums text-gray-600">
-                              {u.total_prompts.toLocaleString()}
+                              {(u.total_prompts ?? 0).toLocaleString()}
                             </td>
                             <td className="px-4 py-3 text-sm">
                               <div className="flex gap-1.5">

@@ -1,17 +1,25 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Sidebar from "./sidebar";
 import { SidebarContext } from "./sidebar-context";
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const isLoginPage = pathname === "/";
+
+  useEffect(() => { setMounted(true); }, []);
 
   if (isLoginPage) {
     return <>{children}</>;
+  }
+
+  // Avoid hydration mismatch: render without sidebar until client mount
+  if (!mounted) {
+    return <div className="min-h-screen">{children}</div>;
   }
 
   return (
