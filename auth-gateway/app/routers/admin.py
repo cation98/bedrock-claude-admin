@@ -1129,6 +1129,49 @@ async def get_daily_trend(
     }
 
 
+@router.get("/token-usage/monthly-trend")
+async def get_monthly_trend(
+    from_month: str = "2026-03",
+    _admin: dict = Depends(_require_admin),
+):
+    """전사 월별 토큰 사용량 추이."""
+    from app.core.database import SessionLocal
+    from app.models.token_usage import TokenUsageDaily
+    from sqlalchemy import func, extract, cast, String
+
+    from_date = date_type.fromisoformat(from_month + "-01")
+    db = SessionLocal()
+    records = db.query(
+        func.to_char(TokenUsageDaily.usage_date, 'YYYY-MM').label("month"),
+        func.sum(TokenUsageDaily.input_tokens).label("input_tokens"),
+        func.sum(TokenUsageDaily.output_tokens).label("output_tokens"),
+        func.sum(TokenUsageDaily.total_tokens).label("total_tokens"),
+        func.sum(TokenUsageDaily.cost_usd).label("cost_usd"),
+        func.sum(TokenUsageDaily.cost_krw).label("cost_krw"),
+        func.count(func.distinct(TokenUsageDaily.username)).label("active_users"),
+    ).filter(
+        TokenUsageDaily.usage_date >= from_date,
+    ).group_by(
+        func.to_char(TokenUsageDaily.usage_date, 'YYYY-MM')
+    ).order_by(
+        func.to_char(TokenUsageDaily.usage_date, 'YYYY-MM')
+    ).all()
+    db.close()
+
+    return {
+        "from_month": from_month,
+        "trend": [{
+            "month": r.month,
+            "input_tokens": int(r.input_tokens or 0),
+            "output_tokens": int(r.output_tokens or 0),
+            "total_tokens": int(r.total_tokens or 0),
+            "cost_usd": round(float(r.cost_usd or 0), 4),
+            "cost_krw": int(r.cost_krw or 0),
+            "active_users": r.active_users,
+        } for r in records],
+    }
+
+
 @router.get("/token-usage/user/{username}")
 async def get_user_usage_history(
     username: str,

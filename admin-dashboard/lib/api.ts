@@ -356,6 +356,25 @@ export function getTokenUsageDailyTrend(days: number = 30): Promise<DailyTrendRe
   return request<DailyTrendResponse>(`/api/v1/admin/token-usage/daily-trend?days=${days}`);
 }
 
+export interface MonthlyTrendItem {
+  month: string;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+  cost_krw: number;
+  active_users: number;
+}
+
+export interface MonthlyTrendResponse {
+  from_month: string;
+  trend: MonthlyTrendItem[];
+}
+
+export function getTokenUsageMonthlyTrend(fromMonth: string = "2026-03"): Promise<MonthlyTrendResponse> {
+  return request<MonthlyTrendResponse>(`/api/v1/admin/token-usage/monthly-trend?from_month=${fromMonth}`);
+}
+
 // ---------- Admin: Node Group Scaling ----------
 
 export interface NodeGroupInfo {

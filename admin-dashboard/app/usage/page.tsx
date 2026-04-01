@@ -9,12 +9,14 @@ import {
   getTokenUsageMonthly,
   getTokenUsageHourly,
   getTokenUsageDailyTrend,
+  getTokenUsageMonthlyTrend,
   takeTokenSnapshot,
   type TokenUsageResponse,
   type DailyUsageResponse,
   type MonthlyUsageResponse,
   type HourlyUsageResponse,
   type DailyTrendItem,
+  type MonthlyTrendItem,
   type DailyUsageUser,
   getUserUsageHistory,
   type UserUsageHistory,
@@ -92,24 +94,33 @@ function Sparkline({ data, width = 140, height = 32 }: { data: number[]; width?:
   );
 }
 
-function TrendChart({ data, label }: { data: DailyTrendItem[]; label: string }) {
+type TrendItem = (DailyTrendItem | MonthlyTrendItem) & Record<string, unknown>;
+
+function TrendChart({ data, label, dateKey = "date", periodLabel }: {
+  data: (DailyTrendItem | MonthlyTrendItem)[];
+  label: string;
+  dateKey?: string;
+  periodLabel?: string;
+}) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const items = data as any[];
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
-  if (!data || data.length === 0) {
+  if (!items || items.length === 0) {
     return <div className="flex items-center justify-center py-8 text-gray-400 text-sm">추이 데이터가 없습니다</div>;
   }
 
-  const maxTokens = Math.max(...data.map(d => d.total_tokens)) || 1;
+  const maxTokens = Math.max(...items.map((d: any) => d.total_tokens)) || 1;
   const chartW = 700;
   const chartH = 120;
-  const barW = Math.max(4, (chartW - data.length * 2) / data.length);
-  const totalTokens = data.reduce((s, d) => s + d.total_tokens, 0);
-  const totalCostKrw = data.reduce((s, d) => s + d.cost_krw, 0);
+  const barW = Math.max(12, (chartW - items.length * 4) / items.length);
+  const totalTokens = items.reduce((s: number, d: any) => s + d.total_tokens, 0);
+  const totalCostKrw = items.reduce((s: number, d: any) => s + d.cost_krw, 0);
 
   return (
     <div className="rounded-lg border border-gray-200 bg-white shadow-sm mb-6">
       <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
-        <h2 className="text-sm font-semibold text-gray-900">{label} (최근 {data.length}일)</h2>
+        <h2 className="text-sm font-semibold text-gray-900">{label} ({periodLabel ?? `${items.length}일`})</h2>
         <div className="flex gap-4 text-xs text-gray-500">
           <span>총 토큰: <strong className="text-gray-900">{fmt(totalTokens)}</strong></span>
           <span>총 비용: <strong className="text-gray-900">{fmt(totalCostKrw)}원</strong></span>
@@ -118,36 +129,38 @@ function TrendChart({ data, label }: { data: DailyTrendItem[]; label: string }) 
       <div className="px-4 py-3 overflow-x-auto">
         <div className="relative" style={{ width: chartW, height: chartH + 24 }} onMouseLeave={() => setHoverIdx(null)}>
           <svg width={chartW} height={chartH}>
-            {data.map((d, i) => {
-              const barH = (d.total_tokens / maxTokens) * (chartH - 8);
-              const x = i * (barW + 2);
+            {items.map((d: any, i: number) => {
+              const barH = Math.max(2, (d.total_tokens / maxTokens) * (chartH - 8));
+              const x = i * (barW + 4);
               const y = chartH - barH;
               const isHover = hoverIdx === i;
               return (
-                <g key={d.date} onMouseEnter={() => setHoverIdx(i)}>
-                  <rect x={x} y={y} width={barW} height={barH} rx={2}
+                <g key={String(d[dateKey])} onMouseEnter={() => setHoverIdx(i)}>
+                  <rect x={x} y={y} width={barW} height={barH} rx={3}
                     fill={isHover ? "#2563eb" : "#93c5fd"} className="transition-colors" />
                 </g>
               );
             })}
           </svg>
-          <div className="flex justify-between mt-1" style={{ width: chartW }}>
-            {data.filter((_, i) => i % 5 === 0 || i === data.length - 1).map((d) => (
-              <span key={d.date} className="text-[10px] text-gray-400">{d.date.slice(5)}</span>
+          <div className="flex mt-1" style={{ width: chartW }}>
+            {items.map((d: any) => (
+              <span key={String(d[dateKey])} className="text-[10px] text-gray-400 text-center" style={{ width: barW + 4 }}>
+                {String(d[dateKey]).slice(dateKey === "month" ? 2 : 5)}
+              </span>
             ))}
           </div>
-          {hoverIdx !== null && data[hoverIdx] && (
+          {hoverIdx !== null && items[hoverIdx] && (
             <div
               className="absolute z-10 rounded-lg bg-gray-900 px-3 py-2 text-xs text-white shadow-lg pointer-events-none"
               style={{
-                left: Math.min(hoverIdx * (barW + 2), chartW - 180),
+                left: Math.min(hoverIdx * (barW + 4), chartW - 180),
                 top: -8,
               }}
             >
-              <div className="font-medium">{data[hoverIdx].date}</div>
-              <div>토큰: {fmt(data[hoverIdx].total_tokens)} (in {fmt(data[hoverIdx].input_tokens)} / out {fmt(data[hoverIdx].output_tokens)})</div>
-              <div>비용: ${data[hoverIdx].cost_usd.toFixed(2)} / {fmt(data[hoverIdx].cost_krw)}원</div>
-              <div>활성 사용자: {data[hoverIdx].active_users}명</div>
+              <div className="font-medium">{String(items[hoverIdx][dateKey])}</div>
+              <div>토큰: {fmt(items[hoverIdx].total_tokens)} (in {fmt(items[hoverIdx].input_tokens)} / out {fmt(items[hoverIdx].output_tokens)})</div>
+              <div>비용: ${items[hoverIdx].cost_usd.toFixed(2)} / {fmt(items[hoverIdx].cost_krw)}원</div>
+              <div>활성 사용자: {items[hoverIdx].active_users}명</div>
             </div>
           )}
         </div>
@@ -183,8 +196,9 @@ export default function UsagePage() {
   const [detailHistory, setDetailHistory] = useState<UserUsageHistory[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
 
-  // Daily trend (company-wide)
-  const [trendData, setTrendData] = useState<DailyTrendItem[]>([]);
+  // Company-wide trends
+  const [dailyTrendData, setDailyTrendData] = useState<DailyTrendItem[]>([]);
+  const [monthlyTrendData, setMonthlyTrendData] = useState<MonthlyTrendItem[]>([]);
 
   // Pagination & search
   const [usageSearch, setUsageSearch] = useState("");
@@ -263,9 +277,12 @@ export default function UsagePage() {
     else if (tab === "daily") fetchDaily();
     else fetchMonthly();
 
-    // Fetch company-wide trend for daily/monthly tabs
-    if (tab === "daily" || tab === "monthly") {
-      getTokenUsageDailyTrend(30).then(res => setTrendData(res.trend)).catch(() => {});
+    // Fetch company-wide trends
+    if (tab === "daily") {
+      getTokenUsageDailyTrend(30).then(res => setDailyTrendData(res.trend)).catch(() => {});
+    }
+    if (tab === "monthly") {
+      getTokenUsageMonthlyTrend("2026-03").then(res => setMonthlyTrendData(res.trend)).catch(() => {});
     }
   }, [tab, selectedDate, selectedMonth, router, fetchRealtime, fetchDaily, fetchMonthly]);
 
@@ -470,9 +487,12 @@ export default function UsagePage() {
           </div>
         )}
 
-        {/* Company-wide daily trend chart */}
-        {(tab === "daily" || tab === "monthly") && trendData.length > 0 && (
-          <TrendChart data={trendData} label="전사 일별 토큰 사용량 추이" />
+        {/* Company-wide trend charts */}
+        {tab === "daily" && dailyTrendData.length > 0 && (
+          <TrendChart data={dailyTrendData} dateKey="date" label="전사 일별 토큰 사용량 추이" periodLabel={`최근 ${dailyTrendData.length}일`} />
+        )}
+        {tab === "monthly" && monthlyTrendData.length > 0 && (
+          <TrendChart data={monthlyTrendData} dateKey="month" label="전사 월별 토큰 사용량 추이" periodLabel={`${monthlyTrendData.length}개월`} />
         )}
 
         {/* User table */}
