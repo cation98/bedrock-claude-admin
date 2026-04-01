@@ -21,6 +21,7 @@ from app.models.app import DeployedApp, AppACL  # noqa: F401 — create_all이 �
 from app.models.file_share import SharedDataset, FileShareACL  # noqa: F401 — create_all이 테이블 생성하도록 import
 from app.models.token_usage import TokenUsageHourly  # noqa: F401 — create_all이 테이블 생성하도록 import
 from app.models.prompt_audit import PromptAuditSummary, PromptAuditFlag  # noqa: F401 — create_all이 테이블 생성하도록 import
+from app.models.token_quota import TokenQuotaTemplate, TokenQuotaAssignment  # noqa: F401 — create_all이 테이블 생성하도록 import
 from app.routers import admin, apps, auth, file_share, sessions, users, sms, skills, telegram, security, scheduling, infra_policy, app_proxy
 
 logging.basicConfig(level=logging.INFO)

@@ -375,6 +375,81 @@ export function getTokenUsageMonthlyTrend(fromMonth: string = "2026-03"): Promis
   return request<MonthlyTrendResponse>(`/api/v1/admin/token-usage/monthly-trend?from_month=${fromMonth}`);
 }
 
+// ---------- Admin: Token Quota Policy ----------
+
+export interface QuotaTemplate {
+  id: number;
+  name: string;
+  description: string;
+  cost_limit_usd: number;
+  refresh_cycle: string; // "daily" | "weekly" | "monthly"
+  is_unlimited: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface QuotaAssignment {
+  user_id: number;
+  username: string;
+  name: string | null;
+  template_name: string;
+  cost_limit_usd: number;
+  refresh_cycle: string;
+  assigned_at: string;
+}
+
+export interface QuotaCheckResult {
+  username: string;
+  template_name: string;
+  cost_limit_usd: number;
+  current_usage_usd: number;
+  remaining_usd: number;
+  is_exceeded: boolean;
+  is_unlimited: boolean;
+  refresh_cycle: string;
+  cycle_start: string;
+  cycle_end: string;
+}
+
+export function getQuotaTemplates(): Promise<{ templates: QuotaTemplate[] }> {
+  return request<{ templates: QuotaTemplate[] }>("/api/v1/admin/token-quota/templates");
+}
+
+export function createQuotaTemplate(data: Partial<QuotaTemplate>): Promise<QuotaTemplate> {
+  return request<QuotaTemplate>("/api/v1/admin/token-quota/templates", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function updateQuotaTemplate(id: number, data: Partial<QuotaTemplate>): Promise<QuotaTemplate> {
+  return request<QuotaTemplate>(`/api/v1/admin/token-quota/templates/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export function deleteQuotaTemplate(id: number): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(`/api/v1/admin/token-quota/templates/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export function getQuotaAssignments(): Promise<{ assignments: QuotaAssignment[] }> {
+  return request<{ assignments: QuotaAssignment[] }>("/api/v1/admin/token-quota/assignments");
+}
+
+export function assignQuota(data: { usernames: string[]; template_name: string }): Promise<{ assigned: number }> {
+  return request<{ assigned: number }>("/api/v1/admin/token-quota/assign", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function checkQuota(username: string): Promise<QuotaCheckResult> {
+  return request<QuotaCheckResult>(`/api/v1/admin/token-quota/check/${username}`);
+}
+
 // ---------- Admin: Node Group Scaling ----------
 
 export interface NodeGroupInfo {

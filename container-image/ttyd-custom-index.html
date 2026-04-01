@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Code Terminal</title>
+<style>
+  /* ttyd 기본 스타일 유지 */
+  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+  #terminal { height: 100%; }
+
+  /* 이미지 붙여넣기 미리보기 */
+  #paste-preview {
+    display: none;
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    background: #1e1e1e; border: 2px solid #58a6ff; border-radius: 12px;
+    padding: 16px; z-index: 1000; max-width: 400px; text-align: center;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+  }
+  #paste-preview img { max-width: 360px; max-height: 300px; border-radius: 8px; margin-bottom: 12px; }
+  #paste-preview .actions { display: flex; gap: 8px; justify-content: center; }
+  #paste-preview button {
+    padding: 6px 18px; border: none; border-radius: 6px; cursor: pointer; font-size: 0.85rem;
+  }
+  #paste-preview .btn-send { background: #238636; color: #fff; }
+  #paste-preview .btn-cancel { background: #21262d; color: #8b949e; border: 1px solid #30363d; }
+  #paste-preview .label { color: #8b949e; font-size: 0.8rem; margin-bottom: 8px; }
+
+  /* 클립보드 토스트 */
+  #clip-toast {
+    display: none; position: fixed; bottom: 20px; right: 20px;
+    padding: 8px 16px; background: #1e293b; border: 1px solid #58a6ff;
+    border-radius: 6px; color: #e6edf3; font-size: 0.82rem; z-index: 100;
+  }
+</style>
+</head>
+<body>
+<div id="terminal"></div>
+
+<div id="paste-preview">
+  <div class="label">이미지를 Claude에게 전송합니다</div>
+  <img id="paste-img" src="">
+  <div class="actions">
+    <button class="btn-send" onclick="sendPastedImage()">전송</button>
+    <button class="btn-cancel" onclick="cancelPaste()">취소</button>
+  </div>
+</div>
+
+<div id="clip-toast"></div>
+
+<script>
+// ttyd가 로드한 후 xterm.js 인스턴스에 접근
+var _origOpen = WebSocket.prototype.send;
+var _term = null;
+var _pendingImageData = null;
+
+// xterm 터미널 인스턴스 감지 (ttyd가 생성한 것을 후킹)
+function findTerminal() {
+  var el = document.getElementById('terminal');
+  if (el && el.querySelector('.xterm-screen')) {
+    // xterm 인스턴스를 DOM에서 추출
+    var xtermEl = el.querySelector('.xterm');
+    if (xtermEl && xtermEl._core) {
+      return xtermEl._core;
+    }
+  }
+  return null;
+}
+
+// ─── Ctrl+C (선택 영역 있으면 복사, 없으면 SIGINT) ───
+document.addEventListener('keydown', function(e) {
+  if (e.ctrlKey && e.key === 'c' && !e.shiftKey && !e.altKey) {
+    var sel = window.getSelection().toString();
+    if (sel.length > 0) {
+      e.preventDefault();
+      e.stopPropagation();
+      navigator.clipboard.writeText(sel).then(function() {
+        showToast('복사됨');
+      }).catch(function() {
+        // fallback
+        document.execCommand('copy');
+        showToast('복사됨');
+      });
+      return false;
+    }
+    // 선택 없으면 기본 동작 (SIGINT)
+  }
+}, true);
+
+// ─── Ctrl+V (클립보드 텍스트 붙여넣기) ───
+document.addEventListener('keydown', function(e) {
+  if (e.ctrlKey && e.key === 'v' && !e.shiftKey && !e.altKey) {
+    e.preventDefault();
+    e.stopPropagation();
+    navigator.clipboard.read().then(function(items) {
+      for (var i = 0; i < items.length; i++) {
+        var item = items[i];
+        // 이미지 확인
+        var imgType = item.types.find(function(t) { return t.startsWith('image/'); });
+        if (imgType) {
+          item.getType(imgType).then(function(blob) {
+            handleImagePaste(blob);
+          });
+          return;
+        }
+        // 텍스트
+        if (item.types.includes('text/plain')) {
+          item.getType('text/plain').then(function(blob) {
+            blob.text().then(function(text) {
+              pasteTextToTerminal(text);
+            });
+          });
+          return;
+        }
+      }
+    }).catch(function() {
+      // clipboard.read() 불가 시 readText fallback
+      navigator.clipboard.readText().then(function(text) {
+        pasteTextToTerminal(text);
+      }).catch(function() {
+        showToast('클립보드 접근 권한이 필요합니다');
+      });
+    });
+    return false;
+  }
+}, true);
+
+// ─── 이미지 붙여넣기 (Ctrl+V 또는 paste 이벤트) ───
+document.addEventListener('paste', function(e) {
+  var items = e.clipboardData && e.clipboardData.items;
+  if (!items) return;
+  for (var i = 0; i < items.length; i++) {
+    if (items[i].type.indexOf('image') !== -1) {
+      e.preventDefault();
+      var blob = items[i].getAsFile();
+      handleImagePaste(blob);
+      return;
+    }
+  }
+});
+
+function handleImagePaste(blob) {
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    _pendingImageData = e.target.result; // base64 data URL
+    var preview = document.getElementById('paste-preview');
+    document.getElementById('paste-img').src = _pendingImageData;
+    preview.style.display = 'block';
+  };
+  reader.readAsDataURL(blob);
+}
+
+function sendPastedImage() {
+  if (!_pendingImageData) return;
+  // base64 데이터를 파일로 저장 후 Claude에게 전달
+  var base64 = _pendingImageData.split(',')[1];
+  var filename = 'pasted-image-' + Date.now() + '.png';
+
+  // 터미널에 명령 입력: base64 디코딩 → 파일 저장 → Claude에게 알림
+  var cmd = 'echo "' + base64 + '" | base64 -d > /tmp/' + filename +
+            ' && echo "[이미지 저장됨: /tmp/' + filename + ']"';
+  pasteTextToTerminal(cmd + '\n');
+
+  cancelPaste();
+  showToast('이미지 저장: /tmp/' + filename);
+}
+
+function cancelPaste() {
+  document.getElementById('paste-preview').style.display = 'none';
+  _pendingImageData = null;
+}
+
+function pasteTextToTerminal(text) {
+  // ttyd WebSocket을 통해 텍스트 전송
+  // ttyd 프로토콜: '0' + data (input)
+  var ws = document.querySelector('#terminal .xterm');
+  if (ws && ws._core && ws._core._coreService) {
+    // xterm.js paste API 사용
+    ws._core._coreService.triggerDataEvent(text, true);
+  } else {
+    // fallback: 직접 WebSocket 전송
+    var sockets = performance.getEntriesByType ? null : null;
+    // ttyd는 전역 WebSocket을 사용 — ttyd의 전역 객체 접근
+    if (window.tty_send) {
+      window.tty_send(text);
+    } else {
+      // 최후 수단: execCommand
+      var textarea = document.createElement('textarea');
+      textarea.value = text;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('paste');
+      document.body.removeChild(textarea);
+    }
+  }
+}
+
+function showToast(msg) {
+  var t = document.getElementById('clip-toast');
+  t.textContent = msg;
+  t.style.display = 'block';
+  setTimeout(function() { t.style.display = 'none'; }, 2000);
+}
+</script>
+</body>
+</html>

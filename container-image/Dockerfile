@@ -139,6 +139,10 @@ RUN chmod +x /usr/local/bin/deploy.sh
 COPY scripts/share-sync.sh /usr/local/bin/share-sync.sh
 RUN chmod +x /usr/local/bin/share-sync.sh
 
+# ttyd 커스텀 index.html — Ctrl+C/V 클립보드 + 이미지 붙여넣기
+RUN mkdir -p /usr/local/share/ttyd
+COPY ttyd-custom-index.html /usr/local/share/ttyd/index.html
+
 # 엔트리포인트 스크립트
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh

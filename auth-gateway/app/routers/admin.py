@@ -1202,6 +1202,286 @@ async def get_user_usage_history(
     }
 
 
+# ==================== 토큰 할당 정책 ====================
+
+
+@router.get("/token-quota/templates")
+async def get_quota_templates(_admin=Depends(_require_admin)):
+    """토큰 할당 정책 템플릿 목록."""
+    from app.core.database import SessionLocal
+    from app.models.token_quota import TokenQuotaTemplate
+
+    db = SessionLocal()
+    try:
+        templates = db.query(TokenQuotaTemplate).order_by(TokenQuotaTemplate.id).all()
+        return {
+            "templates": [
+                {
+                    "id": t.id,
+                    "name": t.name,
+                    "description": t.description,
+                    "cost_limit_usd": float(t.cost_limit_usd),
+                    "refresh_cycle": t.refresh_cycle,
+                    "is_unlimited": t.is_unlimited,
+                    "created_at": t.created_at.isoformat() if t.created_at else None,
+                    "updated_at": t.updated_at.isoformat() if t.updated_at else None,
+                }
+                for t in templates
+            ]
+        }
+    finally:
+        db.close()
+
+
+@router.post("/token-quota/templates")
+async def create_quota_template(data: dict, _admin=Depends(_require_admin)):
+    """토큰 할당 정책 템플릿 생성."""
+    from app.core.database import SessionLocal
+    from app.models.token_quota import TokenQuotaTemplate
+
+    db = SessionLocal()
+    try:
+        # 중복 이름 확인
+        existing = db.query(TokenQuotaTemplate).filter(TokenQuotaTemplate.name == data["name"]).first()
+        if existing:
+            raise HTTPException(status_code=409, detail=f"Template '{data['name']}' already exists")
+
+        template = TokenQuotaTemplate(
+            name=data["name"],
+            description=data.get("description"),
+            cost_limit_usd=data["cost_limit_usd"],
+            refresh_cycle=data["refresh_cycle"],
+            is_unlimited=data.get("is_unlimited", False),
+        )
+        db.add(template)
+        db.commit()
+        db.refresh(template)
+        return {
+            "id": template.id,
+            "name": template.name,
+            "description": template.description,
+            "cost_limit_usd": float(template.cost_limit_usd),
+            "refresh_cycle": template.refresh_cycle,
+            "is_unlimited": template.is_unlimited,
+        }
+    finally:
+        db.close()
+
+
+@router.put("/token-quota/templates/{template_id}")
+async def update_quota_template(template_id: int, data: dict, _admin=Depends(_require_admin)):
+    """토큰 할당 정책 템플릿 수정."""
+    from app.core.database import SessionLocal
+    from app.models.token_quota import TokenQuotaTemplate
+
+    db = SessionLocal()
+    try:
+        template = db.query(TokenQuotaTemplate).filter(TokenQuotaTemplate.id == template_id).first()
+        if not template:
+            raise HTTPException(status_code=404, detail="Template not found")
+
+        if "name" in data:
+            template.name = data["name"]
+        if "description" in data:
+            template.description = data["description"]
+        if "cost_limit_usd" in data:
+            template.cost_limit_usd = data["cost_limit_usd"]
+        if "refresh_cycle" in data:
+            template.refresh_cycle = data["refresh_cycle"]
+        if "is_unlimited" in data:
+            template.is_unlimited = data["is_unlimited"]
+
+        db.commit()
+        db.refresh(template)
+        return {
+            "id": template.id,
+            "name": template.name,
+            "description": template.description,
+            "cost_limit_usd": float(template.cost_limit_usd),
+            "refresh_cycle": template.refresh_cycle,
+            "is_unlimited": template.is_unlimited,
+        }
+    finally:
+        db.close()
+
+
+@router.delete("/token-quota/templates/{template_id}")
+async def delete_quota_template(template_id: int, _admin=Depends(_require_admin)):
+    """토큰 할당 정책 템플릿 삭제."""
+    from app.core.database import SessionLocal
+    from app.models.token_quota import TokenQuotaTemplate
+
+    db = SessionLocal()
+    try:
+        template = db.query(TokenQuotaTemplate).filter(TokenQuotaTemplate.id == template_id).first()
+        if not template:
+            raise HTTPException(status_code=404, detail="Template not found")
+
+        db.delete(template)
+        db.commit()
+        return {"deleted": True, "id": template_id}
+    finally:
+        db.close()
+
+
+@router.get("/token-quota/assignments")
+async def get_quota_assignments(_admin=Depends(_require_admin)):
+    """사용자별 토큰 할당 정책 조회."""
+    from app.core.database import SessionLocal
+    from app.models.token_quota import TokenQuotaAssignment
+    from app.models.user import User
+
+    db = SessionLocal()
+    try:
+        assignments = db.query(TokenQuotaAssignment).order_by(TokenQuotaAssignment.assigned_at.desc()).all()
+        # 사용자 이름 매핑
+        users_db = {u.username: u.name for u in db.query(User).all()}
+        return {
+            "assignments": [
+                {
+                    "id": a.id,
+                    "user_id": a.user_id,
+                    "username": a.username,
+                    "user_name": users_db.get(a.username),
+                    "template_name": a.template_name,
+                    "cost_limit_usd": float(a.cost_limit_usd),
+                    "refresh_cycle": a.refresh_cycle,
+                    "is_unlimited": a.is_unlimited,
+                    "assigned_at": a.assigned_at.isoformat() if a.assigned_at else None,
+                }
+                for a in assignments
+            ]
+        }
+    finally:
+        db.close()
+
+
+@router.post("/token-quota/assign")
+async def assign_quota(data: dict, _admin=Depends(_require_admin)):
+    """사용자에게 토큰 할당 정책 적용."""
+    from app.core.database import SessionLocal
+    from app.models.token_quota import TokenQuotaTemplate, TokenQuotaAssignment
+    from app.models.user import User
+
+    usernames = data.get("usernames", [])
+    template_name = data.get("template_name")
+    if not usernames or not template_name:
+        raise HTTPException(status_code=400, detail="usernames and template_name required")
+
+    db = SessionLocal()
+    try:
+        # 템플릿 조회
+        template = db.query(TokenQuotaTemplate).filter(TokenQuotaTemplate.name == template_name).first()
+        if not template:
+            raise HTTPException(status_code=404, detail=f"Template '{template_name}' not found")
+
+        results = []
+        for uname in usernames:
+            uname_upper = uname.upper()
+            user = db.query(User).filter(User.username == uname_upper).first()
+
+            # 기존 할당이 있으면 업데이트, 없으면 생성
+            existing = db.query(TokenQuotaAssignment).filter(
+                TokenQuotaAssignment.username == uname_upper,
+            ).first()
+
+            if existing:
+                existing.template_name = template.name
+                existing.cost_limit_usd = template.cost_limit_usd
+                existing.refresh_cycle = template.refresh_cycle
+                existing.is_unlimited = template.is_unlimited
+                existing.user_id = user.id if user else existing.user_id
+                existing.assigned_at = datetime.now(timezone.utc)
+                results.append({"username": uname_upper, "action": "updated"})
+            else:
+                assignment = TokenQuotaAssignment(
+                    user_id=user.id if user else None,
+                    username=uname_upper,
+                    template_name=template.name,
+                    cost_limit_usd=template.cost_limit_usd,
+                    refresh_cycle=template.refresh_cycle,
+                    is_unlimited=template.is_unlimited,
+                )
+                db.add(assignment)
+                results.append({"username": uname_upper, "action": "created"})
+
+        db.commit()
+        return {"template_name": template_name, "results": results}
+    finally:
+        db.close()
+
+
+def _check_user_quota(db, username: str) -> dict | None:
+    """사용자 토큰 할당 잔여량 확인 — 내부 헬퍼.
+
+    Returns dict with quota info, or None if no assignment exists.
+    """
+    from app.models.token_quota import TokenQuotaAssignment
+    from app.models.token_usage import TokenUsageDaily
+    from sqlalchemy import func
+
+    assignment = db.query(TokenQuotaAssignment).filter(
+        TokenQuotaAssignment.username == username.upper(),
+    ).first()
+
+    if not assignment:
+        return None
+
+    # 주기별 시작일 계산
+    today = date_type.today()
+    refresh_cycle = assignment.refresh_cycle
+
+    if refresh_cycle == "daily":
+        cycle_start = today
+    elif refresh_cycle == "weekly":
+        cycle_start = today - timedelta(days=today.weekday())  # Monday
+    elif refresh_cycle == "monthly":
+        cycle_start = today.replace(day=1)
+    else:
+        cycle_start = today
+
+    # 해당 주기 사용량 합산
+    usage = db.query(
+        func.coalesce(func.sum(TokenUsageDaily.cost_usd), 0)
+    ).filter(
+        TokenUsageDaily.username == username.upper(),
+        TokenUsageDaily.usage_date >= cycle_start,
+        TokenUsageDaily.usage_date <= today,
+    ).scalar()
+
+    current_usage = float(usage)
+    cost_limit = float(assignment.cost_limit_usd)
+    remaining = max(cost_limit - current_usage, 0.0)
+
+    return {
+        "username": username.upper(),
+        "template_name": assignment.template_name,
+        "cost_limit_usd": cost_limit,
+        "current_usage_usd": round(current_usage, 4),
+        "remaining_usd": round(remaining, 4),
+        "is_exceeded": current_usage >= cost_limit,
+        "is_unlimited": assignment.is_unlimited,
+        "refresh_cycle": refresh_cycle,
+        "cycle_start": str(cycle_start),
+        "cycle_end": str(today),
+    }
+
+
+@router.get("/token-quota/check/{username}")
+async def check_quota(username: str, _admin=Depends(_require_admin)):
+    """사용자 토큰 할당 잔여량 확인."""
+    from app.core.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        result = _check_user_quota(db, username)
+        if not result:
+            raise HTTPException(status_code=404, detail=f"No quota assignment for '{username}'")
+        return result
+    finally:
+        db.close()
+
+
 # ==================== 프롬프트 감사 ====================
 
 

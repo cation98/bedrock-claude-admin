@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import {
   getUsers,
   getPendingUsers,
@@ -17,7 +16,7 @@ import {
   type User,
   type OGuardProfile,
 } from "@/lib/api";
-import { isAuthenticated, logout, getUser } from "@/lib/auth";
+import { isAuthenticated } from "@/lib/auth";
 import Pagination, { SearchInput } from "@/components/pagination";
 
 const REFRESH_INTERVAL = 10_000;
@@ -146,8 +145,6 @@ export default function UsersPage() {
     return () => clearInterval(timer);
   }, [router, fetchData]);
 
-  const user = getUser();
-
   function clearMessages() {
     setError("");
     setSuccess("");
@@ -225,68 +222,7 @@ export default function UsersPage() {
   const paginatedApproved = filteredApproved.slice((approvedSafePage - 1) * PAGE_SIZE, approvedSafePage * PAGE_SIZE);
 
   return (
-    <div className="min-h-screen">
-      {/* Header */}
-      <header className="border-b border-gray-200 bg-white">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 sm:px-6">
-          <h1 className="text-lg font-bold text-gray-900">
-            Claude Code Admin
-          </h1>
-          <div className="flex items-center gap-6">
-            <nav className="flex gap-4 text-sm font-medium text-gray-600">
-              <Link
-                href="/dashboard"
-                className="hover:text-gray-900 transition-colors"
-              >
-                운용현황
-              </Link>
-              <Link
-                href="/users"
-                className="text-blue-600 border-b-2 border-blue-600 pb-0.5"
-              >
-                사용자 관리
-              </Link>
-              <Link href="/apps" className="hover:text-gray-900 transition-colors">
-                앱 관리
-              </Link>
-              <Link href="/audit" className="hover:text-gray-900 transition-colors">
-                감사 로그
-              </Link>
-              <Link
-                href="/security"
-                className="hover:text-gray-900 transition-colors"
-              >
-                보안 정책
-              </Link>
-              <Link
-                href="/usage"
-                className="hover:text-gray-900 transition-colors"
-              >
-                토큰 사용량
-              </Link>
-              <Link
-                href="/infra"
-                className="hover:text-gray-900 transition-colors"
-              >
-                인프라
-              </Link>
-            </nav>
-            <div className="flex items-center gap-3">
-              {user && (
-                <span className="text-sm text-gray-500">{user.name}</span>
-              )}
-              <button
-                onClick={logout}
-                className="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
-              >
-                로그아웃
-              </button>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      {/* Content */}
+    <>
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
         {/* Messages */}
         {error && (
@@ -644,6 +580,6 @@ export default function UsersPage() {
           </div>
         )}
       </main>
-    </div>
+    </>
   );
 }

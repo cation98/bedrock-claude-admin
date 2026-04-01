@@ -332,6 +332,20 @@ async def create_session(
     user = db.query(User).filter(User.username == username).first()
     user_display_name = user.name if user and user.name else username
 
+    # 토큰 할당 정책 확인 — 한도 초과 시 세션 생성 차단
+    from app.routers.admin import _check_user_quota
+    quota_info = _check_user_quota(db, username)
+    if quota_info and quota_info["is_exceeded"] and not quota_info["is_unlimited"]:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Token quota exceeded. "
+                f"Limit: ${quota_info['cost_limit_usd']:.2f}/{quota_info['refresh_cycle']}, "
+                f"Used: ${quota_info['current_usage_usd']:.4f}, "
+                f"Cycle: {quota_info['cycle_start']} ~ {quota_info['cycle_end']}"
+            ),
+        )
+
     # 사용자별 Pod TTL 결정 (DB 설정 → 초 변환)
     user_pod_ttl = user.pod_ttl if user else "4h"
     ttl_seconds = POD_TTL_SECONDS_MAP.get(user_pod_ttl, 14400)

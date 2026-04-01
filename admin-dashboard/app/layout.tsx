@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import AppShell from "@/components/app-shell";
 
 export const metadata: Metadata = {
   title: "Claude Code Admin",
@@ -14,7 +15,7 @@ export default function RootLayout({
   return (
     <html lang="ko">
       <body className="min-h-screen bg-gray-50 text-gray-900 antialiased">
-        {children}
+        <AppShell>{children}</AppShell>
       </body>
     </html>
   );
