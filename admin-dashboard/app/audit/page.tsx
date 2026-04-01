@@ -25,6 +25,12 @@ const CATEGORY_LABELS: Record<string, string> = {
   webapp: "웹앱",
   infra: "인프라",
   documentation: "문서/설명",
+  safety_mgmt: "안전관리",
+  facility: "시설정보",
+  quality: "품질",
+  business_analysis: "업무분석",
+  scm: "SCM/구매",
+  communication: "커뮤니케이션",
   other: "기타",
 };
 
@@ -36,6 +42,12 @@ const CATEGORY_COLORS: Record<string, string> = {
   webapp: "#ec4899",
   infra: "#6366f1",
   documentation: "#14b8a6",
+  safety_mgmt: "#ef4444",
+  facility: "#f97316",
+  quality: "#06b6d4",
+  business_analysis: "#a855f7",
+  scm: "#84cc16",
+  communication: "#0ea5e9",
   other: "#6b7280",
 };
 
