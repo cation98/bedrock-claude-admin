@@ -624,16 +624,11 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
                style="flex:1;padding:7px 10px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font-size:0.82rem;outline:none;">
       </div>
       <div style="display:flex;gap:8px;margin-bottom:8px;">
-        <input type="text" id="regFilePath" placeholder="파일 경로 (예: shared-data/erp.sqlite)"
+        <input type="text" id="regFilePath" placeholder="[찾아보기]로 파일 또는 폴더 선택"
                style="flex:1;padding:7px 10px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font-size:0.82rem;outline:none;" readonly>
-        <button onclick="openFileBrowser(function(path) {{ document.getElementById('regFilePath').value = path; var ext = path.split('.').pop().toLowerCase(); var typeMap = {{'sqlite':'sqlite','xlsx':'excel','xls':'excel','csv':'csv'}}; document.getElementById('regFileType').value = typeMap[ext] || 'directory'; }})"
+        <input type="hidden" id="regFileType" value="directory">
+        <button onclick="openFileBrowser(function(path) {{ document.getElementById('regFilePath').value = path; var ext = path.split('.').pop().toLowerCase(); var typeMap = {{'sqlite':'sqlite','xlsx':'excel','xls':'excel','csv':'csv'}}; document.getElementById('regFileType').value = typeMap[ext] || (path.endsWith('/') ? 'directory' : 'file'); }})"
                 style="padding:7px 14px;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#58a6ff;font-size:0.82rem;cursor:pointer;white-space:nowrap;">찾아보기</button>
-        <select id="regFileType" style="padding:7px 8px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font-size:0.82rem;">
-          <option value="sqlite">SQLite</option>
-          <option value="excel">Excel</option>
-          <option value="csv">CSV</option>
-          <option value="directory">디렉토리</option>
-        </select>
       </div>
       <div style="display:flex;gap:8px;">
         <input type="text" id="regDescription" placeholder="설명 (선택)"
@@ -754,32 +749,61 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
 
   <!-- 데이터 공유 관리 모달 -->
   <div class="modal-overlay" id="dataShareModal">
-    <div class="modal" style="position:relative;">
+    <div class="modal" style="position:relative;width:480px;">
       <button class="close-btn" onclick="closeDataShareModal()">&times;</button>
-      <h3>데이터 공유 관리 — <span id="dataShareName"></span></h3>
-      <div class="share-tabs" style="display:flex;gap:0;margin-bottom:16px;border-bottom:1px solid #30363d;">
+      <h3>공유 관리 — <span id="dataShareName"></span></h3>
+      <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:1px solid #30363d;">
         <button class="share-tab active" id="shareTabUser" onclick="switchShareTab('user')"
           style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid #58a6ff;color:#e6edf3;cursor:pointer;font-size:0.85rem;">개인</button>
+        <button class="share-tab" id="shareTabRegion" onclick="switchShareTab('region')"
+          style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid transparent;color:#8b949e;cursor:pointer;font-size:0.85rem;">담당</button>
         <button class="share-tab" id="shareTabTeam" onclick="switchShareTab('team')"
-          style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid transparent;color:#8b949e;cursor:pointer;font-size:0.85rem;">조직</button>
+          style="flex:1;padding:8px;background:none;border:none;border-bottom:2px solid transparent;color:#8b949e;cursor:pointer;font-size:0.85rem;">팀</button>
       </div>
+      <!-- 개인 검색 -->
       <div id="shareUserPanel">
-        <div class="search-box">
-          <input type="text" id="shareUserSearch" placeholder="사번 또는 이름 검색..." onkeypress="if(event.key==='Enter')searchShareUsers()">
+        <div style="display:flex;gap:8px;margin-bottom:8px;">
+          <input type="text" id="shareUserSearch" placeholder="사번 또는 이름 검색..."
+            style="flex:1;padding:8px 12px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font-size:0.85rem;outline:none;"
+            onkeypress="if(event.key==='Enter')searchShareUsers()">
+          <select id="shareJobFilter" style="padding:8px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font-size:0.82rem;">
+            <option value="">전체 직책</option>
+            <option value="실장">실장</option>
+            <option value="담당">담당</option>
+            <option value="팀장">팀장</option>
+          </select>
           <button class="search-btn" onclick="searchShareUsers()">검색</button>
         </div>
         <div id="shareUserResults"></div>
       </div>
-      <div id="shareTeamPanel" style="display:none;">
-        <div class="search-box">
-          <select id="shareTeamSelect" style="flex:1;padding:8px 12px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font-size:0.85rem;">
-            <option value="">조직 선택...</option>
+      <!-- 담당 선택 -->
+      <div id="shareRegionPanel" style="display:none;">
+        <div style="display:flex;gap:8px;">
+          <select id="shareRegionSelect" style="flex:1;padding:8px 12px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font-size:0.85rem;">
+            <option value="">담당 선택...</option>
           </select>
-          <button class="search-btn" onclick="shareToTeam()">추가</button>
+          <button class="search-btn" onclick="shareToOrg('region')">전체 공유</button>
         </div>
+        <div id="regionMembers" style="margin-top:10px;"></div>
       </div>
-      <h4 style="font-size:0.85rem;color:#8b949e;margin:12px 0 8px;">현재 공유 대상</h4>
+      <!-- 팀 선택 -->
+      <div id="shareTeamPanel" style="display:none;">
+        <div style="display:flex;gap:8px;">
+          <select id="shareTeamSelect" style="flex:1;padding:8px 12px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font-size:0.85rem;">
+            <option value="">팀 선택...</option>
+          </select>
+          <button class="search-btn" onclick="shareToOrg('team')">전체 공유</button>
+        </div>
+        <div id="teamMembers" style="margin-top:10px;"></div>
+      </div>
+      <h4 style="font-size:0.85rem;color:#8b949e;margin:14px 0 8px;">현재 공유 대상</h4>
       <ul class="acl-list" id="dataShareList"></ul>
+      <div style="margin-top:16px;padding-top:14px;border-top:1px solid #30363d;display:flex;justify-content:flex-end;">
+        <button onclick="closeDataShareModal()"
+          style="padding:8px 24px;background:#238636;border:none;border-radius:6px;color:#fff;font-size:0.85rem;cursor:pointer;">
+          닫기
+        </button>
+      </div>
     </div>
   </div>
 </div>
@@ -969,8 +993,8 @@ function loadAclUsers(appName) {{
 function searchUsers() {{
   var q = document.getElementById('aclSearchInput').value.trim();
   if (!q) return;
-  apiFetch('/users/search?q=' + encodeURIComponent(q)).then(function(data) {{
-    var users = data.users || [];
+  apiFetch('/files/org-members?q=' + encodeURIComponent(q)).then(function(data) {{
+    var users = data.members || [];
     var el = document.getElementById('searchResults');
     el.replaceChildren();
     if (users.length === 0) {{
@@ -980,7 +1004,20 @@ function searchUsers() {{
       el.appendChild(empty); return;
     }}
     var ul = document.createElement('ul'); ul.className = 'acl-list';
-    users.forEach(function(u) {{ ul.appendChild(buildAclItem(u, false)); }});
+    users.forEach(function(u) {{
+      var li = document.createElement('li'); li.className = 'acl-item';
+      var info = document.createElement('span'); info.className = 'user-info';
+      info.textContent = (u.name || u.username) + ' (' + u.username + ')';
+      var meta = document.createElement('span'); meta.className = 'team';
+      meta.textContent = ' ' + (u.job_name || '') + ' / ' + (u.team_name || '');
+      info.appendChild(meta); li.appendChild(info);
+      var btn = document.createElement('button'); btn.className = 'btn-sm';
+      btn.style.borderColor = '#238636'; btn.style.color = '#3fb950';
+      btn.textContent = '\ucd94\uac00';
+      btn.onclick = function() {{ grantAccess(u.username); }};
+      li.appendChild(btn);
+      ul.appendChild(li);
+    }});
     el.appendChild(ul);
   }}).catch(function() {{}});
 }}
@@ -1014,21 +1051,39 @@ var currentShareDataset = '';
 
 function buildDatasetItem(ds, isOwner) {{
   var li = document.createElement('li'); li.className = 'app-item';
+  li.style.flexWrap = 'wrap';
   var info = document.createElement('div'); info.className = 'app-info';
   var name = document.createElement('span'); name.className = 'app-name';
   name.style.cursor = 'default'; name.textContent = ds.dataset_name;
   var meta = document.createElement('div'); meta.className = 'app-meta';
   if (isOwner) {{
-    var sizeStr = ds.file_size ? formatBytes(ds.file_size) : '';
+    var sizeStr = ds.file_size_bytes ? formatBytes(ds.file_size_bytes) : '';
     var parts = [];
     if (ds.file_type) parts.push(ds.file_type);
+    if (ds.file_path) parts.push(ds.file_path);
     if (sizeStr) parts.push(sizeStr);
-    if (typeof ds.share_count === 'number') parts.push(ds.share_count + '\uba85 \uacf5\uc720');
+    var cnt = ds.acl_count || 0;
+    parts.push(cnt > 0 ? cnt + '\uba85 \uacf5\uc720 \uc911' : '\ubbf8\uacf5\uc720');
     meta.textContent = parts.join(' \u00b7 ');
+    // 공유 상태 배지
+    if (cnt > 0) {{
+      var badge = document.createElement('span');
+      badge.style.cssText = 'display:inline-block;margin-left:8px;padding:1px 8px;border-radius:10px;font-size:0.7rem;background:#1a3a2a;color:#3fb950;';
+      badge.textContent = cnt + '\uba85 \uacf5\uc720';
+      name.appendChild(badge);
+    }}
   }} else {{
-    meta.textContent = (ds.owner_name || '') + ' \u00b7 \uacbd\ub85c: ~/workspace/team/' + (ds.owner_id || '') + '/' + (ds.dataset_name || '') + '/';
+    meta.textContent = (ds.owner_name || ds.owner_username || '') + ' \u00b7 ~/workspace/team/' + (ds.owner_username || '').toLowerCase() + '/' + (ds.dataset_name || '') + '/';
   }}
-  info.appendChild(name); info.appendChild(meta); li.appendChild(info);
+  if (ds.description) {{
+    var desc = document.createElement('div');
+    desc.style.cssText = 'font-size:0.72rem;color:#6e7681;margin-top:2px;';
+    desc.textContent = ds.description;
+    info.appendChild(name); info.appendChild(meta); info.appendChild(desc);
+  }} else {{
+    info.appendChild(name); info.appendChild(meta);
+  }}
+  li.appendChild(info);
   if (isOwner) {{
     var actions = document.createElement('div'); actions.className = 'app-actions';
     var shareBtn = document.createElement('button'); shareBtn.className = 'btn-sm';
@@ -1048,21 +1103,25 @@ function formatBytes(bytes) {{
 
 function loadMyDatasets() {{
   apiFetch('/files/datasets/my').then(function(data) {{
-    var datasets = data.datasets || [];
+    // 백엔드가 배열 직접 반환 또는 {{datasets:[]}} 형태
+    var datasets = Array.isArray(data) ? data : (data.datasets || []);
     var section = document.getElementById('myDatasetsSection');
     var list = document.getElementById('myDatasetsList');
     var count = document.getElementById('myDatasetsCount');
-    if (datasets.length === 0) {{ return; }}
-    section.style.display = 'block';
     count.textContent = '(' + datasets.length + ')';
     list.replaceChildren();
+    if (datasets.length === 0) {{
+      var empty = document.createElement('li'); empty.className = 'empty-msg';
+      empty.textContent = '\uacf5\uc720 \ub370\uc774\ud130\uac00 \uc5c6\uc2b5\ub2c8\ub2e4. \uc704 "\ub370\uc774\ud130\uc14b \ub4f1\ub85d" \ubc84\ud2bc\uc73c\ub85c \ub4f1\ub85d\ud558\uc138\uc694.';
+      list.appendChild(empty); return;
+    }}
     datasets.forEach(function(ds) {{ list.appendChild(buildDatasetItem(ds, true)); }});
-  }}).catch(function() {{}});
+  }}).catch(function(e) {{ console.log('loadMyDatasets error:', e); }});
 }}
 
 function loadSharedDatasets() {{
   apiFetch('/files/datasets/shared').then(function(data) {{
-    var datasets = data.datasets || [];
+    var datasets = Array.isArray(data) ? data : (data.datasets || []);
     var section = document.getElementById('sharedDatasetsSection');
     var list = document.getElementById('sharedDatasetsList');
     var count = document.getElementById('sharedDatasetsCount');
@@ -1082,69 +1141,124 @@ function openDataShareModal(datasetName) {{
   document.getElementById('shareUserResults').replaceChildren();
   switchShareTab('user');
   loadDataShareUsers(datasetName);
-  loadTeamOptions();
+  loadOrgOptions();
 }}
 
 function closeDataShareModal() {{
   document.getElementById('dataShareModal').classList.remove('active');
   loadMyDatasets();
+  loadMyApps();
 }}
 
 function switchShareTab(tab) {{
-  var userTab = document.getElementById('shareTabUser');
-  var teamTab = document.getElementById('shareTabTeam');
-  var userPanel = document.getElementById('shareUserPanel');
-  var teamPanel = document.getElementById('shareTeamPanel');
-  if (tab === 'user') {{
-    userTab.style.borderBottomColor = '#58a6ff'; userTab.style.color = '#e6edf3';
-    teamTab.style.borderBottomColor = 'transparent'; teamTab.style.color = '#8b949e';
-    userPanel.style.display = 'block'; teamPanel.style.display = 'none';
-  }} else {{
-    teamTab.style.borderBottomColor = '#58a6ff'; teamTab.style.color = '#e6edf3';
-    userTab.style.borderBottomColor = 'transparent'; userTab.style.color = '#8b949e';
-    teamPanel.style.display = 'block'; userPanel.style.display = 'none';
-  }}
+  var tabs = ['user', 'region', 'team'];
+  tabs.forEach(function(t) {{
+    var btn = document.getElementById('shareTab' + t.charAt(0).toUpperCase() + t.slice(1));
+    var panel = document.getElementById('share' + t.charAt(0).toUpperCase() + t.slice(1) + 'Panel');
+    if (t === tab) {{
+      btn.style.borderBottomColor = '#58a6ff'; btn.style.color = '#e6edf3';
+      panel.style.display = 'block';
+    }} else {{
+      btn.style.borderBottomColor = 'transparent'; btn.style.color = '#8b949e';
+      panel.style.display = 'none';
+    }}
+  }});
+  // 담당/팀 선택 시 구성원 미리보기 초기화
+  if (tab === 'region') {{ document.getElementById('regionMembers').replaceChildren(); }}
+  if (tab === 'team') {{ document.getElementById('teamMembers').replaceChildren(); }}
 }}
 
-function loadTeamOptions() {{
-  apiFetch('/users/teams').then(function(data) {{
-    var teams = data.teams || [];
-    var sel = document.getElementById('shareTeamSelect');
-    // 기존 옵션 제거 (첫 번째 placeholder 유지)
+function loadOrgOptions() {{
+  // 담당 목록
+  apiFetch('/files/regions').then(function(data) {{
+    var sel = document.getElementById('shareRegionSelect');
     while (sel.options.length > 1) sel.remove(1);
-    teams.forEach(function(t) {{
-      var opt = document.createElement('option');
-      opt.value = t.team_name || t.name || t;
-      opt.textContent = t.team_name || t.name || t;
+    (data.regions || []).forEach(function(r) {{
+      var opt = document.createElement('option'); opt.value = r; opt.textContent = r;
       sel.appendChild(opt);
     }});
+    sel.onchange = function() {{ if (sel.value) loadOrgMembers('region', sel.value); }};
   }}).catch(function() {{}});
+  // 팀 목록
+  apiFetch('/files/teams').then(function(data) {{
+    var sel = document.getElementById('shareTeamSelect');
+    while (sel.options.length > 1) sel.remove(1);
+    (data.teams || []).forEach(function(t) {{
+      var opt = document.createElement('option'); opt.value = t; opt.textContent = t;
+      sel.appendChild(opt);
+    }});
+    sel.onchange = function() {{ if (sel.value) loadOrgMembers('team', sel.value); }};
+  }}).catch(function() {{}});
+}}
+
+function loadOrgMembers(orgType, orgValue) {{
+  var param = orgType === 'region' ? 'region=' : 'team=';
+  apiFetch('/files/org-members?' + param + encodeURIComponent(orgValue)).then(function(data) {{
+    var members = data.members || [];
+    var container = document.getElementById(orgType + 'Members');
+    container.replaceChildren();
+    if (members.length === 0) {{
+      var empty = document.createElement('div');
+      empty.style.cssText = 'color:#484f58;font-size:0.82rem;padding:8px;';
+      empty.textContent = '\uad6c\uc131\uc6d0 \uc5c6\uc74c';
+      container.appendChild(empty); return;
+    }}
+    var label = document.createElement('div');
+    label.style.cssText = 'font-size:0.78rem;color:#8b949e;margin-bottom:6px;';
+    label.textContent = orgValue + ' \uad6c\uc131\uc6d0 (' + members.length + '\uba85)';
+    container.appendChild(label);
+    var ul = document.createElement('ul'); ul.className = 'acl-list';
+    members.forEach(function(m) {{
+      var li = document.createElement('li'); li.className = 'acl-item';
+      var info = document.createElement('span'); info.className = 'user-info';
+      info.textContent = (m.name || m.username) + ' (' + m.username + ')';
+      var job = document.createElement('span'); job.className = 'team';
+      job.textContent = ' ' + (m.job_name || '');
+      info.appendChild(job); li.appendChild(info);
+      var btn = document.createElement('button'); btn.className = 'btn-sm';
+      btn.style.borderColor = '#238636'; btn.style.color = '#3fb950';
+      btn.textContent = '\uac1c\uc778 \ucd94\uac00';
+      btn.onclick = function() {{ grantDataShare(m.username, 'user'); }};
+      li.appendChild(btn);
+      ul.appendChild(li);
+    }});
+    container.appendChild(ul);
+  }}).catch(function() {{}});
+}}
+
+function shareToOrg(orgType) {{
+  var sel = document.getElementById(orgType === 'region' ? 'shareRegionSelect' : 'shareTeamSelect');
+  var value = sel.value;
+  if (!value) {{ alert('\uc870\uc9c1\uc744 \uc120\ud0dd\ud558\uc138\uc694.'); return; }}
+  grantDataShare(value, 'team');
 }}
 
 function buildShareItem(s, canRevoke) {{
   var li = document.createElement('li'); li.className = 'acl-item';
   var info = document.createElement('span'); info.className = 'user-info';
-  var label = s.name || s.username || s.team_name || '';
-  var sub = s.team_name && s.username ? ' (' + s.username + ')' : '';
-  info.textContent = label + sub;
+  var target = s.share_target || '';
   if (s.share_type === 'team') {{
+    info.textContent = target;
     var badge = document.createElement('span'); badge.className = 'team';
-    badge.textContent = ' \uc870\uc9c1';
+    badge.textContent = ' (\uc870\uc9c1)';
     info.appendChild(badge);
+  }} else {{
+    var displayName = s.target_name ? s.target_name + ' (' + target + ')' : target;
+    info.textContent = displayName;
   }}
   li.appendChild(info);
   if (canRevoke) {{
     var btn = document.createElement('button'); btn.className = 'btn-sm danger';
     btn.textContent = '\ud68c\uc218';
-    btn.onclick = function() {{ revokeDataShare(s.id || s.username || s.team_name); }};
+    btn.onclick = function() {{ revokeDataShare(s.id); }};
     li.appendChild(btn);
   }}
   return li;
 }}
 
 function loadDataShareUsers(datasetName) {{
-  apiFetch('/files/datasets/' + encodeURIComponent(datasetName) + '/shares').then(function(data) {{
-    var shares = data.shares || [];
+  apiFetch('/files/datasets/' + encodeURIComponent(datasetName) + '/share').then(function(data) {{
+    var shares = Array.isArray(data) ? data : (data.shares || []);
     var list = document.getElementById('dataShareList');
     list.replaceChildren();
     if (shares.length === 0) {{
@@ -1158,9 +1272,13 @@ function loadDataShareUsers(datasetName) {{
 
 function searchShareUsers() {{
   var q = document.getElementById('shareUserSearch').value.trim();
-  if (!q) return;
-  apiFetch('/users/search?q=' + encodeURIComponent(q)).then(function(data) {{
-    var users = data.users || [];
+  var job = document.getElementById('shareJobFilter').value;
+  if (!q && !job) return;
+  var params = [];
+  if (q) params.push('q=' + encodeURIComponent(q));
+  if (job) params.push('job=' + encodeURIComponent(job));
+  apiFetch('/files/org-members?' + params.join('&')).then(function(data) {{
+    var users = data.members || [];
     var el = document.getElementById('shareUserResults');
     el.replaceChildren();
     if (users.length === 0) {{
@@ -1173,10 +1291,10 @@ function searchShareUsers() {{
     users.forEach(function(u) {{
       var li = document.createElement('li'); li.className = 'acl-item';
       var info = document.createElement('span'); info.className = 'user-info';
-      info.textContent = (u.name || u.username) + ' (' + u.username + ') ';
-      var team = document.createElement('span'); team.className = 'team';
-      team.textContent = u.team_name || '';
-      info.appendChild(team); li.appendChild(info);
+      info.textContent = (u.name || u.username) + ' (' + u.username + ')';
+      var meta = document.createElement('span'); meta.className = 'team';
+      meta.textContent = ' ' + (u.job_name || '') + ' / ' + (u.team_name || '');
+      info.appendChild(meta); li.appendChild(info);
       var btn = document.createElement('button'); btn.className = 'btn-sm';
       btn.style.borderColor = '#238636'; btn.style.color = '#3fb950';
       btn.textContent = '\ucd94\uac00';
@@ -1189,28 +1307,45 @@ function searchShareUsers() {{
 }}
 
 function grantDataShare(target, shareType) {{
-  apiFetch('/files/datasets/' + encodeURIComponent(currentShareDataset) + '/shares', {{
+  fetch('/api/v1/files/datasets/' + encodeURIComponent(currentShareDataset) + '/share', {{
     method: 'POST',
-    headers: {{'Content-Type': 'application/json'}},
+    headers: Object.assign({{'Content-Type': 'application/json'}}, authHeaders),
     body: JSON.stringify({{target: target, share_type: shareType}})
-  }}).then(function() {{
+  }}).then(function(res) {{
+    if (res.status === 409) {{
+      var t = document.getElementById('hubToast');
+      t.textContent = target + ' \uc740(\ub294) \uc774\ubbf8 \uacf5\uc720 \uc124\uc815\ub418\uc5b4 \uc788\uc2b5\ub2c8\ub2e4.';
+      t.style.display = 'block'; t.style.borderColor = '#f59e0b';
+      setTimeout(function() {{ t.style.display = 'none'; t.style.borderColor = '#58a6ff'; }}, 3000);
+      return;
+    }}
+    if (!res.ok) {{ return res.text().then(function(t) {{ throw new Error(t); }}); }}
     loadDataShareUsers(currentShareDataset);
-    document.getElementById('shareUserResults').replaceChildren();
-    document.getElementById('shareUserSearch').value = '';
+    // 결과 영역 초기화
+    var sr = document.getElementById('shareUserResults');
+    if (sr) sr.replaceChildren();
+    var rm = document.getElementById('regionMembers');
+    if (rm) rm.replaceChildren();
+    var tm = document.getElementById('teamMembers');
+    if (tm) tm.replaceChildren();
+    // 성공 토스트
+    var t = document.getElementById('hubToast');
+    t.textContent = target + ' \uacf5\uc720 \ucd94\uac00 \uc644\ub8cc';
+    t.style.display = 'block';
+    setTimeout(function() {{ t.style.display = 'none'; }}, 2000);
+  }}).catch(function(e) {{
+    var t = document.getElementById('hubToast');
+    t.textContent = '\uacf5\uc720 \uc2e4\ud328: ' + (e.message || '').substring(0, 80);
+    t.style.display = 'block'; t.style.borderColor = '#da3633';
+    setTimeout(function() {{ t.style.display = 'none'; t.style.borderColor = '#58a6ff'; }}, 3000);
   }});
 }}
 
-function shareToTeam() {{
-  var sel = document.getElementById('shareTeamSelect');
-  var team = sel.value;
-  if (!team) return;
-  grantDataShare(team, 'team');
-  sel.value = '';
-}}
+// shareToTeam은 shareToOrg로 대체됨 (위에서 정의)
 
 function revokeDataShare(shareId) {{
   if (!confirm('\uacf5\uc720\ub97c \ud68c\uc218\ud569\ub2c8\ub2e4.')) return;
-  apiFetch('/files/datasets/' + encodeURIComponent(currentShareDataset) + '/shares/' + encodeURIComponent(shareId), {{
+  apiFetch('/files/datasets/' + encodeURIComponent(currentShareDataset) + '/share/' + encodeURIComponent(shareId), {{
     method: 'DELETE'
   }}).then(function() {{ loadDataShareUsers(currentShareDataset); }});
 }}
@@ -1238,7 +1373,7 @@ function browseDirectory(dirPath) {{
       var bc = document.getElementById('fileBreadcrumb');
       bc.replaceChildren();
       var rootLink = document.createElement('span');
-      rootLink.textContent = '\ud83c\udfe0 workspace';
+      rootLink.textContent = 'workspace';
       rootLink.style.cursor = 'pointer';
       rootLink.onclick = function() {{ browseDirectory(''); }};
       bc.appendChild(rootLink);
@@ -1267,7 +1402,7 @@ function browseDirectory(dirPath) {{
       if (data.path) {{
         var upItem = document.createElement('div');
         upItem.style.cssText = 'padding:8px 10px;border-bottom:1px solid #21262d;cursor:pointer;font-size:0.85rem;';
-        upItem.textContent = '\ud83d\udcc1 ..';
+        upItem.textContent = '[..] \uc0c1\uc704';
         var parentPath = data.path.split('/').slice(0, -1).join('/');
         upItem.onclick = function() {{ browseDirectory(parentPath); }};
         upItem.onmouseover = function() {{ this.style.background = '#21262d'; }};
@@ -1282,7 +1417,7 @@ function browseDirectory(dirPath) {{
         item.onmouseout = function() {{ this.style.background = ''; }};
 
         var nameSpan = document.createElement('span');
-        var icon = entry.type === 'dir' ? '\ud83d\udcc1 ' : '\ud83d\udcc4 ';
+        var icon = entry.type === 'dir' ? '[\ud3f4\ub354] ' : '[\ud30c\uc77c] ';
         nameSpan.textContent = icon + entry.name;
         nameSpan.style.color = entry.type === 'dir' ? '#58a6ff' : '#e6edf3';
         item.appendChild(nameSpan);
@@ -1296,7 +1431,24 @@ function browseDirectory(dirPath) {{
         }}
 
         if (entry.type === 'dir') {{
-          item.onclick = function() {{ browseDirectory(entry.path); }};
+          // 더블클릭: 디렉토리 진입 / 싱글클릭: 디렉토리 선택
+          item.onclick = function() {{
+            document.getElementById('fileSelected').style.display = 'block';
+            document.getElementById('fileSelectedPath').textContent = entry.path + '/';
+          }};
+          item.ondblclick = function(e) {{
+            e.preventDefault();
+            browseDirectory(entry.path);
+          }};
+          // 진입 버튼 추가
+          var enterBtn = document.createElement('button');
+          enterBtn.textContent = '\uc5f4\uae30';
+          enterBtn.style.cssText = 'padding:2px 8px;background:#21262d;border:1px solid #30363d;border-radius:4px;color:#58a6ff;font-size:0.72rem;cursor:pointer;';
+          enterBtn.onclick = function(e) {{
+            e.stopPropagation();
+            browseDirectory(entry.path);
+          }};
+          item.appendChild(enterBtn);
         }} else {{
           item.onclick = function() {{
             document.getElementById('fileSelected').style.display = 'block';

@@ -1,0 +1,81 @@
+# =============================================================================
+# Namespace: claude-apps
+#
+# 사용자가 배포한 웹앱이 실행되는 namespace.
+# claude-sessions(개발 Pod)과 분리하여 배포된 앱의 상시 운영 환경을 제공한다.
+#
+# NetworkPolicy로 App Pod 간 통신을 차단하고,
+# ingress-nginx에서만 트래픽을 받도록 격리한다.
+# =============================================================================
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: claude-apps
+  labels:
+    app: bedrock-claude
+    purpose: deployed-webapps
+
+---
+
+# =============================================================================
+# NetworkPolicy: App Pod 간 통신 차단
+#
+# 보안 격리 정책:
+# - Ingress: ingress-nginx namespace에서 port 3000으로 들어오는 트래픽만 허용
+# - Egress: DNS(53), RDS(5432), Auth Gateway(8000)만 허용
+# - Pod 간 직접 통신은 차단 (사용자 A의 앱 → 사용자 B의 앱 불가)
+# =============================================================================
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: isolate-app-pods
+  namespace: claude-apps
+spec:
+  # 이 정책이 적용될 Pod 선택 — 모든 App Pod에 적용
+  podSelector:
+    matchLabels:
+      app: claude-app
+
+  policyTypes:
+    - Ingress   # 들어오는 트래픽 제어
+    - Egress    # 나가는 트래픽 제어
+
+  ingress:
+    # Ingress Controller(ALB)에서 오는 트래픽만 허용 (port 3000)
+    # 다른 claude-app Pod에서 오는 트래픽은 차단됨
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - port: 3000
+          protocol: TCP
+
+  egress:
+    # DNS 조회 허용 (K8s 내부 DNS)
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+    # RDS ReadOnly Replica 접근 허용 (Private Subnet 내)
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/16
+      ports:
+        - port: 5432
+          protocol: TCP
+
+    # Auth Gateway 내부 통신 (platform namespace)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: platform
+      ports:
+        - port: 8000
+          protocol: TCP

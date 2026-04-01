@@ -211,6 +211,67 @@ async def list_teams(
     return TeamListResponse(teams=[r[0] for r in rows])
 
 
+@router.get("/regions")
+async def list_regions(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """담당(region) 목록 — 공유 대상 선택 UI용."""
+    rows = (
+        db.query(User.region_name)
+        .filter(User.is_approved == True, User.region_name.isnot(None), User.region_name != "")
+        .distinct()
+        .order_by(User.region_name)
+        .all()
+    )
+    return {"regions": [r[0] for r in rows]}
+
+
+@router.get("/org-members")
+async def list_org_members(
+    region: str = None,
+    team: str = None,
+    job: str = None,
+    q: str = None,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """조직 구성원 검색 — 담당/팀/직책 필터 + 이름/사번 검색.
+
+    사용 예:
+      /org-members?region=경남Access담당
+      /org-members?team=HR팀&job=팀장
+      /org-members?q=김광우
+      /org-members?job=실장
+    """
+    query = db.query(User).filter(User.is_approved == True)
+
+    if region:
+        query = query.filter(User.region_name == region)
+    if team:
+        query = query.filter(User.team_name == team)
+    if job:
+        query = query.filter(User.job_name == job)
+    if q:
+        query = query.filter(
+            (User.username.ilike(f"%{q}%")) | (User.name.ilike(f"%{q}%"))
+        )
+
+    users = query.order_by(User.name).limit(30).all()
+    return {
+        "members": [
+            {
+                "username": u.username,
+                "name": u.name,
+                "region_name": u.region_name,
+                "team_name": u.team_name,
+                "job_name": u.job_name,
+            }
+            for u in users
+        ]
+    }
+
+
 # ==================== 데이터셋 CRUD ====================
 
 
@@ -260,7 +321,7 @@ async def create_dataset(
 # ==================== 공유 ACL 관리 ====================
 
 
-@router.get("/datasets/{name}/share", response_model=list[ShareACLResponse])
+@router.get("/datasets/{name}/share")
 async def list_dataset_shares(
     name: str,
     current_user: dict = Depends(get_current_user),
@@ -279,7 +340,16 @@ async def list_dataset_shares(
         .order_by(FileShareACL.granted_at.desc())
         .all()
     )
-    return [ShareACLResponse.model_validate(e) for e in acl_entries]
+
+    # 개인 공유의 경우 이름을 조회하여 포함
+    result = []
+    for e in acl_entries:
+        data = ShareACLResponse.model_validate(e).model_dump()
+        if e.share_type == "user":
+            user = db.query(User).filter(User.username == e.share_target).first()
+            data["target_name"] = user.name if user else None
+        result.append(data)
+    return result
 
 
 @router.post(
