@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { logout, getUser } from "@/lib/auth";
-import { useSidebar } from "./app-shell";
+import { useSidebar } from "./sidebar-context";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "운용현황", icon: "📊" },

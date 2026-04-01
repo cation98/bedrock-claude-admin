@@ -1,11 +1,9 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { useState, createContext, useContext } from "react";
+import { useState } from "react";
 import Sidebar from "./sidebar";
-
-export const SidebarContext = createContext({ collapsed: false, setCollapsed: (_: boolean) => {} });
-export const useSidebar = () => useContext(SidebarContext);
+import { SidebarContext } from "./sidebar-context";
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
