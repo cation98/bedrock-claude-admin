@@ -1,12 +1,12 @@
-"""업무시간 스케줄링 + 연장 요청/승인 API.
+"""스케줄링 + 연장 요청/승인 API.
 
-업무시간 종료 전 경고, Pod 종료, 노드 확장/축소,
-그리고 사용자의 시간 연장 요청 → 관리자 승인/거절 워크플로를 제공한다.
+Pod 수명은 사용자별 pod_ttl(7d/30d/unlimited) 기준으로만 관리.
+업무시간(09-18) 기반 강제 종료는 폐지됨 (2026-04-01).
 
 Endpoints:
-  POST /api/v1/schedule/shutdown-warning  — 종료 N분 전 경고
-  POST /api/v1/schedule/shutdown          — 미연장 Pod 종료
-  POST /api/v1/schedule/startup           — 노드 확장
+  POST /api/v1/schedule/shutdown-warning  — [비활성] 종료 경고 (EventBridge DISABLED)
+  POST /api/v1/schedule/shutdown          — [비활성] Pod 종료 (EventBridge DISABLED)
+  POST /api/v1/schedule/startup           — [비활성] 노드 확장 (EventBridge DISABLED)
   POST /api/v1/schedule/extension/request — 연장 요청
   POST /api/v1/schedule/extension/approve/{id} — 연장 승인
   POST /api/v1/schedule/extension/reject/{id}  — 연장 거절
@@ -72,7 +72,9 @@ async def send_shutdown_warning(
     settings: Settings = Depends(get_settings),
     db: Session = Depends(get_db),
 ):
-    """종료 N분 전 경고 — 모든 running Pod 사용자에게 텔레그램 알림."""
+    """[비활성] 업무시간 종료 경고 — 24/7 운영 전환으로 사용하지 않음."""
+    raise HTTPException(status_code=410, detail="업무시간 스케줄이 폐지되었습니다. Pod 수명은 사용자별 TTL로 관리됩니다.")
+    # 아래 코드는 비활성 (EventBridge DISABLED, 2026-04-01)
     from app.models.session import TerminalSession
 
     sessions = db.query(TerminalSession).filter(
@@ -99,10 +101,9 @@ async def execute_shutdown(
     settings: Settings = Depends(get_settings),
     db: Session = Depends(get_db),
 ):
-    """업무시간 종료 — 미연장 Pod 종료 + 노드 축소.
-
-    승인된 연장이 아직 유효한 사용자의 Pod는 건너뛴다.
-    """
+    """[비활성] 업무시간 종료 — 24/7 운영 전환으로 사용하지 않음."""
+    raise HTTPException(status_code=410, detail="업무시간 스케줄이 폐지되었습니다. Pod 수명은 사용자별 TTL로 관리됩니다.")
+    # 아래 코드는 비활성 (EventBridge DISABLED, 2026-04-01)
     from app.models.session import TerminalSession
     from app.services.k8s_service import K8sService
 
@@ -129,6 +130,11 @@ async def execute_shutdown(
             logger.info(f"Skipping {sess.username} — extension approved")
             continue
         try:
+            # 대화이력 EFS 백업 후 Pod 삭제 (실패해도 삭제 계속)
+            from app.services.idle_cleanup_service import IdleCleanupService
+            backup_svc = IdleCleanupService(k8s)
+            backup_svc._backup_pod(sess.pod_name, k8s.namespace)
+
             k8s.delete_pod(sess.pod_name)
             sess.pod_status = "terminated"
             sess.terminated_at = datetime.now(timezone.utc)
@@ -148,7 +154,9 @@ async def execute_startup(
     _admin: dict = Depends(_require_admin),
     settings: Settings = Depends(get_settings),
 ):
-    """업무시간 시작 — 노드 확장."""
+    """[비활성] 업무시간 시작 — 24/7 운영 전환으로 사용하지 않음."""
+    raise HTTPException(status_code=410, detail="업무시간 스케줄이 폐지되었습니다. 노드는 자동 스케일링으로 관리됩니다.")
+    # 아래 코드는 비활성 (EventBridge DISABLED, 2026-04-01)
     import boto3
 
     eks = boto3.client("eks", region_name="ap-northeast-2")

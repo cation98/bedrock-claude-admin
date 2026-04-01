@@ -43,6 +43,45 @@ https://claude.skons.net/app/{HOSTNAME}/
 - **pandas**, **matplotlib**, **openpyxl** — 데이터 분석/차트/엑셀
 - **python-multipart** — 파일 업로드
 
+### 외부 CDN 사용 금지 — 로컬 라이브러리만 사용
+
+배포된 웹앱(App Pod)은 **외부 CDN에 접속할 수 없습니다** (네트워크 정책으로 차단됨).
+Chart.js, Bootstrap, jQuery 등 모든 라이브러리는 **반드시 로컬에서 제공**해야 합니다.
+
+```html
+<!-- ❌ CDN 사용 금지 (App Pod에서 로딩 불가) -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3/css/bootstrap.min.css">
+
+<!-- ✅ 올바른 방법 1: pip/npm으로 설치 후 로컬 제공 -->
+<!-- Python: pip install chart.js는 없으므로 직접 다운로드 -->
+
+<!-- ✅ 올바른 방법 2: 인라인 또는 번들링 -->
+<!-- FastAPI StaticFiles로 static/ 디렉토리에서 제공 -->
+from fastapi.staticfiles import StaticFiles
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+<!-- ✅ 올바른 방법 3: 차트는 matplotlib로 서버사이드 생성 -->
+import matplotlib.pyplot as plt
+plt.savefig("static/chart.png")
+<!-- HTML에서 <img src="static/chart.png"> -->
+
+<!-- ✅ 올바른 방법 4: 순수 SVG 차트 (외부 의존성 없음) -->
+<!-- SVG <rect>, <line>, <text> 등으로 직접 그리기 -->
+```
+
+**차트 라이브러리 대안:**
+
+| CDN 라이브러리 | 로컬 대안 |
+|---------------|----------|
+| Chart.js | matplotlib (서버 렌더링) 또는 순수 SVG |
+| D3.js | 순수 SVG + JavaScript |
+| Bootstrap CSS | Tailwind (빌드) 또는 직접 CSS |
+| jQuery | 순수 JavaScript (Vanilla JS) |
+
+**개발 중(포트 3000 테스트)에는 CDN 사용 가능**하지만, `deploy`로 배포하면 작동하지 않습니다.
+**반드시 배포 전에 모든 외부 CDN 참조를 로컬로 전환하세요.**
+
 ### 웹앱 URL 규칙 (무한 리다이렉트 방지)
 
 웹앱은 `/app/{HOSTNAME}/` 경로 뒤에서 실행됩니다. **폼/링크에서 절대 경로(`/`)를 사용하면 로그인 페이지로 이동하는 무한 루프가 발생합니다.**

@@ -1,4 +1,4 @@
-"""토큰 사용량 일별 누적."""
+"""토큰 사용량 일별/시간별 누적."""
 from datetime import datetime, timezone
 
 from sqlalchemy import Column, Integer, BigInteger, String, Date, DateTime, Numeric, UniqueConstraint
@@ -24,3 +24,22 @@ class TokenUsageDaily(Base):
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (UniqueConstraint('username', 'usage_date'),)
+
+
+class TokenUsageHourly(Base):
+    """시간별 토큰 사용량 — 스파크라인 차트용."""
+    __tablename__ = "token_usage_hourly"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    username = Column(String(50), nullable=False)
+    usage_date = Column(Date, nullable=False)
+    hour = Column(Integer, nullable=False)  # 0-23
+    input_tokens = Column(BigInteger, default=0)
+    output_tokens = Column(BigInteger, default=0)
+    total_tokens = Column(BigInteger, default=0)
+    cost_usd = Column(Numeric(10, 4), default=0)
+    cost_krw = Column(Integer, default=0)
+
+    __table_args__ = (
+        UniqueConstraint("username", "usage_date", "hour", name="uq_hourly_user_date_hour"),
+    )

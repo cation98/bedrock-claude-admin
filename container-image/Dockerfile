@@ -131,6 +131,14 @@ COPY --chown=node:node config/plugins-data/ /home/node/.claude/plugins/data/
 # 파일 업로드/다운로드 서버
 COPY fileserver.py /usr/local/bin/fileserver.py
 
+# 웹앱 배포 CLI 스크립트 (entrypoint.sh가 /home/node/.local/bin/에 설치)
+COPY scripts/deploy.sh /usr/local/bin/deploy.sh
+RUN chmod +x /usr/local/bin/deploy.sh
+
+# 공유 데이터 심링크 동기화 스크립트 (entrypoint.sh가 백그라운드로 실행)
+COPY scripts/share-sync.sh /usr/local/bin/share-sync.sh
+RUN chmod +x /usr/local/bin/share-sync.sh
+
 # 엔트리포인트 스크립트
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh

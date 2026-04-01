@@ -1,13 +1,12 @@
 """
-Claude Code Platform -- Business Hours Scheduler
-Triggered by EventBridge rules to manage node/pod lifecycle.
+Claude Code Platform -- Schedule Handler (DEPRECATED)
 
-Actions:
-  startup     -- Scale up nodes (weekday 09:00 KST)
-  warning-30  -- Send 30-min shutdown warning (weekday 17:30 KST)
-  warning-15  -- Send 15-min shutdown warning (weekday 17:45 KST)
-  shutdown    -- Terminate pods + scale down nodes (weekday 18:00 KST)
-  auto-scale  -- Remove empty nodes (every 30 min during business hours)
+업무시간(09-18) 기반 강제 종료는 폐지됨 (2026-04-01).
+EventBridge 5개 규칙 모두 DISABLED 상태.
+Pod 수명은 사용자별 pod_ttl(7d/30d/unlimited)로만 관리.
+
+이 Lambda는 더 이상 호출되지 않습니다.
+향후 삭제 대상.
 """
 
 import json

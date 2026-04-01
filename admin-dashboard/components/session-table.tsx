@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { Session } from "@/lib/api";
 import FileModal from "./file-modal";
+import Pagination, { SearchInput } from "./pagination";
 
 interface SessionTableProps {
   sessions: Session[];
@@ -66,6 +67,23 @@ export default function SessionTable({
 }: SessionTableProps) {
   const [fileModalPod, setFileModalPod] = useState<Session | null>(null);
   const [, setTick] = useState(0);
+  const [sessionSearch, setSessionSearch] = useState("");
+  const [sessionPage, setSessionPage] = useState(1);
+  const PAGE_SIZE = 10;
+
+  const filteredSessions = sessions.filter((s) => {
+    if (!sessionSearch) return true;
+    const q = sessionSearch.toLowerCase();
+    return (s.user_name ?? s.username).toLowerCase().includes(q) ||
+      s.username.toLowerCase().includes(q) ||
+      s.pod_name.toLowerCase().includes(q);
+  });
+
+  useEffect(() => { setSessionPage(1); }, [sessionSearch]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredSessions.length / PAGE_SIZE));
+  const safePage = Math.min(sessionPage, totalPages);
+  const paginatedSessions = filteredSessions.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   const hasExpiry = sessions.some((s) => s.expires_at != null);
   useEffect(() => {
@@ -98,6 +116,10 @@ export default function SessionTable({
         onClose={() => setFileModalPod(null)}
       />
     )}
+    <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-100">
+      <SearchInput value={sessionSearch} onChange={setSessionSearch} placeholder="세션 검색 (사용자, Pod)..." />
+      {sessionSearch && <span className="text-xs text-gray-400">{filteredSessions.length}건</span>}
+    </div>
     <div className="overflow-x-auto">
       <table className="min-w-full divide-y divide-gray-200">
         <thead className="bg-gray-50">
@@ -131,7 +153,7 @@ export default function SessionTable({
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-200 bg-white">
-          {sessions.map((s) => {
+          {paginatedSessions.map((s) => {
             const countdown = formatCountdown(s.expires_at);
             return (
               <tr key={s.pod_name} className="hover:bg-gray-50">
@@ -202,6 +224,13 @@ export default function SessionTable({
         </tbody>
       </table>
     </div>
+    <Pagination
+      currentPage={safePage}
+      totalPages={totalPages}
+      totalItems={filteredSessions.length}
+      itemsPerPage={PAGE_SIZE}
+      onPageChange={setSessionPage}
+    />
     </>
   );
 }

@@ -62,6 +62,10 @@ class Settings(BaseSettings):
     tango_database_url: str = ""  # TANGO 알람 DB (aiagentdb) ReadOnly
     doculog_database_url: str = ""  # Docu-Log 문서활동 분석 DB
 
+    # ----- 유휴 Pod 자동 정리 -----
+    idle_timeout_minutes: int = 60          # 이 시간 이상 유휴 상태면 Pod 해제
+    idle_check_interval_seconds: int = 600  # 유휴 체크 주기 (10분)
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

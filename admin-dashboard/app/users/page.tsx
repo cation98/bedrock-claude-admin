@@ -8,6 +8,7 @@ import {
   getPendingUsers,
   approveUser,
   updateUserTtl,
+  updateUserDeployApps,
   revokeUser,
   rejectUser,
   searchMembers,
@@ -17,6 +18,7 @@ import {
   type OGuardProfile,
 } from "@/lib/api";
 import { isAuthenticated, logout, getUser } from "@/lib/auth";
+import Pagination, { SearchInput } from "@/components/pagination";
 
 const REFRESH_INTERVAL = 10_000;
 
@@ -86,6 +88,11 @@ export default function UsersPage() {
 
   // TTL for the approval dropdown per pending user (default: "4h")
   const [pendingTtl, setPendingTtl] = useState<Record<number, string>>({});
+  const [approvedSearch, setApprovedSearch] = useState("");
+  const [approvedPage, setApprovedPage] = useState(1);
+  const [pendingSearch, setPendingSearch] = useState("");
+  const [pendingPage, setPendingPage] = useState(1);
+  const PAGE_SIZE = 10;
 
   const fetchData = useCallback(async () => {
     try {
@@ -185,6 +192,38 @@ export default function UsersPage() {
     }
   }
 
+  const filteredPending = pendingUsers.filter((u) => {
+    if (!pendingSearch) return true;
+    const q = pendingSearch.toLowerCase();
+    return (u.name ?? u.username).toLowerCase().includes(q) ||
+      u.username.toLowerCase().includes(q) ||
+      (u.region_name || "").toLowerCase().includes(q) ||
+      (u.team_name || "").toLowerCase().includes(q);
+  });
+
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  useEffect(() => { setPendingPage(1); }, [pendingSearch]);
+
+  const pendingTotalPages = Math.max(1, Math.ceil(filteredPending.length / PAGE_SIZE));
+  const pendingSafePage = Math.min(pendingPage, pendingTotalPages);
+  const paginatedPending = filteredPending.slice((pendingSafePage - 1) * PAGE_SIZE, pendingSafePage * PAGE_SIZE);
+
+  const filteredApproved = approvedUsers.filter((u) => {
+    if (!approvedSearch) return true;
+    const q = approvedSearch.toLowerCase();
+    return (u.name ?? u.username).toLowerCase().includes(q) ||
+      u.username.toLowerCase().includes(q) ||
+      (u.region_name || "").toLowerCase().includes(q) ||
+      (u.team_name || "").toLowerCase().includes(q);
+  });
+
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  useEffect(() => { setApprovedPage(1); }, [approvedSearch]);
+
+  const approvedTotalPages = Math.max(1, Math.ceil(filteredApproved.length / PAGE_SIZE));
+  const approvedSafePage = Math.min(approvedPage, approvedTotalPages);
+  const paginatedApproved = filteredApproved.slice((approvedSafePage - 1) * PAGE_SIZE, approvedSafePage * PAGE_SIZE);
+
   return (
     <div className="min-h-screen">
       {/* Header */}
@@ -206,6 +245,12 @@ export default function UsersPage() {
                 className="text-blue-600 border-b-2 border-blue-600 pb-0.5"
               >
                 사용자 관리
+              </Link>
+              <Link href="/apps" className="hover:text-gray-900 transition-colors">
+                앱 관리
+              </Link>
+              <Link href="/audit" className="hover:text-gray-900 transition-colors">
+                감사 로그
               </Link>
               <Link
                 href="/security"
@@ -354,16 +399,19 @@ export default function UsersPage() {
                 <h2 className="text-sm font-semibold text-gray-900">
                   승인 대기 ({pendingUsers.length})
                 </h2>
-                <span className="text-xs text-gray-400">
-                  10초마다 자동 갱신
-                </span>
+                <div className="flex items-center gap-3">
+                  <SearchInput value={pendingSearch} onChange={setPendingSearch} placeholder="대기자 검색..." />
+                  {pendingSearch && <span className="text-xs text-gray-400">{filteredPending.length}건</span>}
+                  <span className="text-xs text-gray-400">10초마다 자동 갱신</span>
+                </div>
               </div>
 
-              {pendingUsers.length === 0 ? (
+              {filteredPending.length === 0 ? (
                 <div className="flex items-center justify-center py-12 text-gray-400">
-                  승인 대기 중인 사용자가 없습니다.
+                  {pendingSearch ? "검색 결과가 없습니다." : "승인 대기 중인 사용자가 없습니다."}
                 </div>
               ) : (
+                <>
                 <div className="overflow-x-auto">
                   <table className="min-w-full divide-y divide-gray-200">
                     <thead className="bg-gray-50">
@@ -389,7 +437,7 @@ export default function UsersPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200 bg-white">
-                      {pendingUsers.map((u) => (
+                      {paginatedPending.map((u) => (
                         <tr key={u.id} className="hover:bg-gray-50">
                           <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-gray-900">
                             {u.name ?? u.username}
@@ -447,22 +495,35 @@ export default function UsersPage() {
                     </tbody>
                   </table>
                 </div>
+                <Pagination
+                  currentPage={pendingSafePage}
+                  totalPages={pendingTotalPages}
+                  totalItems={filteredPending.length}
+                  itemsPerPage={PAGE_SIZE}
+                  onPageChange={setPendingPage}
+                />
+                </>
               )}
             </div>
 
             {/* Approved Users */}
             <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
-              <div className="border-b border-gray-200 px-4 py-3">
+              <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
                 <h2 className="text-sm font-semibold text-gray-900">
                   허용 목록 ({approvedUsers.length})
                 </h2>
+                <div className="flex items-center gap-2">
+                  <SearchInput value={approvedSearch} onChange={setApprovedSearch} placeholder="사용자 검색..." />
+                  {approvedSearch && <span className="text-xs text-gray-400">{filteredApproved.length}건</span>}
+                </div>
               </div>
 
-              {approvedUsers.length === 0 ? (
+              {filteredApproved.length === 0 ? (
                 <div className="flex items-center justify-center py-12 text-gray-400">
-                  승인된 사용자가 없습니다.
+                  {approvedSearch ? "검색 결과가 없습니다." : "승인된 사용자가 없습니다."}
                 </div>
               ) : (
+                <>
                 <div className="overflow-x-auto">
                   <table className="min-w-full divide-y divide-gray-200">
                     <thead className="bg-gray-50">
@@ -482,6 +543,9 @@ export default function UsersPage() {
                         <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                           Pod TTL
                         </th>
+                        <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-gray-500">
+                          앱 배포
+                        </th>
                         <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                           승인일
                         </th>
@@ -491,7 +555,7 @@ export default function UsersPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200 bg-white">
-                      {approvedUsers.map((u) => (
+                      {paginatedApproved.map((u) => (
                         <tr key={u.id} className="hover:bg-gray-50">
                           <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-gray-900">
                             {u.name ?? u.username}
@@ -537,6 +601,20 @@ export default function UsersPage() {
                               ))}
                             </select>
                           </td>
+                          <td className="whitespace-nowrap px-4 py-3 text-sm text-center">
+                            <button
+                              onClick={async () => {
+                                try {
+                                  await updateUserDeployApps(u.id, !u.can_deploy_apps);
+                                  setSuccess(`${u.name || u.username} 앱 배포 권한 ${!u.can_deploy_apps ? "부여" : "회수"}`);
+                                  fetchData();
+                                } catch { setError("앱 배포 권한 변경 실패"); }
+                              }}
+                              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${u.can_deploy_apps ? "bg-blue-600" : "bg-gray-300"}`}
+                            >
+                              <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${u.can_deploy_apps ? "translate-x-4" : "translate-x-0.5"}`} />
+                            </button>
+                          </td>
                           <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
                             {formatDate(u.approved_at)}
                           </td>
@@ -553,6 +631,14 @@ export default function UsersPage() {
                     </tbody>
                   </table>
                 </div>
+                <Pagination
+                  currentPage={approvedSafePage}
+                  totalPages={approvedTotalPages}
+                  totalItems={filteredApproved.length}
+                  itemsPerPage={PAGE_SIZE}
+                  onPageChange={setApprovedPage}
+                />
+                </>
               )}
             </div>
           </div>

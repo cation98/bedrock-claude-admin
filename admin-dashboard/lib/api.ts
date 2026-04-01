@@ -170,6 +170,7 @@ export interface User {
   role: string;
   is_approved: boolean;
   pod_ttl: string;
+  can_deploy_apps: boolean;
   approved_at: string | null;
   last_login_at: string | null;
 }
@@ -218,6 +219,37 @@ export function rejectUser(userId: number): Promise<{ deleted: boolean; username
   return request<{ deleted: boolean; username: string }>(`/api/v1/users/${userId}`, {
     method: "DELETE",
   });
+}
+
+export function updateUserDeployApps(userId: number, canDeploy: boolean): Promise<User> {
+  return request<User>(`/api/v1/users/${userId}/deploy-apps`, {
+    method: "PATCH",
+    body: JSON.stringify({ can_deploy_apps: canDeploy }),
+  });
+}
+
+// ---------- Deployed Apps (Admin) ----------
+
+export interface DeployedApp {
+  id: number;
+  owner_username: string;
+  owner_name?: string;
+  app_name: string;
+  app_url: string;
+  pod_name: string;
+  status: string;
+  version: string;
+  acl_count?: number;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface DeployedAppsResponse {
+  apps: DeployedApp[];
+}
+
+export function getAdminApps(): Promise<DeployedAppsResponse> {
+  return request<DeployedAppsResponse>("/api/v1/admin/apps");
 }
 
 // ---------- Users: Search + Direct Add ----------
@@ -412,6 +444,16 @@ export function takeTokenSnapshot(): Promise<{ saved: number; date: string }> {
   return request<{ saved: number; date: string }>("/api/v1/admin/token-usage/snapshot", { method: "POST" });
 }
 
+export interface HourlyUsageResponse {
+  date: string;
+  users: Record<string, number[]>; // username -> 24 hourly values
+}
+
+export function getTokenUsageHourly(date?: string): Promise<HourlyUsageResponse> {
+  const params = date ? `?date=${date}` : "";
+  return request<HourlyUsageResponse>(`/api/v1/admin/token-usage/hourly${params}`);
+}
+
 // ---------- Admin: Infrastructure ----------
 
 export interface PodInfo {
@@ -543,17 +585,10 @@ export function rejectExtension(requestId: number): Promise<{ status: string }> 
   return request<{ status: string }>(`/api/v1/schedule/extension/reject/${requestId}`, { method: "POST" });
 }
 
-export function triggerShutdownWarning(minutes: number): Promise<{ warned: number }> {
-  return request<{ warned: number }>(`/api/v1/schedule/shutdown-warning?minutes_before=${minutes}`, { method: "POST" });
-}
-
-export function triggerShutdown(): Promise<{ terminated: number }> {
-  return request<{ terminated: number }>("/api/v1/schedule/shutdown", { method: "POST" });
-}
-
-export function triggerStartup(nodes: number): Promise<{ status: string }> {
-  return request<{ status: string }>(`/api/v1/schedule/startup?desired_nodes=${nodes}`, { method: "POST" });
-}
+// [비활성] 업무시간 스케줄 폐지 (2026-04-01) — Pod 수명은 사용자별 TTL로 관리
+// export function triggerShutdownWarning(...)
+// export function triggerShutdown(...)
+// export function triggerStartup(...)
 
 // ---------- Infra Policy ----------
 
@@ -625,4 +660,66 @@ export interface TableInfo {
 
 export function getSecurityTables(): Promise<{ safety: TableInfo[]; tango: TableInfo[]; doculog: TableInfo[] }> {
   return request<{ safety: TableInfo[]; tango: TableInfo[]; doculog: TableInfo[] }>("/api/v1/security/tables");
+}
+
+// ---------- Prompt Audit ----------
+
+export interface PromptAuditUser {
+  username: string;
+  user_name: string | null;
+  total_prompts: number;
+  total_chars: number;
+  category_counts: Record<string, number>;
+  flagged_count: number;
+}
+
+export interface PromptAuditSummaryResponse {
+  date_from: string;
+  date_to: string;
+  users: PromptAuditUser[];
+  category_totals: Record<string, number>;
+  total_prompts: number;
+  total_flags: number;
+}
+
+export interface PromptAuditFlag {
+  id: number;
+  username: string;
+  flagged_at: string;
+  category: string;
+  severity: string;
+  prompt_excerpt: string;
+  reason: string;
+  reviewed: boolean;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+}
+
+export interface PromptAuditFlagsResponse {
+  flags: PromptAuditFlag[];
+}
+
+export function getPromptAuditSummary(dateFrom?: string, dateTo?: string): Promise<PromptAuditSummaryResponse> {
+  const params = new URLSearchParams();
+  if (dateFrom) params.set("date_from", dateFrom);
+  if (dateTo) params.set("date_to", dateTo);
+  const q = params.toString();
+  return request<PromptAuditSummaryResponse>(`/api/v1/admin/prompt-audit/summary${q ? "?" + q : ""}`);
+}
+
+export function getPromptAuditFlags(severity?: string, reviewed?: boolean, limit?: number): Promise<PromptAuditFlagsResponse> {
+  const params = new URLSearchParams();
+  if (severity) params.set("severity", severity);
+  if (reviewed !== undefined) params.set("reviewed", String(reviewed));
+  if (limit) params.set("limit", String(limit));
+  const q = params.toString();
+  return request<PromptAuditFlagsResponse>(`/api/v1/admin/prompt-audit/flags${q ? "?" + q : ""}`);
+}
+
+export function reviewPromptFlag(flagId: number): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/api/v1/admin/prompt-audit/flags/${flagId}/review`, { method: "POST" });
+}
+
+export function triggerPromptAudit(): Promise<{ analyzed: number }> {
+  return request<{ analyzed: number }>("/api/v1/admin/prompt-audit/collect", { method: "POST" });
 }

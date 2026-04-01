@@ -53,7 +53,7 @@ class TokenUsageResponse(BaseModel):
 # Bedrock Claude Sonnet pricing
 INPUT_PRICE = 3.0 / 1_000_000
 OUTPUT_PRICE = 15.0 / 1_000_000
-KRW_RATE = 1380
+KRW_RATE = 1530
 
 
 def _collect_tokens_from_pod(v1: client.CoreV1Api, pod_name: str, namespace: str) -> tuple[int, int]:
@@ -835,15 +835,13 @@ async def get_audit_logs(
 
 # ==================== Token Usage Daily Tracking ====================
 
-@router.post("/token-usage/snapshot")
-async def take_token_snapshot(
-    _admin: dict = Depends(_require_admin),
-    settings: Settings = Depends(get_settings),
-):
-    """현재 실행 중인 Pod의 토큰 사용량을 DB에 스냅샷 저장."""
-    from app.core.database import SessionLocal
+def do_snapshot(db, settings: Settings) -> dict:
+    """스냅샷 공통 로직 — API 엔드포인트와 백그라운드 스케줄러 모두에서 사용.
+
+    실행 중인 Pod의 토큰 사용량을 수집하여 token_usage_daily + token_usage_hourly에 upsert.
+    """
     from app.models.user import User
-    from app.models.token_usage import TokenUsageDaily
+    from app.models.token_usage import TokenUsageDaily, TokenUsageHourly
     from app.models.session import TerminalSession
 
     v1 = client.CoreV1Api()
@@ -853,9 +851,10 @@ async def take_token_snapshot(
         field_selector="status.phase=Running",
     )
 
-    db = SessionLocal()
     users_db = {u.username: u.name for u in db.query(User).all()}
+    now = datetime.now(timezone.utc)
     today = date_type.today()
+    current_hour = now.hour
 
     saved = 0
     for pod in pods.items:
@@ -866,44 +865,111 @@ async def take_token_snapshot(
         cost_usd = round(input_t * INPUT_PRICE + output_t * OUTPUT_PRICE, 4)
         cost_krw = round(float(cost_usd) * KRW_RATE)
 
-        # Calculate session minutes from terminal_sessions
+        # 세션 시간 계산
         session = db.query(TerminalSession).filter(
             TerminalSession.pod_name == pod_name,
             TerminalSession.pod_status == "running",
         ).first()
         minutes = 0
         if session and session.started_at:
-            delta = datetime.now(timezone.utc) - session.started_at
+            delta = now - session.started_at
             minutes = int(delta.total_seconds() / 60)
 
-        # Upsert
-        existing = db.query(TokenUsageDaily).filter(
+        # ---- token_usage_daily upsert ----
+        existing_daily = db.query(TokenUsageDaily).filter(
             TokenUsageDaily.username == username,
             TokenUsageDaily.usage_date == today,
         ).first()
 
-        if existing:
-            existing.input_tokens = input_t
-            existing.output_tokens = output_t
-            existing.total_tokens = total
-            existing.cost_usd = cost_usd
-            existing.cost_krw = cost_krw
-            existing.session_minutes = minutes
-            existing.last_activity_at = datetime.now(timezone.utc)
-            existing.user_name = users_db.get(username)
+        if existing_daily:
+            existing_daily.input_tokens = input_t
+            existing_daily.output_tokens = output_t
+            existing_daily.total_tokens = total
+            existing_daily.cost_usd = cost_usd
+            existing_daily.cost_krw = cost_krw
+            existing_daily.session_minutes = minutes
+            existing_daily.last_activity_at = now
+            existing_daily.user_name = users_db.get(username)
         else:
             record = TokenUsageDaily(
                 username=username, user_name=users_db.get(username),
                 usage_date=today, input_tokens=input_t, output_tokens=output_t,
                 total_tokens=total, cost_usd=cost_usd, cost_krw=cost_krw,
-                session_minutes=minutes, last_activity_at=datetime.now(timezone.utc),
+                session_minutes=minutes, last_activity_at=now,
             )
             db.add(record)
+
+        # ---- token_usage_hourly upsert ----
+        existing_hourly = db.query(TokenUsageHourly).filter(
+            TokenUsageHourly.username == username,
+            TokenUsageHourly.usage_date == today,
+            TokenUsageHourly.hour == current_hour,
+        ).first()
+
+        if existing_hourly:
+            existing_hourly.input_tokens = input_t
+            existing_hourly.output_tokens = output_t
+            existing_hourly.total_tokens = total
+            existing_hourly.cost_usd = cost_usd
+            existing_hourly.cost_krw = cost_krw
+        else:
+            hourly_record = TokenUsageHourly(
+                username=username,
+                usage_date=today, hour=current_hour,
+                input_tokens=input_t, output_tokens=output_t,
+                total_tokens=total, cost_usd=cost_usd, cost_krw=cost_krw,
+            )
+            db.add(hourly_record)
+
         saved += 1
 
     db.commit()
-    db.close()
     return {"saved": saved, "date": str(today)}
+
+
+@router.post("/token-usage/snapshot")
+async def take_token_snapshot(
+    _admin: dict = Depends(_require_admin),
+    settings: Settings = Depends(get_settings),
+):
+    """현재 실행 중인 Pod의 토큰 사용량을 DB에 스냅샷 저장."""
+    from app.core.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        result = do_snapshot(db, settings)
+    finally:
+        db.close()
+    return result
+
+
+@router.get("/token-usage/hourly")
+async def get_token_usage_hourly(
+    date: str = None,
+    admin: dict = Depends(_require_admin),
+):
+    """시간별 토큰 사용량 (스파크라인 차트용). 날짜 미지정 시 오늘."""
+    from app.core.database import SessionLocal
+    from app.models.token_usage import TokenUsageHourly
+
+    target = date_type.fromisoformat(date) if date else date_type.today()
+    db = SessionLocal()
+    records = db.query(TokenUsageHourly).filter(
+        TokenUsageHourly.usage_date == target,
+    ).all()
+    db.close()
+
+    # 사용자별 24시간 배열 구성
+    users: dict[str, list[int]] = {}
+    for r in records:
+        if r.username not in users:
+            users[r.username] = [0] * 24
+        users[r.username][r.hour] = r.total_tokens
+
+    return {
+        "date": str(target),
+        "users": users,
+    }
 
 
 @router.get("/token-usage/daily")
@@ -911,31 +977,51 @@ async def get_daily_usage(
     date: str = None,  # YYYY-MM-DD, default today
     _admin: dict = Depends(_require_admin),
 ):
-    """일별 토큰 사용량 조회."""
+    """일별 토큰 사용량 조회 — 승인된 전체 사용자 포함 (데이터 없으면 0)."""
     from app.core.database import SessionLocal
     from app.models.token_usage import TokenUsageDaily
+    from app.models.user import User
 
     target = date_type.fromisoformat(date) if date else date_type.today()
     db = SessionLocal()
+
+    # 승인된 전체 사용자
+    all_users = db.query(User).filter(User.is_approved == True).all()
+
+    # 해당 날짜 사용량 데이터
     records = db.query(TokenUsageDaily).filter(
         TokenUsageDaily.usage_date == target,
-    ).order_by(TokenUsageDaily.total_tokens.desc()).all()
+    ).all()
+    usage_map = {r.username: r for r in records}
     db.close()
+
+    # 전체 사용자 + 사용량 (없으면 0)
+    user_list = []
+    for user in all_users:
+        usage = usage_map.get(user.username)
+        user_list.append({
+            "username": user.username,
+            "user_name": usage.user_name if usage else (user.name or user.username),
+            "input_tokens": usage.input_tokens if usage else 0,
+            "output_tokens": usage.output_tokens if usage else 0,
+            "total_tokens": usage.total_tokens if usage else 0,
+            "cost_usd": float(usage.cost_usd) if usage else 0.0,
+            "cost_krw": usage.cost_krw if usage else 0,
+            "session_minutes": usage.session_minutes if usage else 0,
+            "last_activity_at": usage.last_activity_at.isoformat() if usage and usage.last_activity_at else None,
+        })
+
+    # total_tokens 내림차순 정렬
+    user_list.sort(key=lambda x: x["total_tokens"], reverse=True)
 
     return {
         "date": str(target),
-        "users": [{
-            "username": r.username, "user_name": r.user_name,
-            "input_tokens": r.input_tokens, "output_tokens": r.output_tokens,
-            "total_tokens": r.total_tokens, "cost_usd": float(r.cost_usd),
-            "cost_krw": r.cost_krw, "session_minutes": r.session_minutes,
-            "last_activity_at": r.last_activity_at.isoformat() if r.last_activity_at else None,
-        } for r in records],
-        "total_input": sum(r.input_tokens for r in records),
-        "total_output": sum(r.output_tokens for r in records),
-        "total_tokens": sum(r.total_tokens for r in records),
-        "total_cost_usd": round(sum(float(r.cost_usd) for r in records), 4),
-        "total_cost_krw": sum(r.cost_krw for r in records),
+        "users": user_list,
+        "total_input": sum(u["input_tokens"] for u in user_list),
+        "total_output": sum(u["output_tokens"] for u in user_list),
+        "total_tokens": sum(u["total_tokens"] for u in user_list),
+        "total_cost_usd": round(sum(u["cost_usd"] for u in user_list), 4),
+        "total_cost_krw": sum(u["cost_krw"] for u in user_list),
     }
 
 
@@ -944,9 +1030,10 @@ async def get_monthly_usage(
     month: str = None,  # YYYY-MM, default current
     _admin: dict = Depends(_require_admin),
 ):
-    """월별 토큰 사용량 합계."""
+    """월별 토큰 사용량 합계 — 승인된 전체 사용자 포함 (데이터 없으면 0)."""
     from app.core.database import SessionLocal
     from app.models.token_usage import TokenUsageDaily
+    from app.models.user import User
     from sqlalchemy import func, extract
 
     if month:
@@ -956,6 +1043,11 @@ async def get_monthly_usage(
         year, mon = today.year, today.month
 
     db = SessionLocal()
+
+    # 승인된 전체 사용자
+    all_users = db.query(User).filter(User.is_approved == True).all()
+
+    # 해당 월 사용량 집계
     records = db.query(
         TokenUsageDaily.username,
         TokenUsageDaily.user_name,
@@ -969,19 +1061,32 @@ async def get_monthly_usage(
     ).filter(
         extract("year", TokenUsageDaily.usage_date) == int(year),
         extract("month", TokenUsageDaily.usage_date) == int(mon),
-    ).group_by(TokenUsageDaily.username, TokenUsageDaily.user_name
-    ).order_by(func.sum(TokenUsageDaily.total_tokens).desc()).all()
+    ).group_by(TokenUsageDaily.username, TokenUsageDaily.user_name).all()
+    usage_map = {r.username: r for r in records}
     db.close()
+
+    # 전체 사용자 + 사용량 (없으면 0)
+    user_list = []
+    for user in all_users:
+        usage = usage_map.get(user.username)
+        user_list.append({
+            "username": user.username,
+            "user_name": usage.user_name if usage else (user.name or user.username),
+            "input_tokens": int(usage.input_tokens or 0) if usage else 0,
+            "output_tokens": int(usage.output_tokens or 0) if usage else 0,
+            "total_tokens": int(usage.total_tokens or 0) if usage else 0,
+            "cost_usd": round(float(usage.cost_usd or 0), 4) if usage else 0.0,
+            "cost_krw": int(usage.cost_krw or 0) if usage else 0,
+            "session_minutes": int(usage.session_minutes or 0) if usage else 0,
+            "last_activity_at": usage.last_activity_at.isoformat() if usage and usage.last_activity_at else None,
+        })
+
+    # total_tokens 내림차순 정렬
+    user_list.sort(key=lambda x: x["total_tokens"], reverse=True)
 
     return {
         "month": f"{year}-{str(mon).zfill(2)}",
-        "users": [{
-            "username": r.username, "user_name": r.user_name,
-            "input_tokens": int(r.input_tokens or 0), "output_tokens": int(r.output_tokens or 0),
-            "total_tokens": int(r.total_tokens or 0), "cost_usd": round(float(r.cost_usd or 0), 4),
-            "cost_krw": int(r.cost_krw or 0), "session_minutes": int(r.session_minutes or 0),
-            "last_activity_at": r.last_activity_at.isoformat() if r.last_activity_at else None,
-        } for r in records],
+        "users": user_list,
     }
 
 
@@ -1013,3 +1118,142 @@ async def get_user_usage_history(
             "cost_krw": r.cost_krw, "session_minutes": r.session_minutes,
         } for r in records],
     }
+
+
+# ==================== 프롬프트 감사 ====================
+
+
+@router.get("/prompt-audit/summary")
+async def get_prompt_audit_summary(
+    date_from: str = None,   # YYYY-MM-DD
+    date_to: str = None,     # YYYY-MM-DD
+    admin: dict = Depends(_require_admin),
+    settings: Settings = Depends(get_settings),
+):
+    """프롬프트 카테고리별 사용 추이 요약."""
+    from app.core.database import SessionLocal
+    from app.services.prompt_audit_service import PromptAuditService
+
+    parsed_from = None
+    parsed_to = None
+    if date_from:
+        parsed_from = date_type.fromisoformat(date_from)
+    if date_to:
+        parsed_to = date_type.fromisoformat(date_to)
+
+    db = SessionLocal()
+    try:
+        svc = PromptAuditService()
+        return svc.get_summary(db, date_from=parsed_from, date_to=parsed_to)
+    finally:
+        db.close()
+
+
+@router.get("/prompt-audit/flags")
+async def get_prompt_audit_flags(
+    severity: str = None,      # low, medium, high, critical
+    reviewed: bool = None,
+    limit: int = 50,
+    admin: dict = Depends(_require_admin),
+):
+    """보안 위반 플래그 목록."""
+    from app.core.database import SessionLocal
+    from app.services.prompt_audit_service import PromptAuditService
+
+    db = SessionLocal()
+    try:
+        svc = PromptAuditService()
+        flags = svc.get_flags(db, severity=severity, reviewed=reviewed, limit=limit)
+        return {"flags": flags}
+    finally:
+        db.close()
+
+
+@router.post("/prompt-audit/flags/{flag_id}/review")
+async def review_prompt_flag(
+    flag_id: int,
+    admin: dict = Depends(_require_admin),
+):
+    """보안 플래그 검토 완료 처리."""
+    from app.core.database import SessionLocal
+    from app.services.prompt_audit_service import PromptAuditService
+
+    db = SessionLocal()
+    try:
+        result = PromptAuditService.review_flag(db, flag_id, reviewer=admin.get("sub", "admin"))
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
+        return result
+    finally:
+        db.close()
+
+
+@router.post("/prompt-audit/collect")
+async def trigger_prompt_audit(
+    admin: dict = Depends(_require_admin),
+    settings: Settings = Depends(get_settings),
+):
+    """수동 프롬프트 감사 트리거 — 즉시 수집·분석 실행."""
+    from app.core.database import SessionLocal
+    from app.services.prompt_audit_service import PromptAuditService
+
+    db = SessionLocal()
+    try:
+        svc = PromptAuditService()
+        result = svc.collect_and_analyze(db, namespace=settings.k8s_namespace)
+        return result
+    finally:
+        db.close()
+
+
+# ==================== Deployed Apps ====================
+
+
+@router.get("/apps")
+async def list_deployed_apps(
+    admin: dict = Depends(_require_admin),
+):
+    """관리자용 — 전체 배포 앱 목록."""
+    from app.core.database import SessionLocal
+    from app.models.app import DeployedApp, AppACL
+    from app.models.user import User
+    from sqlalchemy import func
+
+    db = SessionLocal()
+    try:
+        acl_count = (
+            db.query(AppACL.app_id, func.count(AppACL.id).label("cnt"))
+            .filter(AppACL.revoked_at.is_(None))
+            .group_by(AppACL.app_id)
+            .subquery()
+        )
+
+        apps = (
+            db.query(DeployedApp, User.name, acl_count.c.cnt)
+            .outerjoin(User, User.username == DeployedApp.owner_username)
+            .outerjoin(acl_count, acl_count.c.app_id == DeployedApp.id)
+            .filter(DeployedApp.status != "deleted")
+            .order_by(DeployedApp.created_at.desc())
+            .all()
+        )
+
+        return {
+            "apps": [
+                {
+                    "id": app.id,
+                    "owner_username": app.owner_username,
+                    "owner_name": owner_name or app.owner_username,
+                    "app_name": app.app_name,
+                    "app_url": app.app_url,
+                    "pod_name": app.pod_name,
+                    "status": app.status,
+                    "version": app.version,
+                    "acl_count": cnt or 0,
+                    "created_at": app.created_at.isoformat() if app.created_at else None,
+                    "updated_at": app.updated_at.isoformat() if app.updated_at else None,
+                }
+                for app, owner_name, cnt in apps
+            ]
+        }
+    finally:
+        db.close()

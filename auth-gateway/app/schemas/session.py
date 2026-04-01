@@ -20,6 +20,8 @@ class SessionResponse(BaseModel):
     started_at: datetime | None = None
     terminated_at: datetime | None = None
     expires_at: datetime | None = None  # Pod TTL 기반 만료 시간 (unlimited이면 None)
+    last_active_at: datetime | None = None
+    idle_minutes: int | None = None  # 마지막 활동 이후 경과 분 (running 상태일 때만)
 
     model_config = {"from_attributes": True}
 

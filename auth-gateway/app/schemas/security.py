@@ -21,7 +21,7 @@ SECURITY_TEMPLATES = {
         "db_access": {
             "safety": {"allowed": True, "tables": ["*"]},
             "tango": {"allowed": True, "tables": ["*"]},
-            "doculog": {"allowed": True, "tables": ["*"]},
+            "doculog": {"allowed": False, "tables": []},
             "platform": {"allowed": False, "tables": []},
         },
         "allowed_skills": ["*"],

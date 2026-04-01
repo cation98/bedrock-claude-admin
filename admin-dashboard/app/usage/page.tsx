@@ -7,16 +7,19 @@ import {
   getTokenUsage,
   getTokenUsageDaily,
   getTokenUsageMonthly,
+  getTokenUsageHourly,
   takeTokenSnapshot,
   type TokenUsageResponse,
   type DailyUsageResponse,
   type MonthlyUsageResponse,
+  type HourlyUsageResponse,
   type DailyUsageUser,
   getUserUsageHistory,
   type UserUsageHistory,
 } from "@/lib/api";
 import { isAuthenticated, logout, getUser } from "@/lib/auth";
 import StatsCard from "@/components/stats-card";
+import Pagination, { SearchInput } from "@/components/pagination";
 
 const REFRESH_INTERVAL = 30_000;
 
@@ -39,6 +42,47 @@ function formatTime(iso: string | null): string {
   return d.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
+function Sparkline({ data, width = 120, height = 24 }: { data: number[]; width?: number; height?: number }) {
+  if (!data || data.length === 0 || data.every(v => v === 0)) {
+    return <div style={{ width, height }} className="text-gray-300 text-xs flex items-center">—</div>;
+  }
+  const max = Math.max(...data) || 1;
+  const points = data.map((v, i) => {
+    const x = (i / (data.length - 1)) * width;
+    const y = height - (v / max) * (height - 4) - 2;
+    return `${x},${y}`;
+  }).join(" ");
+
+  // Build invisible wider hit-area circles + tooltip rects for hover
+  const currentHour = new Date().getHours();
+
+  return (
+    <svg width={width} height={height} className="inline-block">
+      <polyline
+        points={points}
+        fill="none"
+        stroke="#3b82f6"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      {data.map((v, i) => {
+        const x = (i / (data.length - 1)) * width;
+        const y = height - (v / max) * (height - 4) - 2;
+        return (
+          <g key={i}>
+            <circle cx={x} cy={y} r="4" fill="transparent" className="peer" />
+            <title>{`${String(i).padStart(2, "0")}시: ${v.toLocaleString()} tokens`}</title>
+            {i <= currentHour && v > 0 && (
+              <circle cx={x} cy={y} r="1.5" fill="#3b82f6" opacity="0.5" />
+            )}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
 export default function UsagePage() {
   const router = useRouter();
 
@@ -49,6 +93,7 @@ export default function UsagePage() {
   const [realtimeData, setRealtimeData] = useState<TokenUsageResponse | null>(null);
   const [dailyData, setDailyData] = useState<DailyUsageResponse | null>(null);
   const [monthlyData, setMonthlyData] = useState<MonthlyUsageResponse | null>(null);
+  const [hourlyData, setHourlyData] = useState<HourlyUsageResponse | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -65,10 +110,20 @@ export default function UsagePage() {
   const [detailHistory, setDetailHistory] = useState<UserUsageHistory[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
 
+  // Pagination & search
+  const [usageSearch, setUsageSearch] = useState("");
+  const [usagePage, setUsagePage] = useState(1);
+  const [detailPage, setDetailPage] = useState(1);
+  const PAGE_SIZE = 10;
+
   const fetchRealtime = useCallback(async () => {
     try {
-      const res = await getTokenUsage();
+      const [res, hourly] = await Promise.all([
+        getTokenUsage(),
+        getTokenUsageHourly().catch(() => null),
+      ]);
       setRealtimeData(res);
+      if (hourly) setHourlyData(hourly);
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to fetch");
@@ -199,6 +254,28 @@ export default function UsagePage() {
 
   const showSessionCols = tab !== "realtime";
 
+  // Filter and paginate users
+  const filteredUsers = (users || []).filter((u) => {
+    if (!usageSearch) return true;
+    const q = usageSearch.toLowerCase();
+    return (u.user_name ?? u.username).toLowerCase().includes(q) ||
+      u.username.toLowerCase().includes(q);
+  });
+
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  useEffect(() => { setUsagePage(1); }, [usageSearch, tab]);
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  useEffect(() => { setDetailPage(1); }, [detailUser]);
+
+  const usageTotalPages = Math.max(1, Math.ceil(filteredUsers.length / PAGE_SIZE));
+  const usageSafePage = Math.min(usagePage, usageTotalPages);
+  const paginatedUsers = filteredUsers.slice((usageSafePage - 1) * PAGE_SIZE, usageSafePage * PAGE_SIZE);
+
+  // Paginate detail history
+  const detailTotalPages = Math.max(1, Math.ceil(detailHistory.length / PAGE_SIZE));
+  const detailSafePage = Math.min(detailPage, detailTotalPages);
+  const paginatedDetail = detailHistory.slice((detailSafePage - 1) * PAGE_SIZE, detailSafePage * PAGE_SIZE);
+
   const user = getUser();
 
   const tabBtnClass = (t: Tab) =>
@@ -220,6 +297,12 @@ export default function UsagePage() {
               </Link>
               <Link href="/users" className="hover:text-gray-900 transition-colors">
                 사용자 관리
+              </Link>
+              <Link href="/apps" className="hover:text-gray-900 transition-colors">
+                앱 관리
+              </Link>
+              <Link href="/audit" className="hover:text-gray-900 transition-colors">
+                감사 로그
               </Link>
               <Link href="/security" className="hover:text-gray-900 transition-colors">
                 보안 정책
@@ -308,15 +391,21 @@ export default function UsagePage() {
 
         {/* User table */}
         <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
-          <div className="border-b border-gray-200 px-4 py-3">
-            <h2 className="text-sm font-semibold text-gray-900">사용자별 토큰 사용량</h2>
-            <p className="mt-0.5 text-xs text-gray-400">
+          <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-900">사용자별 토큰 사용량</h2>
+              <p className="mt-0.5 text-xs text-gray-400">
               {tab === "realtime" && realtimeData && (
                 <>수집: {new Date(realtimeData.collected_at).toLocaleString("ko-KR")} / 30초 자동 갱신</>
               )}
               {tab === "daily" && dailyData && <>날짜: {dailyData.date}</>}
               {tab === "monthly" && monthlyData && <>월: {monthlyData.month}</>}
             </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <SearchInput value={usageSearch} onChange={setUsageSearch} placeholder="사용자 검색..." />
+              {usageSearch && <span className="text-xs text-gray-400">{filteredUsers.length}건</span>}
+            </div>
           </div>
 
           {loading ? (
@@ -324,6 +413,7 @@ export default function UsagePage() {
               데이터를 불러오는 중...
             </div>
           ) : (
+            <>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
@@ -334,6 +424,9 @@ export default function UsagePage() {
                     <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-500">Total</th>
                     <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-500">USD</th>
                     <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-500">KRW</th>
+                    {tab === "realtime" && (
+                      <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500">시간별 추이</th>
+                    )}
                     {showSessionCols && (
                       <>
                         <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-500">사용시간</th>
@@ -343,7 +436,7 @@ export default function UsagePage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
-                  {users?.map((u) => (
+                  {paginatedUsers.map((u) => (
                     <tr key={u.username} className={`hover:bg-gray-50 cursor-pointer ${detailUser === u.username ? "bg-blue-50" : ""}`}
                       onClick={() => { setDetailUser(u.username); setDetailUserName(u.user_name || u.username); }}>
                       <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-gray-900">
@@ -365,6 +458,11 @@ export default function UsagePage() {
                       <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums text-gray-600">
                         {fmt(u.cost_krw)}원
                       </td>
+                      {tab === "realtime" && (
+                        <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
+                          <Sparkline data={hourlyData?.users?.[u.username] || []} />
+                        </td>
+                      )}
                       {showSessionCols && (
                         <>
                           <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums text-gray-600">
@@ -378,15 +476,18 @@ export default function UsagePage() {
                     </tr>
                   ))}
                 </tbody>
-                {totals && users && users.length > 0 && (
+                {totals && filteredUsers.length > 0 && (
                   <tfoot className="bg-gray-50">
                     <tr className="font-semibold">
-                      <td className="px-4 py-3 text-sm text-gray-900">합계 ({users.length}명)</td>
+                      <td className="px-4 py-3 text-sm text-gray-900">합계 ({filteredUsers.length}명)</td>
                       <td className="px-4 py-3 text-right text-sm tabular-nums">{fmt(totals.total_input)}</td>
                       <td className="px-4 py-3 text-right text-sm tabular-nums">{fmt(totals.total_output)}</td>
                       <td className="px-4 py-3 text-right text-sm tabular-nums">{fmt(totals.total_tokens)}</td>
                       <td className="px-4 py-3 text-right text-sm tabular-nums">${totals.total_cost_usd.toFixed(4)}</td>
                       <td className="px-4 py-3 text-right text-sm tabular-nums">{fmt(totals.total_cost_krw)}원</td>
+                      {tab === "realtime" && (
+                        <td className="px-4 py-3 text-sm tabular-nums" />
+                      )}
                       {showSessionCols && (
                         <>
                           <td className="px-4 py-3 text-right text-sm tabular-nums" />
@@ -398,6 +499,14 @@ export default function UsagePage() {
                 )}
               </table>
             </div>
+            <Pagination
+              currentPage={usageSafePage}
+              totalPages={usageTotalPages}
+              totalItems={filteredUsers.length}
+              itemsPerPage={PAGE_SIZE}
+              onPageChange={setUsagePage}
+            />
+            </>
           )}
         </div>
 
@@ -426,6 +535,7 @@ export default function UsagePage() {
             ) : detailHistory.length === 0 ? (
               <div className="flex items-center justify-center py-8 text-gray-400">해당 기간에 데이터가 없습니다</div>
             ) : (
+              <>
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-gray-200">
                   <thead className="bg-gray-50">
@@ -440,7 +550,7 @@ export default function UsagePage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200">
-                    {detailHistory.map((h) => (
+                    {paginatedDetail.map((h) => (
                       <tr key={h.date} className="hover:bg-gray-50">
                         <td className="whitespace-nowrap px-4 py-2 text-sm text-gray-900">{h.date}</td>
                         <td className="whitespace-nowrap px-4 py-2 text-right text-sm tabular-nums text-gray-600">{fmt(h.input_tokens)}</td>
@@ -465,6 +575,14 @@ export default function UsagePage() {
                   </tfoot>
                 </table>
               </div>
+              <Pagination
+                currentPage={detailSafePage}
+                totalPages={detailTotalPages}
+                totalItems={detailHistory.length}
+                itemsPerPage={PAGE_SIZE}
+                onPageChange={setDetailPage}
+              />
+              </>
             )}
           </div>
         )}

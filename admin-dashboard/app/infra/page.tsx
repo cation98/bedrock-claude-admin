@@ -28,6 +28,7 @@ import {
 } from "@/lib/api";
 import { isAuthenticated, logout, getUser } from "@/lib/auth";
 import StatsCard from "@/components/stats-card";
+import Pagination from "@/components/pagination";
 
 const REFRESH_INTERVAL = 15_000;
 
@@ -178,6 +179,8 @@ export default function InfraPage() {
   const [assignments, setAssignments] = useState<InfraAssignment[]>([]);
   const [checkedUsers, setCheckedUsers] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState("");
+  const [assignPage, setAssignPage] = useState(1);
+  const PAGE_SIZE = 10;
 
   /* ── Right panel: template management ── */
   const [infraTemplates, setInfraTemplates] = useState<InfraTemplateItem[]>([]);
@@ -363,6 +366,13 @@ export default function InfraPage() {
     );
   });
 
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  useEffect(() => { setAssignPage(1); }, [searchQuery]);
+
+  const assignTotalPages = Math.max(1, Math.ceil(filteredAssignments.length / PAGE_SIZE));
+  const assignSafePage = Math.min(assignPage, assignTotalPages);
+  const paginatedAssignments = filteredAssignments.slice((assignSafePage - 1) * PAGE_SIZE, assignSafePage * PAGE_SIZE);
+
   /* ── Nodegroup names for dropdown ── */
   const nodegroupNames = nodeGroups.map((ng) => ng.name);
 
@@ -378,6 +388,12 @@ export default function InfraPage() {
               </Link>
               <Link href="/users" className="hover:text-gray-900 transition-colors">
                 사용자 관리
+              </Link>
+              <Link href="/apps" className="hover:text-gray-900 transition-colors">
+                앱 관리
+              </Link>
+              <Link href="/audit" className="hover:text-gray-900 transition-colors">
+                감사 로그
               </Link>
               <Link href="/security" className="hover:text-gray-900 transition-colors">
                 보안 정책
@@ -579,7 +595,7 @@ export default function InfraPage() {
                     />
                   </div>
                 </div>
-                <div className="max-h-[340px] overflow-y-auto">
+                <div className="overflow-y-auto">
                   <table className="w-full text-sm">
                     <thead className="sticky top-0 bg-gray-50 text-xs text-gray-500 uppercase">
                       <tr>
@@ -610,7 +626,7 @@ export default function InfraPage() {
                           </td>
                         </tr>
                       ) : (
-                        filteredAssignments.map((user) => (
+                        paginatedAssignments.map((user) => (
                           <tr key={user.user_id} className="hover:bg-gray-50/50">
                             <td className="px-4 py-2">
                               <input
@@ -658,6 +674,13 @@ export default function InfraPage() {
                     </tbody>
                   </table>
                 </div>
+                <Pagination
+                  currentPage={assignSafePage}
+                  totalPages={assignTotalPages}
+                  totalItems={filteredAssignments.length}
+                  itemsPerPage={PAGE_SIZE}
+                  onPageChange={setAssignPage}
+                />
               </div>
 
               {/* Node / Pod Status Cards */}

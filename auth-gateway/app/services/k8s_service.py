@@ -85,6 +85,11 @@ class K8sService:
             # 보안 정책 메타데이터 (컨테이너 내부에서 참조 가능)
             client.V1EnvVar(name="SECURITY_LEVEL", value=security_level),
             client.V1EnvVar(name="SECURITY_POLICY", value=_json.dumps(policy)),
+            # 유휴 감지용 내부 heartbeat — Pod가 5분마다 호출
+            client.V1EnvVar(
+                name="AUTH_GATEWAY_URL",
+                value="http://auth-gateway.platform.svc.cluster.local:8000",
+            ),
         ]
 
         # 조건부 DB 자격증명: 정책에서 허용된 DB만 주입
@@ -179,6 +184,10 @@ class K8sService:
                     "user": username.lower(),
                     "session-type": session_type,
                 },
+                annotations={
+                    # 오토스케일러가 활성 사용자 Pod를 강제 퇴거하지 못하도록 방지
+                    "cluster-autoscaler.kubernetes.io/safe-to-evict": "false",
+                },
             ),
             spec=client.V1PodSpec(
                 # Pod-level 보안 컨텍스트: 비-root 실행 강제
@@ -219,6 +228,13 @@ class K8sService:
                 # 특정 노드 지정 또는 infra_policy 기반 노드 배치
                 node_name=target_node if target_node else None,
                 node_selector=node_selector,
+                # 노드 taint toleration — presenter/user 노드의 dedicated taint 허용
+                tolerations=[
+                    client.V1Toleration(
+                        key="dedicated", operator="Equal",
+                        value="user", effect="NoSchedule",
+                    ),
+                ],
                 containers=[
                     client.V1Container(
                         name="terminal",
@@ -265,6 +281,16 @@ class K8sService:
                                 sub_path="shared",
                                 read_only=shared_read_only,
                             ),
+                            # 전체 사용자 EFS 디렉토리 (readOnly) — 실시간 공유 동기화용
+                            # share-sync.sh가 API 조회 후 ~/workspace/team/ 심링크를 생성하여
+                            # .efs-users/{owner}/shared-data/{name}/ 을 가리킨다.
+                            # Pod 재시작 없이 공유 변경이 반영된다.
+                            client.V1VolumeMount(
+                                name="user-workspace",
+                                mount_path="/home/node/.efs-users",
+                                sub_path="users",
+                                read_only=True,
+                            ),
                         ],
                     )
                 ],
@@ -278,6 +304,12 @@ class K8sService:
                 ],
             ),
         )
+
+        # NOTE: 공유 데이터셋은 더 이상 Pod 생성 시 동적 마운트하지 않음.
+        # 모든 Pod에 .efs-users/ 고정 마운트가 포함되어 있으며,
+        # Pod 내부의 share-sync.sh가 60초 주기로 API를 조회하여
+        # ~/workspace/team/{owner}/{name} 심링크를 생성/삭제한다.
+        # 이 방식으로 공유 추가/해제 시 Pod 재시작 없이 실시간 반영된다.
 
         try:
             self.v1.create_namespaced_pod(namespace=self.namespace, body=pod_manifest)

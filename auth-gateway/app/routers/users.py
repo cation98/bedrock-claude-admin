@@ -20,6 +20,7 @@ from app.core.config import Settings, get_settings
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.user import User
+from app.services.k8s_service import K8sService
 from app.schemas.user import (
     ApproveRequest,
     TTLUpdateRequest,
@@ -117,6 +118,30 @@ async def update_user_ttl(
     return UserResponse.model_validate(user)
 
 
+class DeployAppsUpdateRequest(BaseModel):
+    can_deploy_apps: bool
+
+
+@router.patch("/{user_id}/deploy-apps", response_model=UserResponse)
+async def update_user_deploy_apps(
+    user_id: int,
+    request: DeployAppsUpdateRequest,
+    _admin: dict = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """사용자 앱 배포 권한 변경 (관리자용)."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.can_deploy_apps = request.can_deploy_apps
+    db.commit()
+    db.refresh(user)
+
+    logger.info(f"User {user.username} can_deploy_apps → {request.can_deploy_apps}")
+    return UserResponse.model_validate(user)
+
+
 class PhoneUpdateRequest(BaseModel):
     phone_number: str
 
@@ -178,6 +203,12 @@ async def reject_user(
         raise HTTPException(status_code=400, detail="승인된 사용자는 거절할 수 없습니다. 승인 취소를 먼저 하세요.")
 
     username = user.username
+    # K8s Pod/Service/Ingress 정리 (고아 리소스 방지)
+    try:
+        k8s = K8sService(get_settings())
+        k8s.delete_pod(f"claude-terminal-{username.lower()}")
+    except Exception as e:
+        logger.warning(f"K8s cleanup skipped for {username}: {e}")
     # 관련 세션 먼저 삭제 (외래키 참조 방지)
     from app.models.session import TerminalSession
     db.query(TerminalSession).filter(TerminalSession.user_id == user.id).delete()

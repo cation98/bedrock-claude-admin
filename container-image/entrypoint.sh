@@ -100,6 +100,12 @@ if [ -d "${SECTIONS_DIR}" ]; then
         echo "$KEYWORD_CONTENT" >> "${CLAUDE_MD}"
     fi
 
+    # 대용량 파일 처리 규칙 (항상 포함)
+    if [ -f "${SECTIONS_DIR}/45-large-file-rules.md" ]; then
+        echo "" >> "${CLAUDE_MD}"
+        cat "${SECTIONS_DIR}/45-large-file-rules.md" >> "${CLAUDE_MD}"
+    fi
+
     # Always include web terminal, tools, webapp sections
     echo "" >> "${CLAUDE_MD}"
     # 웹 터미널/도구 섹션 (미허용 DB 도구 제거)
@@ -142,6 +148,10 @@ mkdir -p /home/node/.claude
 mkdir -p /home/node/workspace/exports
 mkdir -p /home/node/workspace/reports
 mkdir -p /home/node/workspace/uploads
+
+# 공유 데이터 디렉토리 준비
+mkdir -p /home/node/workspace/shared-data
+mkdir -p /home/node/workspace/team
 
 # ---------------------------------------------------------------------------
 # 4a) 이전 대화 자동 복원 (EFS 백업 → ~/.claude/)
@@ -244,6 +254,77 @@ fi
 RSCRIPT
 chmod +x /home/node/.local/bin/restore-chat
 
+# deploy / undeploy / deploy-rollback 스크립트 — 웹앱 배포 CLI
+# deploy.sh를 /home/node/.local/bin/deploy로 설치하고 편의 별칭 생성
+if [ -f /usr/local/bin/deploy.sh ]; then
+    cp /usr/local/bin/deploy.sh /home/node/.local/bin/deploy
+    chmod +x /home/node/.local/bin/deploy
+
+    # undeploy: deploy <app> --undeploy 의 단축 명령
+    cat > /home/node/.local/bin/undeploy << 'UDSCRIPT'
+#!/bin/bash
+if [ -z "${1:-}" ]; then
+    echo "사용법: undeploy <앱이름>"
+    echo "  배포된 앱을 삭제합니다. 소스 코드(~/apps/)는 유지됩니다."
+    exit 1
+fi
+exec deploy "$1" --undeploy
+UDSCRIPT
+    chmod +x /home/node/.local/bin/undeploy
+
+    # deploy-rollback: deploy <app> --rollback <version> 의 단축 명령
+    cat > /home/node/.local/bin/deploy-rollback << 'RBSCRIPT'
+#!/bin/bash
+if [ -z "${1:-}" ] || [ -z "${2:-}" ]; then
+    echo "사용법: deploy-rollback <앱이름> <버전>"
+    echo "  예시: deploy-rollback my-app v-20260401-1430"
+    echo ""
+    echo "  배포 가능한 버전 확인: ls ~/deployed/<앱이름>/"
+    exit 1
+fi
+exec deploy "$1" --rollback "$2"
+RBSCRIPT
+    chmod +x /home/node/.local/bin/deploy-rollback
+
+    # 앱 개발 디렉토리 사전 생성
+    mkdir -p /home/node/apps
+fi
+
+# ---------------------------------------------------------------------------
+# 4b) 공유 데이터 심링크 동기화 (60초 주기)
+#     .efs-users/ (readOnly EFS 마운트)에서 공유된 데이터셋을
+#     ~/workspace/team/{owner}/{name} 심링크로 생성/삭제.
+#     공유 추가/해제 시 Pod 재시작 없이 실시간 반영.
+# ---------------------------------------------------------------------------
+if [ -n "${AUTH_GATEWAY_URL:-}" ] && [ -d "/home/node/.efs-users" ]; then
+    (bash /usr/local/bin/share-sync.sh) &
+    echo "  공유 동기화 시작 (60초 주기)"
+fi
+
+# ---------------------------------------------------------------------------
+# 4c) 유휴 감지 heartbeat (5분마다) — 브라우저 접속 중일 때만 전송
+#     ttyd 포트(7681=0x1E01)에 ESTABLISHED 연결이 있을 때만 heartbeat 전송.
+#     브라우저가 닫히면 heartbeat 중단 → 60분 후 idle cleanup이 Pod 종료.
+# ---------------------------------------------------------------------------
+if [ -n "${AUTH_GATEWAY_URL:-}" ]; then
+    POD_NAME="claude-terminal-$(echo ${USER_ID} | tr '[:upper:]' '[:lower:]')"
+    (while true; do
+        sleep 300
+        # 포트 7681(0x1E01)에 ESTABLISHED(01) 연결 확인
+        ACTIVE=$(awk '$2 ~ /:1E01$/ && $4 == "01"' /proc/net/tcp 2>/dev/null | wc -l)
+        if [ "$ACTIVE" -gt 0 ]; then
+            curl -sf -X POST "${AUTH_GATEWAY_URL}/api/v1/sessions/internal-heartbeat" \
+                -H "X-Pod-Name: ${POD_NAME}" \
+                --max-time 5 2>/dev/null || true
+        fi
+    done) &
+fi
+
+# ---------------------------------------------------------------------------
+# 4c) 대화이력 주기적 자동 백업 (30분마다) — TTL 만료/크래시 시에도 보존
+# ---------------------------------------------------------------------------
+(while true; do sleep 1800; backup-chat 2>/dev/null; done) &
+
 export PATH="/home/node/.local/bin:$PATH"
 
 # ---------------------------------------------------------------------------
@@ -281,15 +362,36 @@ AVAIL_CMDS="claude"
 [ -n "${TANGO_DATABASE_URL:-}" ] && AVAIL_CMDS="${AVAIL_CMDS} / psql-tango"
 grep -q "doculog_reader" /home/node/.pgpass 2>/dev/null && AVAIL_CMDS="${AVAIL_CMDS} / psql-doculog"
 AVAIL_CMDS="${AVAIL_CMDS} / /report / /excel"
+[ -f /home/node/.local/bin/deploy ] && AVAIL_CMDS="${AVAIL_CMDS} / deploy"
+
+# 공유 데이터 안내 메시지 구성
+SHARED_DB_MSG=""
+SHARED_COUNT=$(find /home/node/workspace/team -name "*.sqlite" 2>/dev/null | wc -l | tr -d ' ')
+MY_DB_COUNT=$(find /home/node/workspace/shared-data -name "*.sqlite" 2>/dev/null | wc -l | tr -d ' ')
+if [ "$MY_DB_COUNT" -gt 0 ] || [ "$SHARED_COUNT" -gt 0 ]; then
+    SHARED_DB_MSG="  DB: 내 데이터 ${MY_DB_COUNT}개"
+    [ "$SHARED_COUNT" -gt 0 ] && SHARED_DB_MSG="${SHARED_DB_MSG}, 공유받은 데이터 ${SHARED_COUNT}개"
+fi
 
 # 환영 메시지 (unquoted: USER_DISPLAY_NAME, AVAIL_CMDS 확장)
 cat >> /home/node/.bashrc << WELCOME
 echo ""
 echo "  Claude Code Terminal — ${USER_DISPLAY_NAME} 님"
 echo "  ${AVAIL_CMDS}"
+WELCOME
+
+# 공유 데이터 안내 (있는 경우에만)
+if [ -n "$SHARED_DB_MSG" ]; then
+    cat >> /home/node/.bashrc << DBWELCOME
+echo "  ${SHARED_DB_MSG}"
+echo "  /db 명령으로 데이터베이스 조회 가능"
+DBWELCOME
+fi
+
+cat >> /home/node/.bashrc << WELCOMEEND
 echo ""
 cd ~
-WELCOME
+WELCOMEEND
 
 # Claude Code 자동 시작 — .bashrc 자동시작 제거 (보안: claude-wrapper로 대체)
 # ttyd가 claude-wrapper를 직접 실행하므로 .bashrc 자동시작 불필요

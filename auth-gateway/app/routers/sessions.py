@@ -15,7 +15,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 import boto3
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from kubernetes import client as k8s_client
 from sqlalchemy.orm import Session
 
@@ -263,6 +263,12 @@ def _to_response(session: TerminalSession, settings: Settings, ttl_seconds: int 
     if ttl_seconds and ttl_seconds > 0 and session.started_at:
         expires_at = session.started_at + timedelta(seconds=ttl_seconds)
 
+    # idle_minutes 계산: running 상태일 때만
+    idle_minutes = None
+    if session.pod_status == "running" and session.last_active_at:
+        delta = datetime.now(timezone.utc) - session.last_active_at
+        idle_minutes = int(delta.total_seconds() // 60)
+
     return SessionResponse(
         id=session.id,
         username=session.username,
@@ -276,6 +282,8 @@ def _to_response(session: TerminalSession, settings: Settings, ttl_seconds: int 
         started_at=session.started_at,
         terminated_at=session.terminated_at,
         expires_at=expires_at,
+        last_active_at=session.last_active_at,
+        idle_minutes=idle_minutes,
     )
 
 
@@ -360,6 +368,7 @@ async def create_session(
         old_session.pod_status = "creating"
         old_session.session_type = user_pod_ttl
         old_session.started_at = datetime.now(timezone.utc)
+        old_session.last_active_at = datetime.now(timezone.utc)
         old_session.terminated_at = None
         session = old_session
     else:
@@ -409,6 +418,11 @@ async def list_my_sessions(
                 session.pod_status = "running"
             elif pod_status and pod_status["phase"] in ("Failed", "Succeeded"):
                 session.pod_status = "terminated"
+                # TTL 만료 등으로 Pod 종료 → Service/Ingress 정리
+                try:
+                    k8s.delete_pod(session.pod_name)
+                except Exception:
+                    pass
     db.commit()
 
     # 사용자 TTL 조회
@@ -453,11 +467,21 @@ async def list_active_sessions(
             if pod_status is None:
                 session.pod_status = "terminated"
                 session.terminated_at = datetime.now(timezone.utc)
+                # Pod 없음 → Service/Ingress 고아 리소스 정리
+                try:
+                    k8s.delete_pod(session.pod_name)
+                except Exception:
+                    pass
             elif pod_status["phase"] == "Running":
                 session.pod_status = "running"
             elif pod_status["phase"] in ("Failed", "Succeeded"):
                 session.pod_status = "terminated"
                 session.terminated_at = datetime.now(timezone.utc)
+                # TTL 만료 등으로 Pod 종료 → Service/Ingress 정리
+                try:
+                    k8s.delete_pod(session.pod_name)
+                except Exception:
+                    pass
     db.commit()
 
     active = [s for s in sessions if s.pod_status in ("creating", "running")]
@@ -505,6 +529,7 @@ async def bulk_create_sessions(
                 old_session.pod_status = "creating"
                 old_session.session_type = request.session_type
                 old_session.started_at = datetime.now(timezone.utc)
+                old_session.last_active_at = datetime.now(timezone.utc)
                 old_session.terminated_at = None
                 created_sessions.append(old_session)
             else:
@@ -580,6 +605,58 @@ async def admin_terminate_session(
 
 
 # ==================== 사용자 API ====================
+
+
+@router.post("/internal-heartbeat", status_code=200)
+async def internal_heartbeat(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Pod 내부에서 호출하는 heartbeat — JWT 불필요, pod_name 기반 인증.
+
+    클러스터 내부 트래픽 전용. ttyd Pod가 5분마다 호출한다.
+    Header: X-Pod-Name: claude-terminal-nXXXXXX
+    """
+    pod_name = request.headers.get("X-Pod-Name", "")
+    if not pod_name.startswith("claude-terminal-"):
+        raise HTTPException(status_code=400, detail="Invalid pod name")
+
+    session = (
+        db.query(TerminalSession)
+        .filter(
+            TerminalSession.pod_name == pod_name,
+            TerminalSession.pod_status.in_(["running", "creating"]),
+        )
+        .first()
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    session.last_active_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"ok": True, "pod_name": pod_name, "last_active_at": session.last_active_at.isoformat()}
+
+
+@router.post("/heartbeat", status_code=200)
+async def heartbeat(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """활성 세션의 마지막 활동 시간 갱신. 프론트엔드가 5분마다 호출."""
+    session = (
+        db.query(TerminalSession)
+        .filter(
+            TerminalSession.username == current_user["sub"],
+            TerminalSession.pod_status.in_(["running", "creating"]),
+        )
+        .order_by(TerminalSession.started_at.desc())
+        .first()
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="No active session")
+    session.last_active_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"ok": True, "last_active_at": session.last_active_at.isoformat()}
 
 
 @router.delete("/", response_model=SessionResponse)

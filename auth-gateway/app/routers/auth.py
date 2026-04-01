@@ -1,7 +1,7 @@
 """인증 API 라우터.
 
 Endpoints:
-  POST /api/v1/auth/login       — SSO 로그인 → 2FA 코드 발송 (or bypass → JWT)
+  POST /api/v1/auth/login       — SSO 로그인 → 2FA 코드 발송 (or 2FA 비활성 → JWT)
   POST /api/v1/auth/verify-2fa  — 2FA 코드 검증 → JWT 발급
   POST /api/v1/auth/logout      — 로그아웃
   GET  /api/v1/auth/me          — 현재 사용자 정보
@@ -250,33 +250,20 @@ async def login(
     """SSO 로그인 (2-step).
 
     Step 1: SSO 인증 → 2FA 코드 SMS 발송 → code_id 반환
-    - 워크숍 바이패스 사용자 또는 2FA 비활성 시 JWT 즉시 발급
+    - 2FA 비활성 시 JWT 즉시 발급
 
     Step 2: POST /verify-2fa 에서 코드 검증 후 JWT 발급
     """
-    # ── 시연/워크숍 바이패스: 통일 비밀번호 (SSO + 2FA 모두 우회) ──
-    # 모든 승인된 사용자가 이 비밀번호로 로그인 가능
-    DEMO_PASSWORD = "test2026"
-    is_bypass = request.password == DEMO_PASSWORD
-
-    if is_bypass:
-        logger.info(f"Workshop bypass login: {request.username}")
-        sso_user = {
-            "username": request.username.upper(),
-            "name": request.username.upper(),
-            "phone_number": None,
-        }
-    else:
-        sso_service = SSOService(settings)
-        try:
-            sso_user = await sso_service.authenticate(
-                request.username, request.password
-            )
-        except SSOAuthError as e:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"SSO authentication failed: {e.message}",
-            )
+    sso_service = SSOService(settings)
+    try:
+        sso_user = await sso_service.authenticate(
+            request.username, request.password
+        )
+    except SSOAuthError as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"SSO authentication failed: {e.message}",
+        )
 
     # ── O-Guard 프로필 조회 + DB 등록/업데이트 ──
     profile = _fetch_oguard_profile(sso_user["username"], settings)
@@ -288,12 +275,12 @@ async def login(
     # ── 감사 로그: SSO 인증 성공 ──
     log_audit(db, user.username, AuditAction.LOGIN_SSO)
 
-    # ── 바이패스 또는 2FA 비활성 → JWT 즉시 발급 ──
-    if is_bypass or not settings.two_factor_enabled:
+    # ── 2FA 비활성 → JWT 즉시 발급 ──
+    if not settings.two_factor_enabled:
         log_audit(db, user.username, AuditAction.LOGIN_BYPASS)
         db.commit()
         logger.info(
-            f"Direct JWT issued (bypass={is_bypass}, 2fa_enabled={settings.two_factor_enabled}): "
+            f"Direct JWT issued (2fa_enabled={settings.two_factor_enabled}): "
             f"{user.username}"
         )
         return _issue_jwt(user, settings)

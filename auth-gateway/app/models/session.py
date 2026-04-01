@@ -22,5 +22,6 @@ class TerminalSession(Base):
     session_type = Column(String(20), default="workshop")  # workshop, daily
     started_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     terminated_at = Column(DateTime(timezone=True))
+    last_active_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

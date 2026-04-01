@@ -26,6 +26,7 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     storage_retention = Column(String(10), default="30d", nullable=False)  # 7d, 30d, 90d, unlimited
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    can_deploy_apps = Column(Boolean, default=False)  # 웹앱 배포 권한 (관리자 승인)
     security_policy = Column(JSON, nullable=True, default=None)
     infra_policy = Column(JSON, nullable=True, default=None)
 

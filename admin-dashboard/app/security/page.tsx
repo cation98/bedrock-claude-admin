@@ -19,6 +19,7 @@ import {
 } from "@/lib/api";
 import { isAuthenticated, logout, getUser } from "@/lib/auth";
 import StatsCard from "@/components/stats-card";
+import Pagination from "@/components/pagination";
 
 const REFRESH_INTERVAL = 30_000;
 
@@ -82,6 +83,8 @@ export default function SecurityPage() {
   const [policies, setPolicies] = useState<SecurityPolicyWithUser[]>([]);
   const [checkedUsers, setCheckedUsers] = useState<Set<number>>(new Set());
   const [searchQuery, setSearchQuery] = useState("");
+  const [policyPage, setPolicyPage] = useState(1);
+  const PAGE_SIZE = 10;
 
   /* ── Right panel: template management ── */
   const [allTemplates, setAllTemplates] = useState<MergedTemplate[]>([]);
@@ -298,6 +301,14 @@ export default function SecurityPage() {
     );
   });
 
+  // Reset page on search change
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  useEffect(() => { setPolicyPage(1); }, [searchQuery]);
+
+  const policyTotalPages = Math.max(1, Math.ceil(filteredPolicies.length / PAGE_SIZE));
+  const policySafePage = Math.min(policyPage, policyTotalPages);
+  const paginatedPolicies = filteredPolicies.slice((policySafePage - 1) * PAGE_SIZE, policySafePage * PAGE_SIZE);
+
   /* ── Left panel: quick dropdown per user ── */
   async function handleQuickApply(userId: number, templateName: string) {
     if (!templateName) return;
@@ -464,6 +475,12 @@ export default function SecurityPage() {
               <Link href="/users" className="hover:text-gray-900 transition-colors">
                 사용자 관리
               </Link>
+              <Link href="/apps" className="hover:text-gray-900 transition-colors">
+                앱 관리
+              </Link>
+              <Link href="/audit" className="hover:text-gray-900 transition-colors">
+                감사 로그
+              </Link>
               <Link
                 href="/security"
                 className="text-blue-600 border-b-2 border-blue-600 pb-0.5"
@@ -578,6 +595,7 @@ export default function SecurityPage() {
                   {searchQuery ? "검색 결과가 없습니다." : "사용자가 없습니다."}
                 </div>
               ) : (
+                <>
                 <div className="overflow-x-auto">
                   <table className="min-w-full divide-y divide-gray-200">
                     <thead className="bg-gray-50">
@@ -607,7 +625,7 @@ export default function SecurityPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200 bg-white">
-                      {filteredPolicies.map((p) => (
+                      {paginatedPolicies.map((p) => (
                         <tr key={p.user_id} className="hover:bg-gray-50">
                           <td className="px-4 py-3">
                             <input
@@ -658,6 +676,14 @@ export default function SecurityPage() {
                     </tbody>
                   </table>
                 </div>
+                <Pagination
+                  currentPage={policySafePage}
+                  totalPages={policyTotalPages}
+                  totalItems={filteredPolicies.length}
+                  itemsPerPage={PAGE_SIZE}
+                  onPageChange={setPolicyPage}
+                />
+                </>
               )}
 
             </div>

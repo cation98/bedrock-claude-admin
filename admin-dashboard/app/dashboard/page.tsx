@@ -9,8 +9,6 @@ import {
   getExtensionRequests,
   approveExtension,
   rejectExtension,
-  triggerShutdownWarning,
-  triggerShutdown,
   type Session,
   type ExtensionRequest,
 } from "@/lib/api";
@@ -102,6 +100,12 @@ export default function DashboardPage() {
               >
                 사용자 관리
               </Link>
+              <Link href="/apps" className="hover:text-gray-900 transition-colors">
+                앱 관리
+              </Link>
+              <Link href="/audit" className="hover:text-gray-900 transition-colors">
+                감사 로그
+              </Link>
               <Link
                 href="/security"
                 className="hover:text-gray-900 transition-colors"
@@ -181,39 +185,7 @@ export default function DashboardPage() {
         <div className="mt-8 rounded-lg border border-gray-200 bg-white shadow-sm">
           <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
             <h2 className="text-sm font-semibold text-gray-900">스케줄링 관리</h2>
-            <div className="flex gap-2">
-              <button
-                onClick={async () => {
-                  if (confirm("종료 30분 전 경고를 발송하시겠습니까?")) {
-                    try {
-                      const res = await triggerShutdownWarning(30);
-                      setSuccess(`경고가 ${res.warned}명에게 발송되었습니다.`);
-                    } catch (e: unknown) {
-                      setError(e instanceof Error ? e.message : "경고 발송 실패");
-                    }
-                  }
-                }}
-                className="rounded bg-yellow-50 px-3 py-1 text-xs font-medium text-yellow-700 hover:bg-yellow-100"
-              >
-                경고 발송
-              </button>
-              <button
-                onClick={async () => {
-                  if (confirm("모든 세션을 종료하시겠습니까?")) {
-                    try {
-                      const res = await triggerShutdown();
-                      setSuccess(`${res.terminated}개 세션이 종료되었습니다.`);
-                      fetchSessions();
-                    } catch (e: unknown) {
-                      setError(e instanceof Error ? e.message : "세션 종료 실패");
-                    }
-                  }
-                }}
-                className="rounded bg-red-50 px-3 py-1 text-xs font-medium text-red-600 hover:bg-red-100"
-              >
-                전체 종료
-              </button>
-            </div>
+            <span className="text-xs text-gray-400">24/7 운영 — Pod 수명은 사용자별 TTL로 관리</span>
           </div>
 
           {/* 연장 요청 목록 */}

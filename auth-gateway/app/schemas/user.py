@@ -41,9 +41,10 @@ class UserResponse(BaseModel):
     region_name: str | None = None
     team_name: str | None = None
     job_name: str | None = None
-    role: str
+    role: str | None = None
     is_approved: bool
     pod_ttl: str
+    can_deploy_apps: bool = False
     security_level: str | None = None
     approved_at: datetime | None
     last_login_at: datetime | None

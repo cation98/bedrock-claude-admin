@@ -89,6 +89,60 @@ LIMIT 10;
 - **활성**: `O`(발생/Occurred), `U`(미확인/Unacknowledged), `L`(잠금/Locked)
 - **해제**: `C`(복구/Cleared), `F`(사용자복구), `A`(인지/Acknowledged), `D`(삭제/Deleted)
 
+## SQLite 데이터베이스 (업로드된 데이터)
+
+사용자가 업로드한 대용량 Excel/CSV는 SQLite로 자동 변환됩니다.
+
+### 데이터베이스 발견 — 반드시 먼저 확인
+
+```bash
+# 1. 내 SQLite DB 목록 + 스키마 확인
+ls ~/workspace/shared-data/*.sqlite 2>/dev/null
+cat ~/workspace/shared-data/*.schema.md 2>/dev/null
+
+# 2. 팀에서 공유받은 SQLite DB 확인
+ls ~/workspace/team/*/*.sqlite 2>/dev/null
+cat ~/workspace/team/*/*.schema.md 2>/dev/null
+```
+
+`.schema.md` 파일에 테이블명, 컬럼명, 타입, 샘플 데이터가 기록되어 있습니다.
+**데이터 분석 요청 시 schema.md를 먼저 읽고 적절한 SQL을 작성하세요.**
+
+### SQLite 쿼리 방법
+
+```bash
+# 내 데이터 (읽기+쓰기)
+sqlite3 ~/workspace/shared-data/erp.sqlite "SELECT * FROM sheet1 LIMIT 10;"
+
+# 팀 공유 데이터 (읽기 전용)
+sqlite3 ~/workspace/team/n1001064/erp/erp.sqlite "SELECT * FROM sheet1 WHERE 부서='강북Access담당';"
+
+# 테이블 목록 확인
+sqlite3 ~/workspace/shared-data/erp.sqlite ".tables"
+
+# 컬럼 확인
+sqlite3 ~/workspace/shared-data/erp.sqlite ".schema sheet1"
+```
+
+### 공유 구조
+
+| 경로 | 권한 | 설명 |
+|------|------|------|
+| `~/workspace/shared-data/` | 읽기+쓰기 | 내가 업로드/생성한 데이터 |
+| `~/workspace/team/{소유자사번}/` | **읽기 전용** | 다른 사용자가 공유한 데이터 |
+
+- 공유 데이터에 쓰기 시도 시 `Read-only file system` 에러 발생 (정상)
+- 공유 데이터 수정이 필요하면 소유자에게 요청하거나, 소유자의 웹앱을 통해 입력
+
+### SQLite vs PostgreSQL 선택 기준
+
+| 상황 | 사용 DB | 이유 |
+|------|---------|------|
+| 업로드된 Excel/CSV 분석 | **SQLite** | 자동 변환됨, 로컬 쿼리 |
+| 실시간 고장 현황 | **TANGO (psql-tango)** | 실시간 데이터 |
+| 안전관리/TBM | **Safety (psql $DATABASE_URL)** | 운영 데이터 |
+| 문서활동 분석 | **Docu-Log (psql-doculog)** | 대용량 벡터 검색 |
+
 ## 분석 결과 저장
 
 ```bash
