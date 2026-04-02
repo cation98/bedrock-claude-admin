@@ -57,7 +57,7 @@ function slotToKst(utcSlot: number): { h: number; m: number; nextDay: boolean } 
   return { h: Math.floor(totalMin / 60), m: totalMin % 60, nextDay };
 }
 
-function Sparkline({ data, width = 200, height = 32 }: { data: number[]; width?: number; height?: number }) {
+function Sparkline({ data, width = 360, height = 32 }: { data: number[]; width?: number; height?: number }) {
   const [hover, setHover] = useState<{ i: number; x: number; y: number } | null>(null);
 
   if (!data || data.length === 0 || data.every(v => v === 0)) {
