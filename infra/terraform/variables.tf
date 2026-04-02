@@ -80,9 +80,9 @@ variable "eks_node_desired_size" {
 }
 
 variable "eks_node_min_size" {
-  description = "워커 노드 최소 개수"
+  description = "워커 노드 최소 개수 (0 = 야간 완전 축소 가능)"
   type        = number
-  default     = 2
+  default     = 0
 }
 
 variable "eks_node_max_size" {
