@@ -27,10 +27,10 @@ class TokenUsageDaily(Base):
 
 
 class TokenUsageHourly(Base):
-    """5분 단위 토큰 사용량 — 스파크라인 차트용.
+    """10분 단위 토큰 사용량 — 스파크라인 차트용.
 
-    slot: 0-287 (24h × 12 slots/h = 288 slots per day)
-    slot 계산: hour * 12 + minute // 5
+    slot: 0-143 (24h × 6 slots/h = 144 slots per day)
+    slot 계산: hour * 6 + minute // 10
     """
     __tablename__ = "token_usage_hourly"
 

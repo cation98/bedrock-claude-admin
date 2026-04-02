@@ -855,7 +855,7 @@ def do_snapshot(db, settings: Settings) -> dict:
     now = datetime.now(timezone.utc)
     today = date_type.today()
     current_hour = now.hour
-    current_slot = now.hour * 12 + now.minute // 5  # 0-287 (5-min resolution)
+    current_slot = now.hour * 6 + now.minute // 10  # 0-143 (10-min resolution)
 
     saved = 0
     for pod in pods.items:
@@ -949,9 +949,9 @@ async def get_token_usage_hourly(
     date: str = None,
     admin: dict = Depends(_require_admin),
 ):
-    """5분 단위 토큰 사용량 (스파크라인 차트용). 날짜 미지정 시 오늘.
+    """10분 단위 토큰 사용량 (스파크라인 차트용). 날짜 미지정 시 오늘.
 
-    반환: users = { username: [288 slots] } (5분 × 288 = 24시간)
+    반환: users = { username: [144 slots] } (10분 × 144 = 24시간)
     """
     from app.core.database import SessionLocal
     from app.models.token_usage import TokenUsageHourly
@@ -963,20 +963,20 @@ async def get_token_usage_hourly(
     ).all()
     db.close()
 
-    # 사용자별 288-slot 배열 구성 (5분 단위)
+    # 사용자별 144-slot 배열 구성 (10분 단위)
     users: dict[str, list[int]] = {}
     for r in records:
         if r.username not in users:
-            users[r.username] = [0] * 288
-        slot = r.slot if r.slot is not None else (r.hour * 12)
-        if 0 <= slot < 288:
+            users[r.username] = [0] * 144
+        slot = r.slot if r.slot is not None else (r.hour * 6)
+        if 0 <= slot < 144:
             users[r.username][slot] = r.total_tokens
 
     return {
         "date": str(target),
         "users": users,
-        "resolution": "5min",
-        "slots": 288,
+        "resolution": "10min",
+        "slots": 144,
     }
 
 

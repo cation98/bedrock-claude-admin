@@ -45,13 +45,13 @@ function formatTime(iso: string | null): string {
   return d.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
-// 288 slots (5-min resolution). Slot → KST time conversion.
+// 144 slots (10-min resolution). Slot → KST time conversion.
 function slotToKst(utcSlot: number): { h: number; m: number; isYesterday: boolean } {
-  const utcMin = utcSlot * 5;
+  const utcMin = utcSlot * 10;
   const kstMin = utcMin + 9 * 60; // +9h
   const isYesterday = kstMin < 24 * 60;
   const totalMin = kstMin % (24 * 60);
-  return { h: Math.floor(totalMin / 60), m: totalMin % 60, isYesterday: kstMin < 24 * 60 };
+  return { h: Math.floor(totalMin / 60), m: totalMin % 60, isYesterday };
 }
 
 function Sparkline({ data, width = 200, height = 32 }: { data: number[]; width?: number; height?: number }) {
@@ -65,14 +65,14 @@ function Sparkline({ data, width = 200, height = 32 }: { data: number[]; width?:
   const max = Math.max(...data) || 1;
   const len = data.length; // 288 for 5-min, 24 for legacy
 
-  // KST midnight in UTC slots: UTC 15:00 = slot 180
-  const midnightSlot = len === 288 ? 180 : 15;
+  // KST midnight in UTC slots: UTC 15:00 = slot 90 (144-slot) or 180 (288-slot) or 15 (24-slot)
+  const midnightSlot = len >= 144 ? Math.round(15 * len / 24) : 15;
   const midnightX = (midnightSlot / (len - 1)) * width;
 
   // Current UTC slot
   const now = new Date();
-  const nowSlot = len === 288
-    ? now.getUTCHours() * 12 + Math.floor(now.getUTCMinutes() / 5)
+  const nowSlot = len >= 144
+    ? now.getUTCHours() * 6 + Math.floor(now.getUTCMinutes() / 10)
     : now.getUTCHours();
 
   // Build polyline points — only non-zero segments
@@ -86,7 +86,7 @@ function Sparkline({ data, width = 200, height = 32 }: { data: number[]; width?:
   const todayPts = points.filter(p => p.i >= midnightSlot).map(p => `${p.x},${p.y}`);
 
   // Hit areas: only at slots with data or every N slots for hover
-  const step = len === 288 ? 6 : 1; // hover every 30min for 288, every hour for 24
+  const step = len >= 144 ? 3 : 1; // hover every 30min for 144, every hour for 24
 
   return (
     <div className="relative inline-block" style={{ width, height }}>
@@ -104,7 +104,7 @@ function Sparkline({ data, width = 200, height = 32 }: { data: number[]; width?:
           const isToday = p.i >= midnightSlot;
           return (
             <g key={p.i}>
-              <circle cx={p.x} cy={p.y} r={len === 288 ? 3 : 6} fill="transparent"
+              <circle cx={p.x} cy={p.y} r={len >= 144 ? 3 : 6} fill="transparent"
                 onMouseEnter={() => setHover({ i: p.i, x: p.x, y: p.y })} />
               {p.i <= nowSlot && p.v > 0 && (
                 <circle cx={p.x} cy={p.y} r="1.5" fill={isToday ? "#2563eb" : "#93c5fd"} opacity={isToday ? 0.7 : 0.4} />
@@ -117,7 +117,7 @@ function Sparkline({ data, width = 200, height = 32 }: { data: number[]; width?:
         })}
       </svg>
       {hover && (() => {
-        const kst = len === 288
+        const kst = len >= 144
           ? slotToKst(hover.i)
           : { h: (hover.i + 9) % 24, m: 0, isYesterday: hover.i + 9 < 24 };
         return (
