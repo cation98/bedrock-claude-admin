@@ -16,13 +16,14 @@ from sqlalchemy import text
 
 from app.core.config import get_settings
 from app.core.database import Base, engine
-from app.core.scheduler import idle_checker_loop, token_snapshot_loop, prompt_audit_loop
+from app.core.scheduler import idle_checker_loop, token_snapshot_loop, prompt_audit_loop, storage_cleanup_loop
 from app.models.app import DeployedApp, AppACL, AppView  # noqa: F401 — create_all이 테이블 생성하도록 import
+from app.models.survey import SurveyTemplate, SurveyAssignment, SurveyResponse  # noqa: F401
 from app.models.file_share import SharedDataset, FileShareACL  # noqa: F401 — create_all이 테이블 생성하도록 import
 from app.models.token_usage import TokenUsageHourly  # noqa: F401 — create_all이 테이블 생성하도록 import
 from app.models.prompt_audit import PromptAuditSummary, PromptAuditFlag  # noqa: F401 — create_all이 테이블 생성하도록 import
 from app.models.token_quota import TokenQuotaTemplate, TokenQuotaAssignment  # noqa: F401 — create_all이 테이블 생성하도록 import
-from app.routers import admin, apps, auth, file_share, sessions, users, sms, skills, telegram, security, scheduling, infra_policy, app_proxy
+from app.routers import admin, apps, auth, file_share, sessions, users, sms, skills, telegram, security, scheduling, infra_policy, surveys, app_proxy
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -116,11 +117,13 @@ async def lifespan(app: FastAPI):
     idle_task = asyncio.create_task(idle_checker_loop(settings))
     snapshot_task = asyncio.create_task(token_snapshot_loop(settings))
     audit_task = asyncio.create_task(prompt_audit_loop(settings))
+    storage_task = asyncio.create_task(storage_cleanup_loop(settings))
     logger.info(f"{settings.app_name} started")
     yield
     idle_task.cancel()
     snapshot_task.cancel()
     audit_task.cancel()
+    storage_task.cancel()
     try:
         await idle_task
     except asyncio.CancelledError:
@@ -131,6 +134,10 @@ async def lifespan(app: FastAPI):
         pass
     try:
         await audit_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await storage_task
     except asyncio.CancelledError:
         pass
     logger.info(f"{settings.app_name} shutdown")
@@ -168,6 +175,7 @@ app.include_router(scheduling.router)
 app.include_router(infra_policy.router)
 app.include_router(apps.router)
 app.include_router(file_share.router)
+app.include_router(surveys.router)
 # app_proxy는 catch-all 경로이므로 반드시 마지막에 등록
 app.include_router(app_proxy.router)
 

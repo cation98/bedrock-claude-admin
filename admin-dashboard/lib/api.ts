@@ -846,3 +846,68 @@ export function reviewPromptFlag(flagId: number): Promise<{ ok: boolean }> {
 export function triggerPromptAudit(): Promise<{ analyzed: number }> {
   return request<{ analyzed: number }>("/api/v1/admin/prompt-audit/collect", { method: "POST" });
 }
+
+// ---------- Surveys ----------
+
+export interface SurveyQuestionOption {
+  label: string;
+}
+
+export interface SurveyQuestion {
+  type: "text" | "photo" | "choice";
+  label: string;
+  required: boolean;
+  options?: SurveyQuestionOption[];
+}
+
+export interface Survey {
+  id: number;
+  owner_username: string;
+  title: string;
+  description: string;
+  questions: SurveyQuestion[];
+  status: string;
+  created_at: string;
+  response_count: number;
+}
+
+export interface SurveyResponse {
+  responder_username: string;
+  answers: Record<string, unknown>;
+  completed_at: string;
+}
+
+export function getSurveys(): Promise<Survey[]> {
+  return request<Survey[]>("/api/v1/surveys");
+}
+
+export function createSurvey(data: {
+  title: string;
+  description: string;
+  questions: SurveyQuestion[];
+}): Promise<Survey> {
+  return request<Survey>("/api/v1/surveys", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function assignSurvey(
+  surveyId: number,
+  targetUsernames: string[]
+): Promise<unknown[]> {
+  return request<unknown[]>(`/api/v1/surveys/${surveyId}/assign`, {
+    method: "POST",
+    body: JSON.stringify({ target_usernames: targetUsernames }),
+  });
+}
+
+export function getSurveyResponses(surveyId: number): Promise<SurveyResponse[]> {
+  return request<SurveyResponse[]>(`/api/v1/surveys/${surveyId}/responses`);
+}
+
+export function getPhotoUrl(s3Key: string): Promise<{ url: string }> {
+  return request<{ url: string }>(
+    `/api/v1/surveys/photo-url?s3_key=${encodeURIComponent(s3Key)}`
+  );
+}

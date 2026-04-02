@@ -1680,3 +1680,110 @@ async def list_deployed_apps(
         }
     finally:
         db.close()
+
+
+# ==================== Storage Usage ====================
+
+
+@router.get("/storage-usage")
+async def get_storage_usage(
+    _admin: dict = Depends(_require_admin),
+    settings: Settings = Depends(get_settings),
+):
+    """승인된 사용자별 스토리지 보존 정책 및 만료 상태를 반환한다.
+
+    실제 디스크 사용량 측정은 kubectl exec이 필요해 느리므로,
+    정책 설정값과 만료 계산만 반환한다.
+    """
+    from app.core.database import SessionLocal
+    from app.models.user import User
+
+    db = SessionLocal()
+    try:
+        v1 = client.CoreV1Api()
+        namespace = settings.k8s_namespace
+
+        # 실행 중인 Pod 목록 (Pod 상태 판별용)
+        running_pods: set[str] = set()
+        try:
+            pods = v1.list_namespaced_pod(
+                namespace=namespace,
+                label_selector="app=claude-terminal",
+            )
+            for pod in pods.items:
+                username = pod.metadata.name.replace("claude-terminal-", "").upper()
+                running_pods.add(username)
+        except Exception as e:
+            logger.warning(f"Pod 목록 조회 실패 (스토리지): {e}")
+
+        # 승인된 사용자 전체 조회
+        users = (
+            db.query(User)
+            .filter(User.is_approved == True)  # noqa: E712
+            .order_by(User.username)
+            .all()
+        )
+
+        now = datetime.now(timezone.utc)
+        retention_map = {
+            "7d": timedelta(days=7),
+            "30d": timedelta(days=30),
+            "90d": timedelta(days=90),
+        }
+
+        result = []
+        for user in users:
+            # 만료 계산
+            retention_td = retention_map.get(user.storage_retention)
+            base_date = user.approved_at or user.created_at
+
+            expires_at = None
+            days_remaining = None
+            status = "active"
+
+            if retention_td and base_date:
+                expires_at = base_date + retention_td
+                days_remaining = round(
+                    (expires_at - now).total_seconds() / 86400, 1
+                )
+                if days_remaining <= 0:
+                    status = "expired"
+                elif days_remaining <= 3:
+                    status = "warning"
+
+            if user.storage_retention == "unlimited":
+                status = "unlimited"
+
+            result.append({
+                "username": user.username,
+                "name": user.name,
+                "storage_retention": user.storage_retention,
+                "pod_status": "running" if user.username in running_pods else "stopped",
+                "retention_status": status,
+                "expires_at": expires_at.isoformat() if expires_at else None,
+                "days_remaining": days_remaining,
+                "approved_at": user.approved_at.isoformat() if user.approved_at else None,
+                "workspace_path": f"/home/node/workspace/users/{user.username.lower()}/",
+            })
+
+        # 요약 통계
+        total = len(result)
+        by_retention = {}
+        by_status = {}
+        for r in result:
+            ret = r["storage_retention"]
+            by_retention[ret] = by_retention.get(ret, 0) + 1
+            st = r["retention_status"]
+            by_status[st] = by_status.get(st, 0) + 1
+
+        return {
+            "users": result,
+            "total": total,
+            "summary": {
+                "by_retention": by_retention,
+                "by_status": by_status,
+            },
+            "collected_at": now.isoformat(),
+        }
+    finally:
+        db.close()

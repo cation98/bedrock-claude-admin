@@ -6,10 +6,12 @@ app with only the routers under test, avoiding the real lifespan which
 connects to PostgreSQL and starts background schedulers.
 """
 
+import json
 import pytest
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
+from sqlalchemy.types import TypeDecorator, Text
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -21,10 +23,51 @@ from app.core.security import get_current_user
 # registers their tables for create_all.
 from app.models.app import DeployedApp, AppACL, AppView  # noqa: F401
 from app.models.user import User  # noqa: F401
+from app.models.survey import SurveyTemplate, SurveyAssignment, SurveyResponse  # noqa: F401
+from app.routers.telegram import TelegramMapping, TelegramChatLog  # noqa: F401
 
 # Import routers under test
 from app.routers import apps as apps_router
 from app.routers import app_proxy as app_proxy_router
+from app.routers import surveys as surveys_router
+
+
+# --------------- SQLite JSONB compatibility ---------------
+
+# PostgreSQL JSONB columns fail on SQLite. We replace all JSONB column
+# types in model metadata with a TypeDecorator that stores as TEXT and
+# transparently serializes/deserializes JSON. This ensures both DDL
+# (CREATE TABLE) and value round-tripping work correctly.
+
+from sqlalchemy.dialects.postgresql import JSONB  # noqa: E402
+
+
+class _JSONBtoText(TypeDecorator):
+    """Store JSONB values as TEXT in SQLite with transparent JSON serde."""
+    impl = Text
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is not None:
+            if isinstance(value, str):
+                return value  # already serialized
+            return json.dumps(value)
+        return value
+
+    def process_result_value(self, value, dialect):
+        if value is not None:
+            if isinstance(value, str):
+                return json.loads(value)
+            return value  # already deserialized
+        return value
+
+
+# Swap JSONB column types to _JSONBtoText for all registered models.
+# This must run after all models are imported and before create_all.
+for _table in Base.metadata.tables.values():
+    for _col in _table.columns:
+        if isinstance(_col.type, JSONB):
+            _col.type = _JSONBtoText()
 
 
 # --------------- Test DB (SQLite in-memory, shared across connections) ---------------
@@ -84,6 +127,7 @@ def _build_test_app() -> FastAPI:
     test_app = FastAPI(title="Test Auth Gateway")
     test_app.include_router(apps_router.router)
     test_app.include_router(app_proxy_router.router)
+    test_app.include_router(surveys_router.router)
     return test_app
 
 
@@ -189,5 +233,88 @@ def create_test_app(db_session):
         db_session.commit()
         db_session.refresh(deployed)
         return deployed
+
+    return _create
+
+
+# --------------- Survey helper fixtures ---------------
+
+@pytest.fixture()
+def create_test_survey_template(db_session):
+    """Factory fixture: insert a SurveyTemplate row and return it."""
+
+    def _create(
+        owner_username: str = "TESTUSER01",
+        title: str = "Test Survey",
+        description: str = "A test survey",
+        questions: list | None = None,
+        status: str = "active",
+    ) -> SurveyTemplate:
+        if questions is None:
+            questions = [
+                {"type": "text", "label": "Describe the situation", "required": True},
+                {"type": "choice", "label": "Status", "options": ["Good", "Bad"], "required": True},
+            ]
+        template = SurveyTemplate(
+            owner_username=owner_username,
+            title=title,
+            description=description,
+            questions=json.dumps(questions) if isinstance(questions, list) else questions,
+            status=status,
+        )
+        db_session.add(template)
+        db_session.commit()
+        db_session.refresh(template)
+        return template
+
+    return _create
+
+
+@pytest.fixture()
+def create_test_assignment(db_session):
+    """Factory fixture: insert a SurveyAssignment row and return it."""
+
+    def _create(
+        template_id: int,
+        target_username: str = "WORKER01",
+        telegram_id: str | None = "123456789",
+        status: str = "pending",
+        current_question_idx: int = 0,
+        partial_answers: list | None = None,
+    ) -> SurveyAssignment:
+        assignment = SurveyAssignment(
+            template_id=template_id,
+            target_username=target_username,
+            telegram_id=telegram_id,
+            status=status,
+            current_question_idx=current_question_idx,
+            partial_answers=json.dumps(partial_answers or []),
+        )
+        db_session.add(assignment)
+        db_session.commit()
+        db_session.refresh(assignment)
+        return assignment
+
+    return _create
+
+
+@pytest.fixture()
+def create_test_telegram_mapping(db_session):
+    """Factory fixture: insert a TelegramMapping row and return it."""
+
+    def _create(
+        telegram_id: int = 123456789,
+        telegram_name: str = "Test Worker",
+        username: str = "WORKER01",
+    ) -> TelegramMapping:
+        mapping = TelegramMapping(
+            telegram_id=telegram_id,
+            telegram_name=telegram_name,
+            username=username,
+        )
+        db_session.add(mapping)
+        db_session.commit()
+        db_session.refresh(mapping)
+        return mapping
 
     return _create

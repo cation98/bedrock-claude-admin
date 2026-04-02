@@ -10,6 +10,7 @@ Endpoints:
 """
 
 import re
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -22,7 +23,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.core.security import get_current_user
-from app.core.database import get_db, Base
+from app.core.database import get_db, SessionLocal, Base
+from app.models.survey import SurveyAssignment, SurveyResponse, SurveyTemplate
 
 # 사번 패턴: N + 6~9자리 숫자 (예: N1102359)
 SABUN_PATTERN = re.compile(r"^[Nn]\d{6,9}$")
@@ -133,6 +135,428 @@ async def call_bedrock_claude(
 
 
 # ---------------------------------------------------------------------------
+# Survey constants & helpers
+# ---------------------------------------------------------------------------
+
+SURVEY_S3_BUCKET = "bedrock-claude-surveys"
+SURVEY_S3_REGION = "ap-northeast-2"
+# 텔레그램 파일 크기 제한 (20MB)
+SURVEY_PHOTO_MAX_BYTES = 20 * 1024 * 1024
+
+
+def _get_active_assignment(db: Session, telegram_id: int) -> SurveyAssignment | None:
+    """활성 설문 배정 조회. in_progress 우선, 없으면 pending 반환."""
+    # 1) in_progress 먼저 (가장 오래된 것)
+    assignment = (
+        db.query(SurveyAssignment)
+        .filter(
+            SurveyAssignment.telegram_id == str(telegram_id),
+            SurveyAssignment.status == "in_progress",
+        )
+        .order_by(SurveyAssignment.assigned_at.asc())
+        .first()
+    )
+    if assignment:
+        return assignment
+
+    # 2) pending (가장 오래된 것)
+    return (
+        db.query(SurveyAssignment)
+        .filter(
+            SurveyAssignment.telegram_id == str(telegram_id),
+            SurveyAssignment.status == "pending",
+        )
+        .order_by(SurveyAssignment.assigned_at.asc())
+        .first()
+    )
+
+
+def _get_current_question(
+    db: Session, assignment: SurveyAssignment,
+) -> dict | None:
+    """현재 질문 반환. 질문 인덱스가 범위 밖이면 None."""
+    template = db.query(SurveyTemplate).filter(
+        SurveyTemplate.id == assignment.template_id,
+    ).first()
+    if not template:
+        return None
+    questions = template.questions or []
+    idx = assignment.current_question_idx or 0
+    if idx >= len(questions):
+        return None
+    return questions[idx]
+
+
+def _total_questions(db: Session, assignment: SurveyAssignment) -> int:
+    """양식의 총 질문 수."""
+    template = db.query(SurveyTemplate).filter(
+        SurveyTemplate.id == assignment.template_id,
+    ).first()
+    if not template:
+        return 0
+    return len(template.questions or [])
+
+
+async def _send_survey_question(
+    chat_id: int,
+    assignment: SurveyAssignment,
+    question: dict,
+    settings: Settings,
+):
+    """질문 유형에 따라 텔레그램 메시지 전송."""
+    q_type = question.get("type", "text")
+    label = question.get("label", "")
+    idx = assignment.current_question_idx or 0
+    total = _total_questions_from_assignment(assignment)
+    prefix = f"[{idx + 1}/{total}] " if total > 0 else ""
+
+    if q_type == "choice":
+        # 인라인 키보드로 선택지 전송
+        options = question.get("options", [])
+        keyboard = []
+        for opt in options:
+            keyboard.append([{
+                "text": opt,
+                "callback_data": f"survey:{assignment.id}:{idx}:{opt}",
+            }])
+        reply_markup = {"inline_keyboard": keyboard}
+
+        bot_token = settings.telegram_bot_token
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            await client.post(url, json={
+                "chat_id": chat_id,
+                "text": f"{prefix}{label}",
+                "reply_markup": reply_markup,
+            })
+    elif q_type == "photo":
+        await send_telegram_message(
+            chat_id, f"{prefix}📷 {label}", settings,
+        )
+    else:
+        # text (기본)
+        await send_telegram_message(
+            chat_id, f"{prefix}{label}", settings,
+        )
+
+
+def _total_questions_from_assignment(assignment: SurveyAssignment) -> int:
+    """assignment 객체의 세션에서 총 질문 수 조회 (이미 로드된 DB 세션 활용)."""
+    db = Session.object_session(assignment)
+    if not db:
+        return 0
+    return _total_questions(db, assignment)
+
+
+async def _save_answer_and_advance(
+    db: Session,
+    assignment: SurveyAssignment,
+    answer_value,
+    s3_key: str | None = None,
+) -> bool:
+    """답변 저장 + 다음 질문 이동. 마지막 질문이면 True 반환."""
+    question = _get_current_question(db, assignment)
+    q_type = question.get("type", "text") if question else "text"
+    idx = assignment.current_question_idx or 0
+
+    # partial_answers에 추가
+    partial = list(assignment.partial_answers or [])
+    entry = {"question_idx": idx, "type": q_type, "value": answer_value}
+    if s3_key:
+        entry["s3_key"] = s3_key
+    partial.append(entry)
+    assignment.partial_answers = partial
+
+    # pending → in_progress (첫 응답)
+    if assignment.status == "pending":
+        assignment.status = "in_progress"
+
+    # 다음 질문으로 이동
+    total = _total_questions(db, assignment)
+    next_idx = idx + 1
+
+    if next_idx >= total:
+        # 마지막 질문 — 완료 처리
+        assignment.current_question_idx = next_idx
+        assignment.status = "completed"
+        assignment.completed_at = datetime.now(timezone.utc)
+
+        # SurveyResponse 생성
+        response = SurveyResponse(
+            assignment_id=assignment.id,
+            responder_username=assignment.target_username,
+            answers=partial,
+        )
+        db.add(response)
+        db.commit()
+        return True
+    else:
+        assignment.current_question_idx = next_idx
+        db.commit()
+        return False
+
+
+async def _handle_survey_text(
+    chat_id: int,
+    telegram_id: int,
+    text: str,
+    db: Session,
+    settings: Settings,
+) -> bool:
+    """텍스트 메시지에 대한 설문 처리. 설문 처리됨이면 True."""
+    assignment = _get_active_assignment(db, telegram_id)
+    if not assignment:
+        return False
+
+    question = _get_current_question(db, assignment)
+    if not question:
+        return False
+
+    q_type = question.get("type", "text")
+
+    # 사진을 기대하는데 텍스트를 보낸 경우
+    if q_type == "photo":
+        await send_telegram_message(
+            chat_id,
+            "📷 사진을 보내주세요. 텍스트가 아닌 사진 파일이 필요합니다.",
+            settings,
+        )
+        return True
+
+    # text 또는 choice(텍스트로 온 경우) — 답변 저장
+    is_last = await _save_answer_and_advance(db, assignment, text)
+
+    if is_last:
+        await send_telegram_message(
+            chat_id,
+            "점검이 완료되었습니다. 감사합니다!",
+            settings,
+        )
+    else:
+        next_q = _get_current_question(db, assignment)
+        if next_q:
+            await _send_survey_question(chat_id, assignment, next_q, settings)
+
+    return True
+
+
+async def _handle_survey_photo(
+    chat_id: int,
+    telegram_id: int,
+    photo_list: list,
+    db: Session,
+    settings: Settings,
+) -> bool:
+    """사진 메시지에 대한 설문 처리. 설문 처리됨이면 True."""
+    assignment = _get_active_assignment(db, telegram_id)
+    if not assignment:
+        return False
+
+    question = _get_current_question(db, assignment)
+    if not question:
+        return False
+
+    q_type = question.get("type", "text")
+
+    # 텍스트를 기대하는데 사진을 보낸 경우
+    if q_type != "photo":
+        await send_telegram_message(
+            chat_id,
+            "텍스트로 답변해주세요. 사진이 아닌 텍스트가 필요합니다.",
+            settings,
+        )
+        return True
+
+    # 가장 큰 해상도의 사진 선택 (텔레그램은 여러 크기를 보냄)
+    largest_photo = max(photo_list, key=lambda p: p.get("file_size", 0))
+    file_size = largest_photo.get("file_size", 0)
+
+    # 20MB 초과 체크
+    if file_size > SURVEY_PHOTO_MAX_BYTES:
+        await send_telegram_message(
+            chat_id,
+            "사진 크기가 20MB를 초과합니다. 해상도를 낮춰주세요.",
+            settings,
+        )
+        return True
+
+    # "업로드 중..." 즉시 응답 후 비동기 업로드
+    await send_telegram_message(chat_id, "업로드 중...", settings)
+
+    file_id = largest_photo.get("file_id")
+
+    # 비동기 태스크로 S3 업로드 + 다음 질문 전송
+    asyncio.create_task(
+        _upload_photo_and_advance(
+            chat_id=chat_id,
+            telegram_id=telegram_id,
+            assignment_id=assignment.id,
+            file_id=file_id,
+            settings=settings,
+        )
+    )
+
+    return True
+
+
+async def _upload_photo_and_advance(
+    chat_id: int,
+    telegram_id: int,
+    assignment_id: int,
+    file_id: str,
+    settings: Settings,
+):
+    """비동기 태스크: 텔레그램 파일 다운로드 → S3 업로드 → 다음 질문 전송."""
+    db = SessionLocal()
+    try:
+        assignment = db.query(SurveyAssignment).filter(
+            SurveyAssignment.id == assignment_id,
+        ).first()
+        if not assignment:
+            logger.error("Survey assignment %d not found in async task", assignment_id)
+            return
+
+        bot_token = settings.telegram_bot_token
+
+        # 1) getFile로 파일 경로 조회
+        get_file_url = f"https://api.telegram.org/bot{bot_token}/getFile"
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(get_file_url, json={"file_id": file_id})
+            file_info = resp.json()
+
+        if not file_info.get("ok"):
+            logger.error("Telegram getFile failed: %s", file_info)
+            await send_telegram_message(
+                chat_id, "업로드 실패. 다시 보내주세요.", settings,
+            )
+            return
+
+        file_path = file_info["result"]["file_path"]
+        filename = file_path.split("/")[-1]
+
+        # 2) 파일 다운로드
+        download_url = (
+            f"https://api.telegram.org/file/bot{bot_token}/{file_path}"
+        )
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            dl_resp = await client.get(download_url)
+            if dl_resp.status_code != 200:
+                logger.error("Telegram file download failed: %d", dl_resp.status_code)
+                await send_telegram_message(
+                    chat_id, "업로드 실패. 다시 보내주세요.", settings,
+                )
+                return
+            file_bytes = dl_resp.content
+
+        # 3) S3 업로드
+        s3_key = f"{assignment.target_username}/{assignment.id}/{filename}"
+        try:
+            s3_client = boto3.client("s3", region_name=SURVEY_S3_REGION)
+            s3_client.put_object(
+                Bucket=SURVEY_S3_BUCKET,
+                Key=s3_key,
+                Body=file_bytes,
+                ContentType="image/jpeg",
+            )
+        except Exception as e:
+            logger.error("S3 upload failed for assignment %d: %s", assignment_id, e)
+            await send_telegram_message(
+                chat_id, "업로드 실패. 다시 보내주세요.", settings,
+            )
+            return
+
+        # 4) 답변 저장 + 다음 질문
+        is_last = await _save_answer_and_advance(
+            db, assignment, None, s3_key=s3_key,
+        )
+
+        if is_last:
+            await send_telegram_message(
+                chat_id,
+                "점검이 완료되었습니다. 감사합니다!",
+                settings,
+            )
+        else:
+            next_q = _get_current_question(db, assignment)
+            if next_q:
+                await _send_survey_question(chat_id, assignment, next_q, settings)
+
+    except Exception as e:
+        logger.error("Survey photo upload task error: %s", e, exc_info=True)
+        try:
+            await send_telegram_message(
+                chat_id, "업로드 실패. 다시 보내주세요.", settings,
+            )
+        except Exception:
+            pass
+    finally:
+        db.close()
+
+
+async def _handle_survey_callback(
+    callback_query: dict,
+    db: Session,
+    settings: Settings,
+):
+    """인라인 키보드 콜백 처리 (choice 질문 응답)."""
+    callback_data = callback_query.get("data", "")
+    callback_id = callback_query.get("id")
+    chat_id = callback_query.get("message", {}).get("chat", {}).get("id")
+    telegram_id = callback_query.get("from", {}).get("id")
+
+    # answerCallbackQuery — 버튼 로딩 스피너 제거
+    bot_token = settings.telegram_bot_token
+    answer_url = f"https://api.telegram.org/bot{bot_token}/answerCallbackQuery"
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        await client.post(answer_url, json={"callback_query_id": callback_id})
+
+    # callback_data 형식: "survey:{assignment_id}:{question_idx}:{option_value}"
+    if not callback_data.startswith("survey:"):
+        return
+
+    parts = callback_data.split(":", 3)
+    if len(parts) < 4:
+        logger.warning("Invalid survey callback_data: %s", callback_data)
+        return
+
+    _, assignment_id_str, question_idx_str, option_value = parts
+
+    try:
+        assignment_id = int(assignment_id_str)
+    except ValueError:
+        logger.warning("Invalid assignment_id in callback: %s", assignment_id_str)
+        return
+
+    assignment = db.query(SurveyAssignment).filter(
+        SurveyAssignment.id == assignment_id,
+    ).first()
+    if not assignment:
+        logger.warning("Survey assignment %d not found for callback", assignment_id)
+        return
+
+    # 이미 완료된 설문이면 무시
+    if assignment.status == "completed":
+        await send_telegram_message(
+            chat_id, "이미 완료된 점검입니다.", settings,
+        )
+        return
+
+    # 답변 저장 + 다음 질문
+    is_last = await _save_answer_and_advance(db, assignment, option_value)
+
+    if is_last:
+        await send_telegram_message(
+            chat_id,
+            "점검이 완료되었습니다. 감사합니다!",
+            settings,
+        )
+    else:
+        next_q = _get_current_question(db, assignment)
+        if next_q:
+            await _send_survey_question(chat_id, assignment, next_q, settings)
+
+
+# ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
@@ -145,6 +569,14 @@ async def telegram_webhook(
     """Telegram webhook — 메시지 수신 + 응답."""
     body = await request.json()
 
+    # ------------------------------------------------------------------
+    # callback_query 처리 (인라인 키보드 버튼 클릭)
+    # ------------------------------------------------------------------
+    callback_query = body.get("callback_query")
+    if callback_query:
+        await _handle_survey_callback(callback_query, db, settings)
+        return JSONResponse({"ok": True})
+
     message = body.get("message", {})
     if not message:
         return JSONResponse({"ok": True})
@@ -156,8 +588,10 @@ async def telegram_webhook(
     telegram_name = (
         from_user.get("first_name", "") + " " + from_user.get("last_name", "")
     )
+    photo_list = message.get("photo")  # 사진 메시지인 경우 PhotoSize 배열
 
-    if not chat_id or not text:
+    # 텍스트도 사진도 없으면 무시 (단, 사진 메시지는 text 없이 올 수 있음)
+    if not chat_id or (not text and not photo_list):
         return JSONResponse({"ok": True})
 
     # ------------------------------------------------------------------
@@ -250,6 +684,18 @@ async def telegram_webhook(
             "안녕하세요! Claude Code 플랫폼 봇입니다.\n사번을 입력해주세요. (예: N1102359)",
             settings,
         )
+        return JSONResponse({"ok": True})
+
+    # ------------------------------------------------------------------
+    # 사진 메시지 — 설문 사진 응답 처리 (명령어보다 먼저)
+    # ------------------------------------------------------------------
+    if photo_list and mapping:
+        handled = await _handle_survey_photo(
+            chat_id, telegram_id, photo_list, db, settings,
+        )
+        if handled:
+            return JSONResponse({"ok": True})
+        # 설문 중이 아닌 사진은 무시
         return JSONResponse({"ok": True})
 
     # ------------------------------------------------------------------
@@ -430,6 +876,16 @@ async def telegram_webhook(
             settings,
         )
         return JSONResponse({"ok": True})
+
+    # ------------------------------------------------------------------
+    # 설문 텍스트 응답 처리 — 활성 설문이 있으면 Bedrock 호출 대신 설문 진행
+    # ------------------------------------------------------------------
+    if mapping:
+        survey_handled = await _handle_survey_text(
+            chat_id, telegram_id, text, db, settings,
+        )
+        if survey_handled:
+            return JSONResponse({"ok": True})
 
     # ------------------------------------------------------------------
     # 단체방 멘션/답글 필터링

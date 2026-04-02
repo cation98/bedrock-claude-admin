@@ -45,6 +45,7 @@ class UserResponse(BaseModel):
     is_approved: bool
     pod_ttl: str
     can_deploy_apps: bool = False
+    storage_retention: str = "30d"
     security_level: str | None = None
     approved_at: datetime | None
     last_login_at: datetime | None
