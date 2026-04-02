@@ -45,13 +45,16 @@ function formatTime(iso: string | null): string {
   return d.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
-// 144 slots (10-min resolution). Slot → KST time conversion.
-function slotToKst(utcSlot: number): { h: number; m: number; isYesterday: boolean } {
+// 144 slots (10-min resolution). UTC slot → KST time.
+// UTC date's data spans two KST days:
+//   slots 0-89 (UTC 00:00-14:50) → KST 09:00-23:50 (same KST date)
+//   slots 90-143 (UTC 15:00-23:50) → KST 00:00-08:50 (next KST date)
+function slotToKst(utcSlot: number): { h: number; m: number; nextDay: boolean } {
   const utcMin = utcSlot * 10;
-  const kstMin = utcMin + 9 * 60; // +9h
-  const isYesterday = kstMin < 24 * 60;
+  const kstMin = utcMin + 9 * 60;
+  const nextDay = kstMin >= 24 * 60;
   const totalMin = kstMin % (24 * 60);
-  return { h: Math.floor(totalMin / 60), m: totalMin % 60, isYesterday };
+  return { h: Math.floor(totalMin / 60), m: totalMin % 60, nextDay };
 }
 
 function Sparkline({ data, width = 200, height = 32 }: { data: number[]; width?: number; height?: number }) {
@@ -119,13 +122,13 @@ function Sparkline({ data, width = 200, height = 32 }: { data: number[]; width?:
       {hover && (() => {
         const kst = len >= 144
           ? slotToKst(hover.i)
-          : { h: (hover.i + 9) % 24, m: 0, isYesterday: hover.i + 9 < 24 };
+          : { h: (hover.i + 9) % 24, m: 0, nextDay: hover.i + 9 >= 24 };
         return (
           <div
             className="absolute z-10 rounded bg-gray-900 px-2 py-1 text-xs text-white shadow-lg whitespace-nowrap pointer-events-none"
             style={{ left: Math.min(hover.x, width - 120), top: -28 }}
           >
-            {String(kst.h).padStart(2, "0")}:{String(kst.m).padStart(2, "0")}{kst.isYesterday ? " (전일)" : ""} — {data[hover.i].toLocaleString()} tokens
+            {String(kst.h).padStart(2, "0")}:{String(kst.m).padStart(2, "0")}{kst.nextDay ? " (+1)" : ""} — {data[hover.i].toLocaleString()} tokens
           </div>
         );
       })()}
