@@ -195,7 +195,7 @@ class PromptAuditService:
         total_prompts = 0
         total_flags = 0
         pods_scanned = 0
-        today = date.today()
+        today = datetime.now(timezone.utc).date()
 
         for pod in pods.items:
             pod_name = pod.metadata.name

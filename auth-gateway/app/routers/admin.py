@@ -853,7 +853,7 @@ def do_snapshot(db, settings: Settings) -> dict:
 
     users_db = {u.username: u.name for u in db.query(User).all()}
     now = datetime.now(timezone.utc)
-    today = date_type.today()
+    today = now.date()  # UTC date — must match UTC-based hour/slot below
     current_hour = now.hour
     current_slot = now.hour * 6 + now.minute // 10  # 0-143 (10-min resolution)
 
@@ -956,7 +956,7 @@ async def get_token_usage_hourly(
     from app.core.database import SessionLocal
     from app.models.token_usage import TokenUsageHourly
 
-    target = date_type.fromisoformat(date) if date else date_type.today()
+    target = date_type.fromisoformat(date) if date else datetime.now(timezone.utc).date()
     db = SessionLocal()
     records = db.query(TokenUsageHourly).filter(
         TokenUsageHourly.usage_date == target,
@@ -990,7 +990,7 @@ async def get_daily_usage(
     from app.models.token_usage import TokenUsageDaily
     from app.models.user import User
 
-    target = date_type.fromisoformat(date) if date else date_type.today()
+    target = date_type.fromisoformat(date) if date else datetime.now(timezone.utc).date()
     db = SessionLocal()
 
     # 승인된 전체 사용자
@@ -1047,7 +1047,7 @@ async def get_monthly_usage(
     if month:
         year, mon = month.split("-")
     else:
-        today = date_type.today()
+        today = datetime.now(timezone.utc).date()
         year, mon = today.year, today.month
 
     db = SessionLocal()
@@ -1108,7 +1108,7 @@ async def get_daily_trend(
     from app.models.token_usage import TokenUsageDaily
     from sqlalchemy import func
 
-    cutoff = date_type.today() - timedelta(days=days)
+    cutoff = datetime.now(timezone.utc).date() - timedelta(days=days)
     db = SessionLocal()
     records = db.query(
         TokenUsageDaily.usage_date,
@@ -1190,7 +1190,7 @@ async def get_user_usage_history(
     from app.core.database import SessionLocal
     from app.models.token_usage import TokenUsageDaily
 
-    cutoff = date_type.today() - timedelta(days=days)
+    cutoff = datetime.now(timezone.utc).date() - timedelta(days=days)
     db = SessionLocal()
     records = db.query(TokenUsageDaily).filter(
         TokenUsageDaily.username == username.upper(),
@@ -1436,7 +1436,7 @@ def _check_user_quota(db, username: str) -> dict | None:
         return None
 
     # 주기별 시작일 계산
-    today = date_type.today()
+    today = datetime.now(timezone.utc).date()
     refresh_cycle = assignment.refresh_cycle
 
     if refresh_cycle == "daily":
