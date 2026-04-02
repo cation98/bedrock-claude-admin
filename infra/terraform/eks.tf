@@ -111,6 +111,53 @@ resource "aws_iam_role_policy_attachment" "eks_container_registry" {
   role       = aws_iam_role.eks_nodes.name
 }
 
+# ----- Cluster Autoscaler IAM Policy -----
+# 노드 역할에 Auto Scaling Group 조작 권한 부여
+# Cluster Autoscaler가 빈 노드를 자동 축소하기 위해 필요
+
+resource "aws_iam_role_policy" "cluster_autoscaler" {
+  name = "${var.project_name}-cluster-autoscaler"
+  role = aws_iam_role.eks_nodes.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "ClusterAutoscalerDescribe"
+        Effect = "Allow"
+        Action = [
+          "autoscaling:DescribeAutoScalingGroups",
+          "autoscaling:DescribeAutoScalingInstances",
+          "autoscaling:DescribeLaunchConfigurations",
+          "autoscaling:DescribeScalingActivities",
+          "autoscaling:DescribeTags",
+          "ec2:DescribeImages",
+          "ec2:DescribeInstanceTypes",
+          "ec2:DescribeLaunchTemplateVersions",
+          "ec2:GetInstanceTypesFromInstanceRequirements",
+          "eks:DescribeNodegroup"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "ClusterAutoscalerModify"
+        Effect = "Allow"
+        Action = [
+          "autoscaling:SetDesiredCapacity",
+          "autoscaling:TerminateInstanceInAutoScalingGroup"
+        ]
+        # 태그 조건으로 해당 EKS 노드 그룹의 ASG만 조작 가능
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "aws:ResourceTag/k8s.io/cluster-autoscaler/${var.project_name}-eks" = "owned"
+          }
+        }
+      }
+    ]
+  })
+}
+
 # ----- Managed Node Group -----
 # AWS가 자동 관리하는 워커 노드 그룹
 # Auto Scaling으로 부하에 따라 노드 수 자동 조절
@@ -136,6 +183,13 @@ resource "aws_eks_node_group" "main" {
 
   labels = {
     role = "claude-terminal"
+  }
+
+  # Cluster Autoscaler 자동 탐색 태그
+  # 이 태그가 ASG에 전파되어 Autoscaler가 관리 대상으로 인식
+  tags = {
+    "k8s.io/cluster-autoscaler/enabled"                       = "true"
+    "k8s.io/cluster-autoscaler/${var.project_name}-eks"       = "owned"
   }
 
   depends_on = [

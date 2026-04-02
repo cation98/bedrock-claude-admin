@@ -1,0 +1,156 @@
+# =============================================================================
+# Cluster Autoscaler — 빈 노드 자동 축소
+#
+# 역할:
+#   - 빈 노드(사용자 Pod 없음) 감지 → 10분 후 자동 제거
+#   - Pending Pod 감지 → 노드 자동 추가
+#   - Overprovisioning Pod(priority -1)은 safe-to-evict → 축소 차단하지 않음
+#
+# 적용:
+#   kubectl apply -f cluster-autoscaler.yaml
+#
+# 확인:
+#   kubectl logs -n kube-system -l app=cluster-autoscaler -f
+# =============================================================================
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cluster-autoscaler
+  namespace: kube-system
+  labels:
+    app: cluster-autoscaler
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cluster-autoscaler
+rules:
+  # 노드/Pod 조회 권한
+  - apiGroups: [""]
+    resources: ["events", "endpoints"]
+    verbs: ["create", "patch"]
+  - apiGroups: [""]
+    resources: ["pods/eviction"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["pods/status"]
+    verbs: ["update"]
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    resourceNames: ["cluster-autoscaler"]
+    verbs: ["get", "update"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["watch", "list", "get", "update"]
+  - apiGroups: [""]
+    resources: ["namespaces", "pods", "services", "replicationcontrollers", "persistentvolumeclaims", "persistentvolumes"]
+    verbs: ["watch", "list", "get"]
+  # Deployment/ReplicaSet/StatefulSet/Job 조회
+  - apiGroups: ["apps"]
+    resources: ["daemonsets", "replicasets", "statefulsets"]
+    verbs: ["watch", "list", "get"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["watch", "list", "get"]
+  - apiGroups: ["extensions"]
+    resources: ["replicasets", "daemonsets"]
+    verbs: ["watch", "list", "get"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["watch", "list"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses", "csiclasses", "csidrivers", "csinodes"]
+    verbs: ["watch", "list", "get"]
+  - apiGroups: ["scheduling.k8s.io"]
+    resources: ["priorityclasses"]
+    verbs: ["watch", "list", "get"]
+  # Configmap for leader election
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["cluster-autoscaler-status", "cluster-autoscaler-priority-expander-config"]
+    verbs: ["delete", "get", "update"]
+  # Coordination for leader election
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["create"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    resourceNames: ["cluster-autoscaler"]
+    verbs: ["get", "update"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cluster-autoscaler
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-autoscaler
+subjects:
+  - kind: ServiceAccount
+    name: cluster-autoscaler
+    namespace: kube-system
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cluster-autoscaler
+  namespace: kube-system
+  labels:
+    app: cluster-autoscaler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cluster-autoscaler
+  template:
+    metadata:
+      labels:
+        app: cluster-autoscaler
+      annotations:
+        # Autoscaler 자신도 축소 대상 노드에서 퇴거 가능
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "true"
+    spec:
+      serviceAccountName: cluster-autoscaler
+      # kube-system 노드(Control Plane 근처)에 배치 우선
+      priorityClassName: system-cluster-critical
+      containers:
+        - name: cluster-autoscaler
+          # EKS 클러스터 버전에 맞는 이미지 사용
+          # EKS 1.31 → Autoscaler v1.31.x
+          image: registry.k8s.io/autoscaling/cluster-autoscaler:v1.31.0
+          command:
+            - ./cluster-autoscaler
+            - --v=4
+            - --stderrthreshold=info
+            - --cloud-provider=aws
+            # ── 핵심 설정 ──
+            # 10분 동안 빈 노드 → 자동 제거
+            - --scale-down-delay-after-add=10m
+            - --scale-down-delay-after-delete=2m
+            - --scale-down-unneeded-time=10m
+            # least-waste: 리소스 낭비 최소화하는 노드 타입 선택
+            - --expander=least-waste
+            # 노드 그룹 자동 탐색 (태그 기반)
+            - --node-group-auto-discovery=asg:tag=k8s.io/cluster-autoscaler/enabled=true,k8s.io/cluster-autoscaler/bedrock-claude-eks=owned
+            # 안전 설정
+            - --balance-similar-node-groups
+            - --skip-nodes-with-local-storage=false
+            - --skip-nodes-with-system-pods=false
+          resources:
+            requests:
+              cpu: 100m
+              memory: 300Mi
+            limits:
+              cpu: 100m
+              memory: 300Mi
+          env:
+            - name: AWS_REGION
+              value: ap-northeast-2

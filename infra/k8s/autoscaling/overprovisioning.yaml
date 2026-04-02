@@ -23,6 +23,10 @@ spec:
     metadata:
       labels:
         app: overprovisioning
+      annotations:
+        # Cluster Autoscaler가 이 Pod을 퇴거 가능으로 인식
+        # 이 annotation 없으면 더미 Pod 때문에 빈 노드가 축소되지 않음
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "true"
     spec:
       priorityClassName: overprovisioning
       terminationGracePeriodSeconds: 0
