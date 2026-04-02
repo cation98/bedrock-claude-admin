@@ -28,6 +28,13 @@ spec:
       labels:
         app: platform-db
     spec:
+      nodeSelector:
+        role: system
+      tolerations:
+        - key: "dedicated"
+          operator: "Equal"
+          value: "system"
+          effect: "NoSchedule"
       containers:
         - name: postgres
           image: postgres:15-alpine
@@ -75,7 +82,7 @@ metadata:
   name: auth-gateway
   namespace: platform
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: auth-gateway
@@ -85,6 +92,28 @@ spec:
         app: auth-gateway
     spec:
       serviceAccountName: default
+      # 시스템 노드에 고정
+      nodeSelector:
+        role: system
+      tolerations:
+        - key: "dedicated"
+          operator: "Equal"
+          value: "system"
+          effect: "NoSchedule"
+      # 같은 app의 Pod을 가능한 한 다른 노드에 분산
+      # preferred: 분산 불가 시(CPU 부족 등) 같은 노드도 허용
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - auth-gateway
+                topologyKey: kubernetes.io/hostname
       containers:
         - name: auth-gateway
           image: 680877507363.dkr.ecr.ap-northeast-2.amazonaws.com/bedrock-claude/auth-gateway:latest
