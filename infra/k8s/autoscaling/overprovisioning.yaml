@@ -30,6 +30,9 @@ spec:
     spec:
       priorityClassName: overprovisioning
       terminationGracePeriodSeconds: 0
+      # 사용자 노드에만 배치 (전용 노드, 시스템 노드 제외)
+      nodeSelector:
+        role: claude-terminal
       tolerations:
         - key: "dedicated"
           operator: "Equal"
