@@ -23,6 +23,47 @@ BACKUP_SCRIPT = "/home/node/.local/bin/backup-chat"
 # 모든 사용자 공통: 2시간 미사용 시 종료
 IDLE_TIMEOUT_MINUTES = 120
 
+# Pod 내부에서 최근 활동 시각을 확인하는 스크립트
+# Claude Code JSONL, bash_history, 터미널 프로세스 등의 최근 수정시각 확인
+ACTIVITY_CHECK_SCRIPT = '''
+import os, time, glob, json
+
+latest = 0
+
+# 1. Claude Code JSONL 파일 (대화 기록)
+for f in glob.glob("/home/node/.claude/projects/*/*.jsonl"):
+    try:
+        mt = os.path.getmtime(f)
+        if mt > latest:
+            latest = mt
+    except: pass
+
+# 2. Claude Code 세션 파일
+for f in glob.glob("/home/node/.claude/*.json"):
+    try:
+        mt = os.path.getmtime(f)
+        if mt > latest:
+            latest = mt
+    except: pass
+
+# 3. workspace 내 최근 수정 파일
+for f in glob.glob("/home/node/workspace/**", recursive=False):
+    try:
+        mt = os.path.getmtime(f)
+        if mt > latest:
+            latest = mt
+    except: pass
+
+# 4. bash history
+try:
+    mt = os.path.getmtime("/home/node/.bash_history")
+    if mt > latest:
+        latest = mt
+except: pass
+
+print(json.dumps({"last_activity": latest, "now": time.time()}))
+'''
+
 
 class IdleCleanupService:
 
@@ -30,10 +71,30 @@ class IdleCleanupService:
         self.k8s = k8s
         self.idle_timeout_minutes = idle_timeout_minutes
 
+    def _check_pod_activity(self, pod_name: str, namespace: str) -> float | None:
+        """Pod 내부의 실제 마지막 활동 시각(epoch)을 반환. 실패 시 None."""
+        try:
+            import json as _json
+            v1 = k8s_client.CoreV1Api()
+            resp = stream(
+                v1.connect_get_namespaced_pod_exec,
+                pod_name, namespace,
+                command=["python3", "-c", ACTIVITY_CHECK_SCRIPT],
+                container="terminal",
+                stderr=False, stdin=False, stdout=True, tty=False,
+                _request_timeout=10,
+            )
+            data = _json.loads(resp.strip())
+            return data.get("last_activity", 0)
+        except Exception as e:
+            logger.warning(f"활동 확인 실패 ({pod_name}): {e}")
+            return None
+
     def find_idle_sessions(self, db: DbSession) -> list[TerminalSession]:
-        """2시간 이상 heartbeat 없는 running 세션 조회."""
+        """2시간 이상 실제 활동이 없는 running 세션 조회."""
+        # DB 기준 후보 선정 (last_active_at 기반 1차 필터)
         cutoff = datetime.now(timezone.utc) - timedelta(minutes=self.idle_timeout_minutes)
-        return (
+        candidates = (
             db.query(TerminalSession)
             .filter(
                 TerminalSession.pod_status == "running",
@@ -41,6 +102,43 @@ class IdleCleanupService:
             )
             .all()
         )
+
+        if not candidates:
+            return []
+
+        # Pod 내부 실제 활동 확인 (2차 필터)
+        idle_sessions = []
+        now_epoch = datetime.now(timezone.utc).timestamp()
+        idle_cutoff_epoch = now_epoch - (self.idle_timeout_minutes * 60)
+
+        for session in candidates:
+            last_activity = self._check_pod_activity(
+                session.pod_name, self.k8s.namespace
+            )
+
+            if last_activity is None:
+                # Pod 접근 불가 → 이미 죽은 Pod일 수 있음, 정리 대상
+                idle_sessions.append(session)
+                continue
+
+            if last_activity < idle_cutoff_epoch:
+                # 실제로 2시간 이상 미사용
+                logger.info(
+                    f"유휴 확인: {session.pod_name} — "
+                    f"마지막 활동 {int((now_epoch - last_activity) / 60)}분 전"
+                )
+                idle_sessions.append(session)
+            else:
+                # 실제로는 활동 중 → last_active_at 갱신
+                active_dt = datetime.fromtimestamp(last_activity, tz=timezone.utc)
+                session.last_active_at = active_dt
+                db.commit()
+                logger.info(
+                    f"활동 감지: {session.pod_name} — "
+                    f"last_active_at 갱신 ({int((now_epoch - last_activity) / 60)}분 전)"
+                )
+
+        return idle_sessions
 
     def _backup_pod(self, pod_name: str, namespace: str) -> bool:
         """Pod 내부에서 backup-chat 실행하여 대화이력을 EFS에 백업. 성공 여부 반환."""
