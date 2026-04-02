@@ -91,7 +91,7 @@ spec:
       labels:
         app: auth-gateway
     spec:
-      serviceAccountName: default
+      serviceAccountName: platform-admin-sa
       # 시스템 노드에 고정
       nodeSelector:
         role: system
