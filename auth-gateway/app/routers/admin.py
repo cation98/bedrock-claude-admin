@@ -124,6 +124,41 @@ async def get_token_usage(
 
     user_usages.sort(key=lambda x: x.total_tokens, reverse=True)
 
+    # 실시간 호출 시 hourly 테이블도 함께 업데이트 (스파크라인 실시간 반영)
+    try:
+        from app.models.token_usage import TokenUsageHourly
+        now = datetime.now(timezone.utc)
+        today = now.date()
+        current_hour = now.hour
+        current_slot = now.hour * 6 + now.minute // 10
+
+        db2 = SessionLocal()
+        for u in user_usages:
+            if u.total_tokens == 0:
+                continue
+            existing = db2.query(TokenUsageHourly).filter(
+                TokenUsageHourly.username == u.username,
+                TokenUsageHourly.usage_date == today,
+                TokenUsageHourly.slot == current_slot,
+            ).first()
+            if existing:
+                existing.input_tokens = u.input_tokens
+                existing.output_tokens = u.output_tokens
+                existing.total_tokens = u.total_tokens
+                existing.cost_usd = u.cost_usd
+                existing.cost_krw = u.cost_krw
+            else:
+                db2.add(TokenUsageHourly(
+                    username=u.username, usage_date=today,
+                    hour=current_hour, slot=current_slot,
+                    input_tokens=u.input_tokens, output_tokens=u.output_tokens,
+                    total_tokens=u.total_tokens, cost_usd=u.cost_usd, cost_krw=u.cost_krw,
+                ))
+        db2.commit()
+        db2.close()
+    except Exception as e:
+        logger.warning(f"Realtime hourly upsert failed: {e}")
+
     return TokenUsageResponse(
         users=user_usages,
         total_input=sum(u.input_tokens for u in user_usages),

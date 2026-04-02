@@ -64,23 +64,32 @@ function Sparkline({ data, width = 360, height = 32 }: { data: number[]; width?:
     return <div style={{ width, height }} className="text-gray-300 text-xs flex items-center">—</div>;
   }
 
-  // Only show slots that have data or are before current time
-  const max = Math.max(...data) || 1;
-  const len = data.length; // 288 for 5-min, 24 for legacy
+  const len = data.length;
 
-  // KST midnight in UTC slots: UTC 15:00 = slot 90 (144-slot) or 180 (288-slot) or 15 (24-slot)
-  const midnightSlot = len >= 144 ? Math.round(15 * len / 24) : 15;
-  const midnightX = (midnightSlot / (len - 1)) * width;
-
-  // Current UTC slot
+  // Current UTC slot — only render up to here (no future empty slots)
   const now = new Date();
   const nowSlot = len >= 144
     ? now.getUTCHours() * 6 + Math.floor(now.getUTCMinutes() / 10)
     : now.getUTCHours();
 
-  // Build polyline points — only non-zero segments
-  const points = data.map((v, i) => {
-    const x = (i / (len - 1)) * width;
+  // Trim data to current slot + 1
+  const visibleEnd = Math.min(nowSlot + 1, len);
+  const visibleData = data.slice(0, visibleEnd);
+  const visLen = visibleData.length;
+
+  if (visLen === 0 || visibleData.every(v => v === 0)) {
+    return <div style={{ width, height }} className="text-gray-300 text-xs flex items-center">—</div>;
+  }
+
+  const max = Math.max(...visibleData) || 1;
+
+  // KST midnight in UTC slots
+  const midnightSlot = len >= 144 ? 90 : 15;
+  const midnightX = midnightSlot < visLen ? (midnightSlot / (visLen - 1)) * width : -1;
+
+  // Build polyline points for visible range only
+  const points = visibleData.map((v, i) => {
+    const x = visLen > 1 ? (i / (visLen - 1)) * width : width / 2;
     const y = height - (v / max) * (height - 6) - 3;
     return { x, y, v, i };
   });
@@ -94,8 +103,10 @@ function Sparkline({ data, width = 360, height = 32 }: { data: number[]; width?:
   return (
     <div className="relative inline-block" style={{ width, height }}>
       <svg width={width} height={height} onMouseLeave={() => setHover(null)}>
-        <line x1={midnightX} y1={0} x2={midnightX} y2={height}
-          stroke="#d1d5db" strokeWidth="1" strokeDasharray="2,2" />
+        {midnightX >= 0 && (
+          <line x1={midnightX} y1={0} x2={midnightX} y2={height}
+            stroke="#d1d5db" strokeWidth="1" strokeDasharray="2,2" />
+        )}
         {yesterdayPts.length > 1 && (
           <polyline points={yesterdayPts.join(" ")} fill="none" stroke="#93c5fd" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.5" />
         )}
@@ -109,7 +120,7 @@ function Sparkline({ data, width = 360, height = 32 }: { data: number[]; width?:
             <g key={p.i}>
               <circle cx={p.x} cy={p.y} r={len >= 144 ? 3 : 6} fill="transparent"
                 onMouseEnter={() => setHover({ i: p.i, x: p.x, y: p.y })} />
-              {p.i <= nowSlot && p.v > 0 && (
+              {p.v > 0 && (
                 <circle cx={p.x} cy={p.y} r="1.5" fill={isToday ? "#2563eb" : "#93c5fd"} opacity={isToday ? 0.7 : 0.4} />
               )}
               {hover?.i === p.i && (
@@ -120,7 +131,7 @@ function Sparkline({ data, width = 360, height = 32 }: { data: number[]; width?:
         })}
       </svg>
       {hover && (() => {
-        const kst = len >= 144
+        const kst = visLen >= 144 || len >= 144
           ? slotToKst(hover.i)
           : { h: (hover.i + 9) % 24, m: 0, nextDay: hover.i + 9 >= 24 };
         return (
@@ -128,7 +139,7 @@ function Sparkline({ data, width = 360, height = 32 }: { data: number[]; width?:
             className="absolute z-10 rounded bg-gray-900 px-2 py-1 text-xs text-white shadow-lg whitespace-nowrap pointer-events-none"
             style={{ left: Math.min(hover.x, width - 120), top: -28 }}
           >
-            {String(kst.h).padStart(2, "0")}:{String(kst.m).padStart(2, "0")}{kst.nextDay ? " (+1)" : ""} — {data[hover.i].toLocaleString()} tokens
+            {String(kst.h).padStart(2, "0")}:{String(kst.m).padStart(2, "0")}{kst.nextDay ? " (+1)" : ""} — {(visibleData[hover.i] ?? 0).toLocaleString()} tokens
           </div>
         );
       })()}
