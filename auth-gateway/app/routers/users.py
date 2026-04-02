@@ -20,6 +20,7 @@ from app.core.config import Settings, get_settings
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.user import User
+from app.models.session import TerminalSession
 from app.services.k8s_service import K8sService
 from app.schemas.user import (
     ApproveRequest,
@@ -126,6 +127,20 @@ async def update_user_ttl(
         raise HTTPException(status_code=404, detail="User not found")
 
     user.pod_ttl = request.pod_ttl
+
+    # 실행 중인 세션의 session_type도 함께 업데이트
+    running_session = (
+        db.query(TerminalSession)
+        .filter(
+            TerminalSession.username == user.username,
+            TerminalSession.pod_status == "running",
+        )
+        .first()
+    )
+    if running_session:
+        running_session.session_type = request.pod_ttl
+        logger.info(f"Running session {running_session.pod_name} session_type updated to {request.pod_ttl}")
+
     db.commit()
     db.refresh(user)
 
