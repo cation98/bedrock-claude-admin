@@ -86,7 +86,7 @@ function Sparkline({ data, width = 200, height = 32 }: { data: number[]; width?:
   const todayPts = points.filter(p => p.i >= midnightSlot).map(p => `${p.x},${p.y}`);
 
   // Hit areas: only at slots with data or every N slots for hover
-  const step = len >= 144 ? 3 : 1; // hover every 30min for 144, every hour for 24
+  const step = 1; // every slot is hoverable (10-min resolution)
 
   return (
     <div className="relative inline-block" style={{ width, height }}>
