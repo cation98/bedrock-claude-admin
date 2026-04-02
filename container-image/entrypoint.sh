@@ -465,7 +465,6 @@ exec ttyd \
     --base-path "${TTYD_BASE_PATH}" \
     --ping-interval 30 \
     --max-clients 1 \
-    --index /usr/local/share/ttyd/index.html \
     --client-option reconnect=3 \
     --client-option titleFixed="Claude Code Terminal" \
     --client-option rendererType=dom \

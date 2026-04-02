@@ -88,7 +88,7 @@ class K8sService:
             # 유휴 감지용 내부 heartbeat — Pod가 5분마다 호출
             client.V1EnvVar(
                 name="AUTH_GATEWAY_URL",
-                value="http://auth-gateway.platform.svc.cluster.local:8000",
+                value="http://auth-gateway.platform.svc.cluster.local",
             ),
         ]
 
