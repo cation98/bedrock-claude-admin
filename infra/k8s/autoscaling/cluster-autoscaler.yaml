@@ -124,6 +124,14 @@ spec:
       serviceAccountName: cluster-autoscaler
       # kube-system 노드(Control Plane 근처)에 배치 우선
       priorityClassName: system-cluster-critical
+      # 시스템 노드에 고정 — 사용자 노드 축소를 차단하지 않도록
+      nodeSelector:
+        role: system
+      tolerations:
+        - key: "dedicated"
+          operator: "Equal"
+          value: "system"
+          effect: "NoSchedule"
       containers:
         - name: cluster-autoscaler
           # EKS 클러스터 버전에 맞는 이미지 사용
