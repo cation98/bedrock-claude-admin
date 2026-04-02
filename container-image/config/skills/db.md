@@ -134,6 +134,69 @@ sqlite3 ~/workspace/shared-data/erp.sqlite ".schema sheet1"
 - 공유 데이터에 쓰기 시도 시 `Read-only file system` 에러 발생 (정상)
 - 공유 데이터 수정이 필요하면 소유자에게 요청하거나, 소유자의 웹앱을 통해 입력
 
+### 다중 파일 분석 — 자동 SQLite 병합 규칙
+
+**여러 Excel/CSV 파일을 동시에 분석할 때 반드시 아래 절차를 따르세요:**
+
+1. 대상 파일의 **합산 크기를 먼저 계산**:
+```bash
+du -sh ~/workspace/uploads/TBM*.xlsx
+```
+
+2. **합산 10MB 초과** 또는 **파일 2개 이상** 시 → SQLite에 병합 후 SQL로 분석:
+```python
+import pandas as pd, sqlite3, glob, os
+
+# 대상 파일 탐색
+files = glob.glob(os.path.expanduser("~/workspace/uploads/TBM*.xlsx"))
+print(f"대상: {len(files)}개, 합산: {sum(os.path.getsize(f) for f in files)/1024/1024:.1f}MB")
+
+# SQLite에 병합
+db_path = os.path.expanduser("~/workspace/shared-data/tbm-combined.sqlite")
+conn = sqlite3.connect(db_path)
+for f in files:
+    name = os.path.splitext(os.path.basename(f))[0].replace(" ", "_").lower()
+    df = pd.read_excel(f)
+    df.to_sql(name, conn, if_exists="replace", index=False)
+    print(f"  {name}: {len(df)}행")
+
+# 전체 통합 테이블도 생성
+all_df = pd.concat([pd.read_excel(f) for f in files], ignore_index=True)
+all_df.to_sql("all_data", conn, if_exists="replace", index=False)
+print(f"  all_data: {len(all_df)}행 (통합)")
+conn.close()
+
+# 스키마 생성
+```
+
+3. **스키마 파일 생성** (Claude가 구조를 인식하도록):
+```bash
+python3 -c "
+import sqlite3, os
+conn = sqlite3.connect(os.path.expanduser('~/workspace/shared-data/tbm-combined.sqlite'))
+cur = conn.cursor()
+tables = cur.execute(\"SELECT name FROM sqlite_master WHERE type='table'\").fetchall()
+with open(os.path.expanduser('~/workspace/shared-data/tbm-combined.schema.md'), 'w') as f:
+    f.write('# tbm-combined.sqlite\n\n')
+    for (tbl,) in tables:
+        cnt = cur.execute(f'SELECT COUNT(*) FROM [{tbl}]').fetchone()[0]
+        cols = cur.execute(f'PRAGMA table_info([{tbl}])').fetchall()
+        f.write(f'## {tbl} ({cnt:,} rows)\n| Column | Type |\n|--------|------|\n')
+        for c in cols:
+            f.write(f'| {c[1]} | {c[2] or \"TEXT\"} |\n')
+        f.write('\n')
+conn.close()
+print('스키마 생성 완료')
+"
+```
+
+4. 이후 **SQL 쿼리로 분석** (pandas 재로딩 금지):
+```bash
+sqlite3 ~/workspace/shared-data/tbm-combined.sqlite "SELECT 팀명, COUNT(*) FROM all_data GROUP BY 팀명 ORDER BY COUNT(*) DESC;"
+```
+
+**핵심 원칙**: 파일을 `pd.read_excel()`로 매번 읽지 마세요. **한 번만 읽어서 SQLite에 저장**하고, 이후는 SQL로만 분석합니다.
+
 ### SQLite vs PostgreSQL 선택 기준
 
 | 상황 | 사용 DB | 이유 |
@@ -142,6 +205,38 @@ sqlite3 ~/workspace/shared-data/erp.sqlite ".schema sheet1"
 | 실시간 고장 현황 | **TANGO (psql-tango)** | 실시간 데이터 |
 | 안전관리/TBM | **Safety (psql $DATABASE_URL)** | 운영 데이터 |
 | 문서활동 분석 | **Docu-Log (psql-doculog)** | 대용량 벡터 검색 |
+
+## Opark 업무일지 — 실시간 vs 과거 데이터
+
+**사용자가 업무일지/Opark/일일보고 데이터를 요청하면 반드시 기간을 먼저 확인하세요.**
+
+```
+사용자: "업무일지 분석해줘" 또는 "3월 Opark 현황"
+→ 반드시 질문: "어느 기간의 데이터를 조회할까요?"
+```
+
+| 테이블 | 건수 | 용도 |
+|--------|------|------|
+| `opark_daily_report` | ~183K | **실시간** (최근, 1분 주기 갱신) |
+| `opark_daily_archive` | ~1.8M | **과거** 아카이브 (이전 기간 전체) |
+
+```sql
+-- 실시간 (오늘/최근)
+psql-tango -c "SELECT COUNT(*) FROM opark_daily_report;"
+
+-- 과거 (특정 기간)
+psql-tango -c "SELECT COUNT(*) FROM opark_daily_archive WHERE archived_at >= '2026-03-01' AND archived_at < '2026-04-01';"
+
+-- 전 기간 통합 (주의: 대용량)
+psql-tango -c "
+SELECT * FROM opark_daily_report WHERE created_at >= '2026-03-01'
+UNION ALL
+SELECT * FROM opark_daily_archive WHERE archived_at >= '2026-03-01'
+LIMIT 100;
+"
+```
+
+**주의**: archive 테이블은 184만 건으로 대용량입니다. 반드시 `WHERE` 조건 + `LIMIT`를 사용하세요.
 
 ## 분석 결과 저장
 

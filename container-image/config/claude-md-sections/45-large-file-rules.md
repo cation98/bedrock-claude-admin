@@ -24,5 +24,7 @@ cat ~/workspace/team/*/*.schema.md        # 팀 공유 데이터 스키마
 
 ### 메모리 보호 규칙
 - 50MB 초과 파일: 반드시 SQLite 또는 청크 처리
-- pandas.read_excel(): 10MB 이하만 허용
+- pandas.read_excel(): 10MB 이하 **단일 파일**만 허용
+- **여러 파일 동시 분석**: 합산 크기 무관하게 **반드시 SQLite에 병합 후 SQL 분석** (`/db` 스킬 참조)
+- 같은 Excel을 **2번 이상 pd.read_excel()로 읽지 마세요** — 한 번 읽어서 SQLite 저장 후 SQL로만
 - 대용량 데이터 분석: SQL 쿼리 우선, pandas는 결과만 로딩

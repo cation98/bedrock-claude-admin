@@ -321,7 +321,27 @@ if [ -n "${AUTH_GATEWAY_URL:-}" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 4c) 대화이력 주기적 자동 백업 (30분마다) — TTL 만료/크래시 시에도 보존
+# 4c-1) 유휴 종료 경고 감지 (10초 주기)
+#       idle_cleanup_service가 /tmp/.idle-warning 파일 생성 시
+#       터미널에 경고 메시지 출력 + 파일 삭제
+# ---------------------------------------------------------------------------
+(while true; do
+    sleep 10
+    if [ -f /tmp/.idle-warning ]; then
+        MINUTES=$(python3 -c "import json; print(json.load(open('/tmp/.idle-warning')).get('minutes_left',5))" 2>/dev/null || echo 5)
+        # 모든 터미널 pts에 경고 메시지 전송
+        for pts in /dev/pts/[0-9]*; do
+            echo "" > "$pts" 2>/dev/null
+            echo "  ⚠ [유휴 경고] ${MINUTES}분 후 세션이 종료됩니다." > "$pts" 2>/dev/null
+            echo "  아무 키를 입력하면 유지됩니다." > "$pts" 2>/dev/null
+            echo "" > "$pts" 2>/dev/null
+        done
+        rm -f /tmp/.idle-warning
+    fi
+done) &
+
+# ---------------------------------------------------------------------------
+# 4c-2) 대화이력 주기적 자동 백업 (30분마다) — TTL 만료/크래시 시에도 보존
 # ---------------------------------------------------------------------------
 (while true; do sleep 1800; backup-chat 2>/dev/null; done) &
 

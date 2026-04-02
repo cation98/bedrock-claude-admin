@@ -24,7 +24,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.security import get_current_user
+from app.core.security import get_current_user, get_current_user_or_pod
 from app.models.file_share import FileShareACL, SharedDataset
 from app.models.user import User
 from app.schemas.file_share import (
@@ -67,7 +67,7 @@ def _get_owned_dataset(dataset_name: str, username: str, db: Session) -> SharedD
 
 @router.get("/datasets/my", response_model=list[DatasetWithACLCountResponse])
 async def list_my_datasets(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_pod),
     db: Session = Depends(get_db),
 ):
     """내가 소유한 데이터셋 목록 (데이터셋별 활성 ACL 수 포함)."""
@@ -111,7 +111,7 @@ async def list_my_datasets(
 
 @router.get("/datasets/shared", response_model=list[SharedDatasetResponse])
 async def list_shared_datasets(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_pod),
     db: Session = Depends(get_db),
 ):
     """나에게 공유된 데이터셋 목록 (user 또는 team 단위)."""
@@ -190,7 +190,7 @@ async def get_shared_mounts(
 
 @router.get("/teams", response_model=TeamListResponse)
 async def list_teams(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_pod),
     db: Session = Depends(get_db),
 ):
     """조직 목록 — 공유 대상 선택 UI용.
@@ -213,7 +213,7 @@ async def list_teams(
 
 @router.get("/regions")
 async def list_regions(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_pod),
     db: Session = Depends(get_db),
 ):
     """담당(region) 목록 — 공유 대상 선택 UI용."""
@@ -233,7 +233,7 @@ async def list_org_members(
     team: str = None,
     job: str = None,
     q: str = None,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_pod),
     db: Session = Depends(get_db),
 ):
     """조직 구성원 검색 — 담당/팀/직책 필터 + 이름/사번 검색.
@@ -278,7 +278,7 @@ async def list_org_members(
 @router.post("/datasets", response_model=DatasetResponse, status_code=status.HTTP_201_CREATED)
 async def create_dataset(
     request: DatasetCreateRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_pod),
     db: Session = Depends(get_db),
 ):
     """데이터셋 등록 (파일 업로드 완료 후 호출).
@@ -324,7 +324,7 @@ async def create_dataset(
 @router.get("/datasets/{name}/share")
 async def list_dataset_shares(
     name: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_pod),
     db: Session = Depends(get_db),
 ):
     """공유 대상 목록 (데이터셋 소유자만 조회 가능)."""
@@ -360,7 +360,7 @@ async def list_dataset_shares(
 async def share_dataset(
     name: str,
     request: ShareRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_pod),
     db: Session = Depends(get_db),
 ):
     """공유 설정 (데이터셋 소유자만 가능).
@@ -445,7 +445,7 @@ async def share_dataset(
 async def revoke_share(
     name: str,
     acl_id: int,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_pod),
     db: Session = Depends(get_db),
 ):
     """공유 해제 (데이터셋 소유자만 가능). revoked_at 설정으로 소프트 삭제."""

@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.core.database import get_db
-from app.core.security import decode_token, get_current_user
+from app.core.security import decode_token, get_current_user, get_current_user_or_pod
 from app.models.app import AppACL, DeployedApp
 from app.models.user import User
 from app.schemas.app import (
@@ -568,7 +568,7 @@ async def revoke_app_access(
 )
 async def search_users(
     q: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_pod),
     db: Session = Depends(get_db),
 ):
     """승인된 사용자를 사번 또는 이름으로 검색.

@@ -95,6 +95,8 @@ COPY --chown=node:node sample-project/CLAUDE.md /home/node/CLAUDE.md
 RUN pip3 install --no-cache-dir --break-system-packages \
     openpyxl pandas matplotlib \
     fastapi uvicorn[standard] psycopg2-binary jinja2 python-multipart \
+    xlrd python-docx python-pptx qrcode reportlab fpdf2 \
+    httpx requests markdown duckdb \
     uv
 
 # Serena MCP 서버 사전 설치 (uvx로 실행)

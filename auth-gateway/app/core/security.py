@@ -1,14 +1,21 @@
 import hashlib
 import base64
+import logging
 from datetime import datetime, timedelta, timezone
 
 from jose import JWTError, jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.orm import Session as DBSession
 
 from app.core.config import Settings, get_settings
+from app.core.database import get_db
 
 security_scheme = HTTPBearer()
+# auto=False: Bearer 토큰이 없어도 422를 발생시키지 않음 (Pod 내부 인증 fallback 허용)
+security_scheme_optional = HTTPBearer(auto_error=False)
+
+logger = logging.getLogger(__name__)
 
 
 def encode_password(password: str, salt: str) -> str:
@@ -78,3 +85,49 @@ async def get_current_user(
 ) -> dict:
     """현재 인증된 사용자 정보를 반환하는 FastAPI dependency."""
     return verify_token(credentials.credentials, settings)
+
+
+async def get_current_user_or_pod(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(security_scheme_optional),
+    settings: Settings = Depends(get_settings),
+    db: DBSession = Depends(get_db),
+) -> dict:
+    """JWT 인증 또는 Pod 내부 인증 (X-Pod-Name 헤더).
+
+    브라우저(Hub 포털): JWT 토큰 → get_current_user 방식
+    Pod 내부(Claude Code): X-Pod-Name 헤더 → 세션에서 사용자 조회
+
+    Returns:
+        dict: {"sub": username, "role": role, ...}
+              Pod 인증 시 추가로 "auth_type": "pod" 포함.
+    """
+    # 1. JWT 인증 시도 (Bearer 토큰이 있는 경우)
+    if credentials and credentials.credentials:
+        try:
+            payload = verify_token(credentials.credentials, settings)
+            return payload
+        except HTTPException:
+            pass  # JWT 실패 → Pod 내부 인증으로 fallback
+
+    # 2. Pod 내부 인증 (X-Pod-Name 헤더)
+    pod_name = request.headers.get("X-Pod-Name", "")
+    if pod_name.startswith("claude-terminal-"):
+        from app.models.session import TerminalSession
+
+        session = (
+            db.query(TerminalSession)
+            .filter(
+                TerminalSession.pod_name == pod_name,
+                TerminalSession.pod_status.in_(["running", "creating"]),
+            )
+            .first()
+        )
+        if session:
+            logger.debug(f"Pod internal auth: {pod_name} → user {session.username}")
+            return {"sub": session.username, "role": "user", "auth_type": "pod"}
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Not authenticated",
+    )
