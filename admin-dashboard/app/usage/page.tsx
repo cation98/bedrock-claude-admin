@@ -74,7 +74,14 @@ function Sparkline({ data, width = 360, height = 32 }: { data: number[]; width?:
 
   // Trim data to current slot + 1
   const visibleEnd = Math.min(nowSlot + 1, len);
-  const visibleData = data.slice(0, visibleEnd);
+  const visibleRaw = data.slice(0, visibleEnd);
+
+  // Convert cumulative → incremental (per-slot delta)
+  const visibleData = visibleRaw.map((v, i) => {
+    if (i === 0) return 0;
+    const delta = v - visibleRaw[i - 1];
+    return delta > 0 ? delta : 0;
+  });
   const visLen = visibleData.length;
 
   if (visLen === 0 || visibleData.every(v => v === 0)) {
@@ -139,7 +146,7 @@ function Sparkline({ data, width = 360, height = 32 }: { data: number[]; width?:
             className="absolute z-10 rounded bg-gray-900 px-2 py-1 text-xs text-white shadow-lg whitespace-nowrap pointer-events-none"
             style={{ left: Math.min(hover.x, width - 120), top: -28 }}
           >
-            {String(kst.h).padStart(2, "0")}:{String(kst.m).padStart(2, "0")}{kst.nextDay ? " (+1)" : ""} — {(visibleData[hover.i] ?? 0).toLocaleString()} tokens
+            {String(kst.h).padStart(2, "0")}:{String(kst.m).padStart(2, "0")}{kst.nextDay ? " (+1)" : ""} — +{(visibleData[hover.i] ?? 0).toLocaleString()} (누적 {(visibleRaw[hover.i] ?? 0).toLocaleString()})
           </div>
         );
       })()}
