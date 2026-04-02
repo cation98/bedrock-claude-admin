@@ -19,17 +19,19 @@ Endpoints:
   - ACL은 revoked_at으로 소프트 삭제하여 감사 추적 가능.
 """
 
+import asyncio
 import logging
 import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
-from app.core.database import get_db
+from app.core.database import SessionLocal, get_db
 from app.core.security import decode_token, get_current_user, get_current_user_or_pod
-from app.models.app import AppACL, DeployedApp
+from app.models.app import AppACL, AppView, DeployedApp
 from app.models.user import User
 from app.schemas.app import (
     AppACLDetailResponse,
@@ -44,6 +46,27 @@ from app.schemas.app import (
 
 router = APIRouter(prefix="/api/v1/apps", tags=["apps"])
 logger = logging.getLogger(__name__)
+
+# auth-check 시 뷰 기록에서 제외할 정적 자산 확장자
+_STATIC_ASSET_EXTENSIONS = frozenset({
+    ".css", ".js", ".png", ".jpg", ".jpeg", ".svg",
+    ".ico", ".woff", ".woff2", ".ttf", ".map",
+})
+
+# 배포 허용 포트 범위 + 위험 포트 블랙리스트 (SSRF 방지)
+_ALLOWED_PORT_MIN = 3000
+_ALLOWED_PORT_MAX = 9999
+_BLOCKED_PORTS = frozenset({
+    6379,  # Redis
+    5432,  # PostgreSQL
+    3306,  # MySQL
+    9200,  # Elasticsearch
+    8443,  # K8s API
+    8472,  # VXLAN (Flannel)
+    6443,  # K8s API server
+    2379,  # etcd
+    2380,  # etcd peer
+})
 
 # ---------- 앱 이름 유효성 검사 ----------
 
@@ -179,13 +202,15 @@ async def auth_check(
     # 3. 관리자는 모든 앱에 접근 가능
     requesting_role = user_payload.get("role", "user")
     if requesting_role == "admin":
+        await _maybe_record_view(original_uri, None, requesting_username)
         return _auth_check_success(requesting_username)
 
     # 4. 앱 소유자는 자신의 앱에 접근 가능
     if requesting_username.upper() == owner_username:
+        await _maybe_record_view(original_uri, None, requesting_username)
         return _auth_check_success(requesting_username)
 
-    # 5. ACL 검사: 요청자가 해당 앱의 활성 ACL에 등록되어 있는지 확인
+    # 5. 앱 조회 (visibility + ACL 검사에 사용)
     app = (
         db.query(DeployedApp)
         .filter(
@@ -201,6 +226,12 @@ async def auth_check(
             detail="앱을 찾을 수 없거나 접근 권한이 없습니다",
         )
 
+    # 5-1. visibility='company' → 인증된 SSO 사용자면 ACL 검사 없이 허용
+    if app.visibility == "company":
+        await _maybe_record_view(original_uri, app.id, requesting_username)
+        return _auth_check_success(requesting_username)
+
+    # 5-2. visibility='private' (기본) → ACL 검사
     acl_entry = (
         db.query(AppACL)
         .filter(
@@ -216,6 +247,7 @@ async def auth_check(
             detail="이 앱에 대한 접근 권한이 없습니다",
         )
 
+    await _maybe_record_view(original_uri, app.id, requesting_username)
     return _auth_check_success(requesting_username)
 
 
@@ -231,6 +263,58 @@ def _auth_check_success(username: str) -> dict:
         content={"authenticated": True, "username": username},
         headers={"X-Auth-Username": username},
     )
+
+
+def _is_static_asset(uri: str) -> bool:
+    """URI가 정적 자산(CSS, JS, 이미지, 폰트 등)인지 확인."""
+    # 쿼리스트링 제거 후 확장자 검사
+    path = uri.split("?", 1)[0]
+    dot_idx = path.rfind(".")
+    if dot_idx == -1:
+        return False
+    ext = path[dot_idx:].lower()
+    return ext in _STATIC_ASSET_EXTENSIONS
+
+
+async def _maybe_record_view(
+    original_uri: str,
+    app_id: int | None,
+    viewer_username: str,
+) -> None:
+    """정적 자산이 아닌 경우 비동기로 뷰를 기록한다.
+
+    app_id가 None인 경우(관리자/소유자 접근 등 앱 조회 전 단계)는 기록하지 않는다.
+    auth-check 응답 속도에 영향을 주지 않도록 asyncio.create_task로 실행.
+    async 함수이므로 running event loop에서 안전하게 create_task 호출 가능.
+    """
+    if app_id is None:
+        return
+    if _is_static_asset(original_uri):
+        return
+    try:
+        asyncio.create_task(_record_view(app_id, viewer_username))
+    except Exception:
+        logger.debug("Failed to schedule view recording", exc_info=True)
+
+
+async def _record_view(app_id: int, viewer_username: str) -> None:
+    """app_views 테이블에 조회 기록 INSERT (비동기, 실패해도 무시).
+
+    자체 DB 세션을 생성하여 요청 세션과 독립적으로 동작.
+    """
+    try:
+        db = SessionLocal()
+        try:
+            view = AppView(
+                app_id=app_id,
+                viewer_user_id=viewer_username,
+            )
+            db.add(view)
+            db.commit()
+        finally:
+            db.close()
+    except Exception:
+        logger.debug("Failed to record app view: app_id=%s, user=%s", app_id, viewer_username, exc_info=True)
 
 
 @router.get("/my", response_model=list[DeployedAppResponse])
@@ -282,6 +366,57 @@ async def list_shared_apps(
     return [DeployedAppResponse.model_validate(a) for a in apps]
 
 
+@router.get("/gallery")
+async def list_gallery_apps(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """공개(company) 앱 목록 + 뷰 통계.
+
+    일반 사용자에게는 visibility='company' 앱만 표시.
+    관리자(admin)는 모든 앱을 볼 수 있다.
+    view_count와 unique_viewers는 app_views 테이블에서 집계한다.
+    """
+    requesting_role = current_user.get("role", "user")
+    username = current_user["sub"]
+
+    # 관리자: 전체, 일반 사용자: company 앱 + 본인 앱
+    query = db.query(DeployedApp).filter(DeployedApp.status != "deleted")
+    if requesting_role != "admin":
+        query = query.filter(
+            (DeployedApp.visibility == "company")
+            | (DeployedApp.owner_username == username)
+        )
+    apps = query.order_by(DeployedApp.created_at.desc()).all()
+
+    if not apps:
+        return {"apps": []}
+
+    # 뷰 통계 일괄 집계 (N+1 방지)
+    app_ids = [a.id for a in apps]
+    view_stats = (
+        db.query(
+            AppView.app_id,
+            func.count(AppView.id).label("view_count"),
+            func.count(func.distinct(AppView.viewer_user_id)).label("unique_viewers"),
+        )
+        .filter(AppView.app_id.in_(app_ids))
+        .group_by(AppView.app_id)
+        .all()
+    )
+    stats_map = {row.app_id: (row.view_count, row.unique_viewers) for row in view_stats}
+
+    results = []
+    for app in apps:
+        vc, uv = stats_map.get(app.id, (0, 0))
+        resp = DeployedAppResponse.model_validate(app)
+        resp.view_count = vc
+        resp.unique_viewers = uv
+        results.append(resp)
+
+    return {"apps": results}
+
+
 # ==================== 배포/삭제/롤백 ====================
 
 
@@ -305,6 +440,18 @@ async def deploy_app(
     # 앱 이름 유효성 검사
     _validate_app_name(request.app_name)
 
+    # 포트 범위 + 블랙리스트 검증 (SSRF 방지)
+    if not (_ALLOWED_PORT_MIN <= request.app_port <= _ALLOWED_PORT_MAX):
+        raise HTTPException(
+            status_code=400,
+            detail=f"앱 포트는 {_ALLOWED_PORT_MIN}-{_ALLOWED_PORT_MAX} 범위만 허용됩니다.",
+        )
+    if request.app_port in _BLOCKED_PORTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"포트 {request.app_port}는 보안상 사용할 수 없습니다.",
+        )
+
     # 동일 이름의 기존 앱 확인 (소유자 기준)
     existing_app = (
         db.query(DeployedApp)
@@ -319,6 +466,8 @@ async def deploy_app(
     if existing_app:
         # 재배포: 기존 앱 업데이트
         existing_app.version = request.version
+        existing_app.visibility = request.visibility
+        existing_app.app_port = request.app_port
         existing_app.status = "running"
         existing_app.updated_at = datetime.now(timezone.utc)
         db.commit()
@@ -337,6 +486,8 @@ async def deploy_app(
         pod_name=pod_name,
         status="running",
         version=request.version,
+        visibility=request.visibility,
+        app_port=request.app_port,
     )
     db.add(new_app)
     db.commit()

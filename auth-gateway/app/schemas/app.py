@@ -10,6 +10,8 @@ class DeployRequest(BaseModel):
 
     app_name: str                          # 배포할 앱 이름
     version: str | None = None             # 배포 버전 (선택, 미지정 시 auto-generated)
+    visibility: str = "private"            # 접근 범위: "private" | "company"
+    app_port: int = 3000                   # Pod 내부 포트 (기본 3000)
     acl_usernames: list[str] | None = None # 접근 허용 사번 목록 (선택)
 
 
@@ -29,6 +31,10 @@ class DeployedAppResponse(BaseModel):
     pod_name: str | None = None
     status: str
     version: str | None = None
+    visibility: str = "private"
+    app_port: int = 3000
+    view_count: int = 0
+    unique_viewers: int = 0
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

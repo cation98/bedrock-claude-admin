@@ -17,7 +17,7 @@ from sqlalchemy import text
 from app.core.config import get_settings
 from app.core.database import Base, engine
 from app.core.scheduler import idle_checker_loop, token_snapshot_loop, prompt_audit_loop
-from app.models.app import DeployedApp, AppACL  # noqa: F401 — create_all이 테이블 생성하도록 import
+from app.models.app import DeployedApp, AppACL, AppView  # noqa: F401 — create_all이 테이블 생성하도록 import
 from app.models.file_share import SharedDataset, FileShareACL  # noqa: F401 — create_all이 테이블 생성하도록 import
 from app.models.token_usage import TokenUsageHourly  # noqa: F401 — create_all이 테이블 생성하도록 import
 from app.models.prompt_audit import PromptAuditSummary, PromptAuditFlag  # noqa: F401 — create_all이 테이블 생성하도록 import
@@ -76,12 +76,43 @@ def _run_can_deploy_apps_migration() -> None:
             logger.info("Migration: users.can_deploy_apps 컬럼 추가 완료")
 
 
+def _run_app_visibility_migration() -> None:
+    """deployed_apps 테이블에 visibility, app_port 컬럼이 없으면 추가."""
+    with engine.connect() as conn:
+        # visibility 컬럼
+        result = conn.execute(text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name='deployed_apps' AND column_name='visibility'"
+        ))
+        if result.fetchone() is None:
+            conn.execute(text(
+                "ALTER TABLE deployed_apps "
+                "ADD COLUMN visibility VARCHAR(20) DEFAULT 'private'"
+            ))
+            logger.info("Migration: deployed_apps.visibility 컬럼 추가 완료")
+
+        # app_port 컬럼
+        result = conn.execute(text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name='deployed_apps' AND column_name='app_port'"
+        ))
+        if result.fetchone() is None:
+            conn.execute(text(
+                "ALTER TABLE deployed_apps "
+                "ADD COLUMN app_port INTEGER DEFAULT 3000"
+            ))
+            logger.info("Migration: deployed_apps.app_port 컬럼 추가 완료")
+
+        conn.commit()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """앱 시작/종료 라이프사이클 — DB 초기화 + 백그라운드 스케줄러 시작."""
     Base.metadata.create_all(bind=engine)
     _run_column_migration()
     _run_can_deploy_apps_migration()
+    _run_app_visibility_migration()
     idle_task = asyncio.create_task(idle_checker_loop(settings))
     snapshot_task = asyncio.create_task(token_snapshot_loop(settings))
     audit_task = asyncio.create_task(prompt_audit_loop(settings))
@@ -117,6 +148,7 @@ app.add_middleware(
     allow_origins=[
         "https://claude-admin.skons.net",
         "https://claude.skons.net",
+        "http://localhost:3000",  # 로컬 개발용
     ],
     allow_credentials=True,
     allow_methods=["*"],

@@ -239,7 +239,11 @@ export interface DeployedApp {
   pod_name: string;
   status: string;
   version: string;
+  visibility: string;
+  app_port: number;
   acl_count?: number;
+  view_count: number;
+  unique_viewers: number;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -250,6 +254,10 @@ export interface DeployedAppsResponse {
 
 export function getAdminApps(): Promise<DeployedAppsResponse> {
   return request<DeployedAppsResponse>("/api/v1/admin/apps");
+}
+
+export function getGalleryApps(): Promise<DeployedAppsResponse> {
+  return request<DeployedAppsResponse>("/api/v1/apps/gallery");
 }
 
 // ---------- Users: Search + Direct Add ----------

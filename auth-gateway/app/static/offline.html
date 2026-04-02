@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>앱 오프라인 — Claude Code Platform</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #f8fafc;
+            color: #334155;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
+        }
+
+        .container {
+            text-align: center;
+            max-width: 480px;
+            width: 100%;
+        }
+
+        /* CSS-only cloud + zzz illustration */
+        .illustration {
+            position: relative;
+            width: 160px;
+            height: 120px;
+            margin: 0 auto 2rem;
+        }
+
+        .cloud {
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 120px;
+            height: 60px;
+            background: #e2e8f0;
+            border-radius: 60px;
+        }
+        .cloud::before {
+            content: '';
+            position: absolute;
+            top: -28px;
+            left: 22px;
+            width: 50px;
+            height: 50px;
+            background: #e2e8f0;
+            border-radius: 50%;
+        }
+        .cloud::after {
+            content: '';
+            position: absolute;
+            top: -18px;
+            right: 18px;
+            width: 38px;
+            height: 38px;
+            background: #e2e8f0;
+            border-radius: 50%;
+        }
+
+        .zzz {
+            position: absolute;
+            top: 0;
+            right: 8px;
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: #6366f1;
+            animation: float 3s ease-in-out infinite;
+        }
+        .zzz span:nth-child(1) {
+            display: block;
+            font-size: 0.7rem;
+            opacity: 0.4;
+            transform: translateX(18px);
+            animation: float 3s ease-in-out 0.6s infinite;
+        }
+        .zzz span:nth-child(2) {
+            display: block;
+            font-size: 0.85rem;
+            opacity: 0.65;
+            transform: translateX(10px);
+            animation: float 3s ease-in-out 0.3s infinite;
+        }
+        .zzz span:nth-child(3) {
+            display: block;
+            font-size: 1.1rem;
+            opacity: 1;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-6px); }
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #1e293b;
+            margin-bottom: 0.75rem;
+        }
+
+        .description {
+            font-size: 1rem;
+            color: #64748b;
+            line-height: 1.6;
+            margin-bottom: 2rem;
+        }
+
+        .info-card {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 1.25rem 1.5rem;
+            margin-bottom: 2rem;
+            text-align: left;
+        }
+        .info-card .row {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+            padding: 0.5rem 0;
+        }
+        .info-card .row + .row {
+            border-top: 1px solid #f1f5f9;
+        }
+        .info-card .icon {
+            flex-shrink: 0;
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1rem;
+            margin-top: 1px;
+        }
+        .info-card .text {
+            font-size: 0.9rem;
+            color: #475569;
+            line-height: 1.5;
+        }
+        .info-card .text strong {
+            color: #334155;
+        }
+
+        .retry-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.7rem 1.5rem;
+            background: #6366f1;
+            color: #ffffff;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+            text-decoration: none;
+        }
+        .retry-btn:hover {
+            background: #4f46e5;
+        }
+        .retry-btn svg {
+            width: 16px;
+            height: 16px;
+        }
+
+        .footer {
+            margin-top: 3rem;
+            font-size: 0.8rem;
+            color: #94a3b8;
+        }
+
+        /* Responsive */
+        @media (max-width: 480px) {
+            body { padding: 1rem; }
+            h1 { font-size: 1.25rem; }
+            .description { font-size: 0.9rem; }
+            .info-card { padding: 1rem; }
+            .illustration { width: 130px; height: 100px; }
+            .cloud { width: 100px; height: 50px; }
+            .cloud::before { width: 42px; height: 42px; top: -22px; left: 18px; }
+            .cloud::after { width: 32px; height: 32px; top: -14px; right: 14px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="illustration">
+            <div class="cloud"></div>
+            <div class="zzz">
+                <span>z</span>
+                <span>z</span>
+                <span>Z</span>
+            </div>
+        </div>
+
+        <h1>이 앱은 현재 오프라인입니다</h1>
+        <p class="description">
+            소유자가 로그인하면 자동으로 다시 사용 가능합니다.
+        </p>
+
+        <div class="info-card">
+            <div class="row">
+                <div class="icon">💤</div>
+                <div class="text">
+                    <strong>자동 절전 모드</strong><br>
+                    일정 시간 사용하지 않으면 리소스 절약을 위해 앱이 자동으로 일시 정지됩니다.
+                </div>
+            </div>
+            <div class="row">
+                <div class="icon">🔄</div>
+                <div class="text">
+                    <strong>자동 복구</strong><br>
+                    앱 소유자가 플랫폼에 로그인하면 수 초 내로 자동 시작됩니다.
+                </div>
+            </div>
+        </div>
+
+        <button class="retry-btn" onclick="location.reload()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="23 4 23 10 17 10"></polyline>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+            </svg>
+            다시 시도
+        </button>
+
+        <div class="footer">Powered by Claude Code Platform</div>
+    </div>
+</body>
+</html>

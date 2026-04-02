@@ -1,23 +1,33 @@
 """웹앱 Auth Proxy.
 
-/app/{pod_name}/ 경로의 요청을 인증 후 Pod port 3000으로 프록시.
+/app/{pod_name}/ 경로의 요청을 인증 후 Pod 웹앱 포트로 프록시.
 사용자 Pod에 SSO 시크릿을 제공하지 않고, Auth Gateway가 인증을 대행.
 
 인증된 요청에 X-User-Id, X-User-Name 헤더를 주입하여
 사용자 웹앱에서 현재 접속자를 식별할 수 있도록 함.
+
+추가:
+  GET /api/v1/apps/offline — NGINX custom error page용 오프라인 HTML 반환.
+  Pod가 내려간 상태에서 NGINX가 502/503을 받으면 이 페이지를 사용자에게 표시.
 """
 
 import logging
+from pathlib import Path
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import RedirectResponse, Response
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import FileResponse, RedirectResponse, Response
+from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.core.database import get_db
 from app.core.security import decode_token
+from app.models.app import DeployedApp
 
 router = APIRouter(tags=["app-proxy"])
 logger = logging.getLogger(__name__)
+
+_OFFLINE_HTML = Path(__file__).resolve().parent.parent / "static" / "offline.html"
 
 
 async def _get_user_from_request(request: Request) -> dict | None:
@@ -47,15 +57,28 @@ async def _get_user_from_request(request: Request) -> dict | None:
     return None
 
 
+@router.get("/api/v1/apps/offline")
+async def apps_offline_page():
+    """NGINX custom error page용 오프라인 HTML 반환.
+
+    NGINX Ingress 설정에서 proxy_intercept_errors + error_page 502/503
+    으로 이 엔드포인트를 지정하면, Pod가 내려간 상태에서 사용자에게
+    친절한 오프라인 안내 페이지를 보여줄 수 있다.
+    """
+    return FileResponse(_OFFLINE_HTML, media_type="text/html")
+
+
 @router.api_route(
     "/app/{pod_name}/{path:path}",
     methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
 )
-async def proxy_to_webapp(pod_name: str, path: str, request: Request):
+async def proxy_to_webapp(
+    pod_name: str, path: str, request: Request, db: Session = Depends(get_db)
+):
     """사용자 웹앱으로 프록시 (인증 필수).
 
     흐름:
-      Browser → Auth Gateway (JWT 검증) → X-User-Id 헤더 주입 → Pod webapp (port 3000)
+      Browser → Auth Gateway (JWT 검증) → X-User-Id 헤더 주입 → Pod webapp (app_port)
 
     Pod의 webapp은 X-User-Id / X-User-Name 헤더만 읽으면 현재 접속자를 알 수 있다.
     SSO_CLIENT_SECRET이 Pod에 노출되지 않으므로 보안이 강화된다.
@@ -66,9 +89,15 @@ async def proxy_to_webapp(pod_name: str, path: str, request: Request):
         # 미인증 → 로그인 페이지로 리다이렉트
         return RedirectResponse(url="/", status_code=302)
 
+    # deployed_apps에서 앱 포트 조회 (미등록 앱은 기본 3000 폴백)
+    app_row = db.query(DeployedApp).filter(
+        DeployedApp.pod_name == pod_name,
+    ).first()
+    app_port = app_row.app_port if app_row and app_row.app_port else 3000
+
     # 대상 Pod 서비스 URL 구성
     # K8s 내부 DNS: {pod_name}.{namespace}.svc.cluster.local
-    target_url = f"http://{pod_name}.claude-sessions:3000/{path}"
+    target_url = f"http://{pod_name}.claude-sessions:{app_port}/{path}"
     if request.url.query:
         target_url += f"?{request.url.query}"
 
@@ -110,7 +139,7 @@ async def proxy_to_webapp(pod_name: str, path: str, request: Request):
     except httpx.ConnectError:
         raise HTTPException(
             status_code=503,
-            detail="웹앱이 실행되지 않았습니다. 터미널에서 포트 3000으로 앱을 실행해주세요.",
+            detail=f"웹앱이 실행되지 않았습니다. 터미널에서 포트 {app_port}으로 앱을 실행해주세요.",
         )
     except httpx.TimeoutException:
         raise HTTPException(status_code=504, detail="웹앱 응답 시간 초과")

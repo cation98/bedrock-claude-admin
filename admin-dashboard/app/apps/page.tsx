@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { getAdminApps, DeployedApp } from "@/lib/api";
+import { getAdminApps, getGalleryApps, DeployedApp } from "@/lib/api";
 import { isAuthenticated } from "@/lib/auth";
 
 const REFRESH_INTERVAL = 30_000;
@@ -21,6 +21,17 @@ function statusBadge(status: string) {
   }
 }
 
+function visibilityBadge(visibility: string) {
+  const base = "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium";
+  switch (visibility) {
+    case "company":
+      return <span className={`${base} bg-blue-100 text-blue-700`}>{visibility}</span>;
+    case "private":
+    default:
+      return <span className={`${base} bg-gray-100 text-gray-500`}>{visibility}</span>;
+  }
+}
+
 function formatDate(iso: string | null) {
   if (!iso) return "-";
   const d = new Date(iso);
@@ -35,7 +46,7 @@ export default function AppsPage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const res = await getAdminApps();
+      const res = await getGalleryApps();
       setApps(res.apps);
       setError("");
     } catch (err) {
@@ -56,6 +67,8 @@ export default function AppsPage() {
   }, [router, fetchData]);
 
   const runningCount = apps.filter((a) => a.status === "running").length;
+  const totalViews = apps.reduce((sum, a) => sum + (a.view_count ?? 0), 0);
+  const totalViewers = apps.reduce((sum, a) => sum + (a.unique_viewers ?? 0), 0);
 
   return (
     <>
@@ -67,7 +80,7 @@ export default function AppsPage() {
         )}
 
         {/* Stats */}
-        <div className="mb-6 grid grid-cols-3 gap-4">
+        <div className="mb-6 grid grid-cols-5 gap-4">
           <div className="rounded-lg border border-gray-200 bg-white p-4">
             <div className="text-sm text-gray-500">전체 앱</div>
             <div className="mt-1 text-2xl font-bold text-gray-900">{apps.length}</div>
@@ -79,6 +92,14 @@ export default function AppsPage() {
           <div className="rounded-lg border border-gray-200 bg-white p-4">
             <div className="text-sm text-gray-500">중지됨</div>
             <div className="mt-1 text-2xl font-bold text-gray-400">{apps.length - runningCount}</div>
+          </div>
+          <div className="rounded-lg border border-gray-200 bg-white p-4">
+            <div className="text-sm text-gray-500">총 조회수</div>
+            <div className="mt-1 text-2xl font-bold text-purple-600">{totalViews.toLocaleString()}</div>
+          </div>
+          <div className="rounded-lg border border-gray-200 bg-white p-4">
+            <div className="text-sm text-gray-500">활성 접속자</div>
+            <div className="mt-1 text-2xl font-bold text-indigo-600">{totalViewers.toLocaleString()}</div>
           </div>
         </div>
 
@@ -111,7 +132,19 @@ export default function AppsPage() {
                       상태
                     </th>
                     <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                      공개
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                       버전
+                    </th>
+                    <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-gray-500">
+                      포트
+                    </th>
+                    <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-gray-500">
+                      조회수
+                    </th>
+                    <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-gray-500">
+                      접속자
                     </th>
                     <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-gray-500">
                       접근자
@@ -144,8 +177,20 @@ export default function AppsPage() {
                       <td className="whitespace-nowrap px-4 py-3 text-sm">
                         {statusBadge(a.status)}
                       </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-sm">
+                        {visibilityBadge(a.visibility ?? "private")}
+                      </td>
                       <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
                         {a.version}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-sm text-center text-gray-500 font-mono">
+                        {a.app_port ?? "-"}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-sm text-center text-gray-600">
+                        {(a.view_count ?? 0).toLocaleString()}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-sm text-center text-gray-600">
+                        {(a.unique_viewers ?? 0).toLocaleString()}
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-sm text-center text-gray-600">
                         {a.acl_count ?? 0}명
