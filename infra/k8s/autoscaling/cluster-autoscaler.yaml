@@ -151,6 +151,11 @@ spec:
             - --expander=least-waste
             # 노드 그룹 자동 탐색 (태그 기반)
             - --node-group-auto-discovery=asg:tag=k8s.io/cluster-autoscaler/enabled=true,k8s.io/cluster-autoscaler/bedrock-claude-eks=owned
+            # DaemonSet(aws-node, kube-proxy 등)만 있는 노드도 축소 대상
+            # 기본 50% → 80%로 상향 (DaemonSet CPU 합계가 ~72%)
+            - --scale-down-utilization-threshold=0.8
+            # DaemonSet Pod은 축소 판단에서 제외
+            - --ignore-daemonsets-utilization=true
             # 안전 설정
             - --balance-similar-node-groups
             - --skip-nodes-with-local-storage=false
