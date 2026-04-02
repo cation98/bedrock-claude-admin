@@ -1,0 +1,44 @@
+# Overprovisioning — 더미 Pod로 노드 사전 확보
+# 사용자 Pod보다 낮은 우선순위 → 사용자 로그인 시 즉시 밀려남
+# → Autoscaler가 밀려난 더미를 위해 새 노드 생성 → 항상 여유 확보
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: overprovisioning
+value: -1
+globalDefault: false
+description: "사용자 Pod보다 낮은 우선순위. 사용자 로그인 시 자동으로 밀려남."
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: overprovisioning
+  namespace: claude-sessions
+spec:
+  replicas: 2  # 더미 2개 = 노드 1대 여유 확보 (Pod당 500m CPU)
+  selector:
+    matchLabels:
+      app: overprovisioning
+  template:
+    metadata:
+      labels:
+        app: overprovisioning
+    spec:
+      priorityClassName: overprovisioning
+      terminationGracePeriodSeconds: 0
+      tolerations:
+        - key: "dedicated"
+          operator: "Equal"
+          value: "user"
+          effect: "NoSchedule"
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            # 사용자 Pod와 동일한 리소스 요청 → 1:1 자리 확보
+            requests:
+              cpu: 500m
+              memory: 1536Mi
+            limits:
+              cpu: 500m
+              memory: 1536Mi

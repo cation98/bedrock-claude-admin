@@ -316,6 +316,24 @@ async def get_infrastructure(
             node_map[node_name].pods.append(pod_info)
         total_pods += 1
 
+    # Overprovisioning (더미) pods — 노드 사전 확보용
+    dummy_pods = v1.list_namespaced_pod(namespace=namespace, label_selector="app=overprovisioning")
+    for pod in dummy_pods.items:
+        pod_name = pod.metadata.name
+        node_name = pod.spec.node_name or "unscheduled"
+        pod_info = PodInfo(
+            pod_name=pod_name,
+            username="DUMMY",
+            user_name="예약석 (더미)",
+            status=pod.status.phase or "Unknown",
+            node_name=node_name,
+            cpu_request="500m",
+            memory_request="1536Mi",
+            created_at=pod.metadata.creation_timestamp.isoformat() if pod.metadata.creation_timestamp else None,
+        )
+        if node_name in node_map:
+            node_map[node_name].pods.append(pod_info)
+
     node_list = sorted(node_map.values(), key=lambda n: (-len(n.pods), n.node_name))
 
     return InfraResponse(
