@@ -849,15 +849,11 @@ export function triggerPromptAudit(): Promise<{ analyzed: number }> {
 
 // ---------- Surveys ----------
 
-export interface SurveyQuestionOption {
-  label: string;
-}
-
 export interface SurveyQuestion {
   type: "text" | "photo" | "choice";
   label: string;
   required: boolean;
-  options?: SurveyQuestionOption[];
+  options?: string[];
 }
 
 export interface Survey {
