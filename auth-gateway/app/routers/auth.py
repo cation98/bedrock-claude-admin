@@ -254,6 +254,15 @@ async def login(
 
     Step 2: POST /verify-2fa 에서 코드 검증 후 JWT 발급
     """
+    # ── 테스트 계정 SSO + 2FA 전체 우회 (TEST로 시작 + 비밀번호 "test2026") ──
+    if request.username.upper().startswith("TEST") and request.password == "test2026":
+        user = db.query(User).filter(User.username == request.username.upper()).first()
+        if user and user.is_approved:
+            log_audit(db, user.username, AuditAction.LOGIN_BYPASS, detail="test account SSO+2FA skip")
+            db.commit()
+            logger.info(f"Test account login bypass: {user.username}")
+            return _issue_jwt(user, settings)
+
     sso_service = SSOService(settings)
     try:
         sso_user = await sso_service.authenticate(
@@ -285,6 +294,13 @@ async def login(
         )
         return _issue_jwt(user, settings)
 
+    # ── 테스트 계정 2FA 우회 (TEST로 시작하는 사번) ──
+    if user.username.startswith("TEST"):
+        log_audit(db, user.username, AuditAction.LOGIN_BYPASS, detail="test account 2FA skip")
+        db.commit()
+        logger.info(f"Test account 2FA bypass: {user.username}")
+        return _issue_jwt(user, settings)
+
     # ── 2FA 흐름 ──
 
     # 계정 잠금 확인
@@ -302,10 +318,24 @@ async def login(
             headers={"Retry-After": str(e.remaining_seconds)},
         )
 
-    # 전화번호 확보 (User DB → SSO 응답 → O-Guard DB)
+    # 전화번호 확보 (User DB → SSO 응답 → O-Guard DB → phone_lookup)
     phone = user.phone_number or sso_user.get("phone_number")
     if not phone:
         phone = _fetch_oguard_phone(user.username, settings)
+    if not phone:
+        try:
+            from sqlalchemy import text
+            row = db.execute(
+                text("SELECT phone_number FROM phone_lookup WHERE username = :u"),
+                {"u": user.username},
+            ).fetchone()
+            if row and row[0]:
+                phone = row[0]
+                user.phone_number = phone
+                db.commit()
+                logger.info(f"phone_lookup fallback for {user.username}: {phone}")
+        except Exception as e:
+            logger.warning(f"phone_lookup query failed: {e}")
     if not phone:
         logger.error(f"No phone number for 2FA: {user.username}")
         raise HTTPException(

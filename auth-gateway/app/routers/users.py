@@ -91,6 +91,21 @@ async def approve_user(
     user.is_approved = True
     user.pod_ttl = request.pod_ttl
     user.approved_at = datetime.now(timezone.utc)
+
+    # Auto-fill phone number from phone_lookup if not already set
+    if not user.phone_number:
+        try:
+            from sqlalchemy import text
+            row = db.execute(
+                text("SELECT phone_number FROM phone_lookup WHERE username = :u"),
+                {"u": user.username},
+            ).fetchone()
+            if row and row[0]:
+                user.phone_number = row[0]
+                logger.info(f"Auto-filled phone for {user.username}: {row[0]}")
+        except Exception as e:
+            logger.warning(f"phone_lookup query failed for {user.username}: {e}")
+
     db.commit()
     db.refresh(user)
 
