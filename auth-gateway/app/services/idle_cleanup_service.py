@@ -13,7 +13,6 @@ from kubernetes.stream import stream
 from sqlalchemy.orm import Session as DbSession
 
 from app.models.session import TerminalSession
-from app.models.user import User
 from app.services.k8s_service import K8sService
 
 logger = logging.getLogger(__name__)
@@ -21,46 +20,27 @@ logger = logging.getLogger(__name__)
 BACKUP_TIMEOUT_SECONDS = 30
 BACKUP_SCRIPT = "/home/node/.local/bin/backup-chat"
 
-# pod_ttl별 유휴 타임아웃 (분)
-IDLE_TIMEOUT_BY_TTL: dict[str, int | None] = {
-    "unlimited": None,       # 유휴 정리 제외
-    "weekday-office": None,  # 유휴 정리 제외 (스케줄 기반)
-    "30d": 480,              # 8시간
-    "7d": 480,               # 8시간
-    "1d": 240,               # 4시간
-    "8h": 120,               # 2시간
-    "4h": 60,                # 1시간
-}
-DEFAULT_IDLE_TIMEOUT = 60    # 미지정 TTL의 기본값
+# 모든 사용자 공통: 2시간 미사용 시 종료
+IDLE_TIMEOUT_MINUTES = 120
 
 
 class IdleCleanupService:
 
-    def __init__(self, k8s: K8sService, idle_timeout_minutes: int = 60):
+    def __init__(self, k8s: K8sService, idle_timeout_minutes: int = IDLE_TIMEOUT_MINUTES):
         self.k8s = k8s
         self.idle_timeout_minutes = idle_timeout_minutes
 
     def find_idle_sessions(self, db: DbSession) -> list[TerminalSession]:
-        """유휴 세션 조회 — pod_ttl에 따라 유휴 임계값 차등 적용."""
-        now = datetime.now(timezone.utc)
-        running = (
-            db.query(TerminalSession, User.pod_ttl)
-            .join(User, TerminalSession.user_id == User.id)
-            .filter(TerminalSession.pod_status == "running")
+        """2시간 이상 heartbeat 없는 running 세션 조회."""
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=self.idle_timeout_minutes)
+        return (
+            db.query(TerminalSession)
+            .filter(
+                TerminalSession.pod_status == "running",
+                TerminalSession.last_active_at < cutoff,
+            )
             .all()
         )
-
-        idle_sessions = []
-        for session, pod_ttl in running:
-            timeout = IDLE_TIMEOUT_BY_TTL.get(pod_ttl, DEFAULT_IDLE_TIMEOUT)
-            if timeout is None:
-                # unlimited/weekday-office: skip idle cleanup
-                continue
-            cutoff = now - timedelta(minutes=timeout)
-            if session.last_active_at and session.last_active_at < cutoff:
-                idle_sessions.append(session)
-
-        return idle_sessions
 
     def _backup_pod(self, pod_name: str, namespace: str) -> bool:
         """Pod 내부에서 backup-chat 실행하여 대화이력을 EFS에 백업. 성공 여부 반환."""
@@ -124,11 +104,74 @@ class IdleCleanupService:
         db.commit()
         logger.info(f"유휴 정리 완료: {pod_name}")
 
+    def _cleanup_empty_presenter_nodes(self) -> list[str]:
+        """전용(presenter) 노드에 사용자 Pod이 없으면 노드 제거."""
+        drained = []
+        try:
+            v1 = k8s_client.CoreV1Api()
+            nodes = v1.list_node().items
+            for node in nodes:
+                labels = node.metadata.labels or {}
+                if labels.get("role") != "presenter":
+                    continue
+
+                node_name = node.metadata.name
+                # 해당 노드의 사용자 Pod 확인
+                pods = v1.list_pod_for_all_namespaces(
+                    field_selector=f"spec.nodeName={node_name}",
+                )
+                user_pods = [
+                    p for p in pods.items
+                    if p.metadata.namespace not in ("kube-system",)
+                    and not p.metadata.name.startswith("aws-node")
+                    and not p.metadata.name.startswith("kube-proxy")
+                    and not p.metadata.name.startswith("efs-csi")
+                    and not p.metadata.name.startswith("coredns")
+                ]
+
+                if user_pods:
+                    continue
+
+                # 빈 전용 노드 → cordon + nodegroup scale down
+                logger.info(f"전용 노드 {node_name}에 Pod 없음 → 노드 제거 시작")
+                v1.patch_node(node_name, {"spec": {"unschedulable": True}})
+
+                ng_name = labels.get("eks.amazonaws.com/nodegroup", "")
+                if ng_name:
+                    try:
+                        import boto3
+                        eks = boto3.client("eks", region_name="ap-northeast-2")
+                        cluster = "bedrock-claude-eks"
+                        ng = eks.describe_nodegroup(clusterName=cluster, nodegroupName=ng_name)["nodegroup"]
+                        current = ng["scalingConfig"]["desiredSize"]
+                        new_desired = max(0, current - 1)
+                        new_min = min(ng["scalingConfig"]["minSize"], new_desired)
+                        eks.update_nodegroup_config(
+                            clusterName=cluster,
+                            nodegroupName=ng_name,
+                            scalingConfig={
+                                "minSize": new_min,
+                                "maxSize": int(ng["scalingConfig"]["maxSize"]),
+                                "desiredSize": new_desired,
+                            },
+                        )
+                        logger.info(f"전용 노드 제거: {node_name}, {ng_name} → desired={new_desired}")
+                        drained.append(node_name)
+                    except Exception as e:
+                        logger.error(f"전용 노드 스케일다운 실패 ({node_name}): {e}")
+                else:
+                    logger.warning(f"전용 노드 {node_name}의 노드그룹을 확인할 수 없음")
+        except Exception as e:
+            logger.error(f"전용 노드 정리 오류: {e}", exc_info=True)
+        return drained
+
     def run_cleanup(self, db: DbSession) -> list[str]:
         """유휴 세션 정리 실행. 종료된 pod_name 목록 반환."""
         idle_sessions = self.find_idle_sessions(db)
         if not idle_sessions:
             logger.debug("유휴 Pod 없음")
+            # 세션 정리 없어도 빈 전용 노드는 확인
+            self._cleanup_empty_presenter_nodes()
             return []
 
         logger.info(f"유휴 Pod {len(idle_sessions)}개 발견 → 정리 시작")
@@ -139,4 +182,9 @@ class IdleCleanupService:
                 terminated.append(session.pod_name)
             except Exception as e:
                 logger.error(f"유휴 정리 오류 {session.pod_name}: {e}", exc_info=True)
+
+        # Pod 정리 후 빈 전용 노드 확인
+        if terminated:
+            self._cleanup_empty_presenter_nodes()
+
         return terminated
