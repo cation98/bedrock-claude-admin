@@ -34,6 +34,11 @@ output "eks_oidc_provider_arn" {
   value       = aws_iam_openid_connect_provider.eks.arn
 }
 
+output "cluster_autoscaler_role_arn" {
+  description = "Cluster Autoscaler IRSA Role ARN"
+  value       = aws_iam_role.cluster_autoscaler.arn
+}
+
 # ----- 사용 가이드 -----
 
 output "next_steps" {

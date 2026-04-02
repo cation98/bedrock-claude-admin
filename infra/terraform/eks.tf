@@ -111,13 +111,34 @@ resource "aws_iam_role_policy_attachment" "eks_container_registry" {
   role       = aws_iam_role.eks_nodes.name
 }
 
-# ----- Cluster Autoscaler IAM Policy -----
-# 노드 역할에 Auto Scaling Group 조작 권한 부여
-# Cluster Autoscaler가 빈 노드를 자동 축소하기 위해 필요
+# ----- Cluster Autoscaler IRSA Role -----
+# IRSA = ServiceAccount에 IAM Role 연결
+# kube-system:cluster-autoscaler SA만 이 역할을 사용 가능
+
+resource "aws_iam_role" "cluster_autoscaler" {
+  name = "${var.project_name}-cluster-autoscaler"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Federated = aws_iam_openid_connect_provider.eks.arn
+      }
+      Action = "sts:AssumeRoleWithWebIdentity"
+      Condition = {
+        StringEquals = {
+          "${replace(aws_eks_cluster.main.identity[0].oidc[0].issuer, "https://", "")}:sub" = "system:serviceaccount:kube-system:cluster-autoscaler"
+          "${replace(aws_eks_cluster.main.identity[0].oidc[0].issuer, "https://", "")}:aud" = "sts.amazonaws.com"
+        }
+      }
+    }]
+  })
+}
 
 resource "aws_iam_role_policy" "cluster_autoscaler" {
   name = "${var.project_name}-cluster-autoscaler"
-  role = aws_iam_role.eks_nodes.id
+  role = aws_iam_role.cluster_autoscaler.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -146,7 +167,6 @@ resource "aws_iam_role_policy" "cluster_autoscaler" {
           "autoscaling:SetDesiredCapacity",
           "autoscaling:TerminateInstanceInAutoScalingGroup"
         ]
-        # 태그 조건으로 해당 EKS 노드 그룹의 ASG만 조작 가능
         Resource = "*"
         Condition = {
           StringEquals = {
