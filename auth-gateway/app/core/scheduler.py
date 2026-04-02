@@ -49,10 +49,11 @@ async def token_snapshot_loop(settings: Settings) -> None:
     from app.core.database import SessionLocal
     from app.routers.admin import do_snapshot
 
-    logger.info("토큰 스냅샷 스케줄러 시작 — 주기=3600s (1시간)")
+    snapshot_interval = 300  # 5분마다
+    logger.info(f"토큰 스냅샷 스케줄러 시작 — 주기={snapshot_interval}s (5분)")
 
-    # 앱 기동 안정화 후 2분 대기
-    await asyncio.sleep(120)
+    # 앱 기동 안정화 후 30초 대기
+    await asyncio.sleep(30)
 
     while True:
         db = SessionLocal()
@@ -64,7 +65,7 @@ async def token_snapshot_loop(settings: Settings) -> None:
         finally:
             db.close()
 
-        await asyncio.sleep(3600)  # 1시간마다
+        await asyncio.sleep(snapshot_interval)
 
 
 async def prompt_audit_loop(settings: Settings) -> None:
