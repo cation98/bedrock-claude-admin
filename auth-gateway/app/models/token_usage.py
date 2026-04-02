@@ -27,13 +27,18 @@ class TokenUsageDaily(Base):
 
 
 class TokenUsageHourly(Base):
-    """시간별 토큰 사용량 — 스파크라인 차트용."""
+    """5분 단위 토큰 사용량 — 스파크라인 차트용.
+
+    slot: 0-287 (24h × 12 slots/h = 288 slots per day)
+    slot 계산: hour * 12 + minute // 5
+    """
     __tablename__ = "token_usage_hourly"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     username = Column(String(50), nullable=False)
     usage_date = Column(Date, nullable=False)
-    hour = Column(Integer, nullable=False)  # 0-23
+    hour = Column(Integer, nullable=False)  # legacy: kept for backward compat
+    slot = Column(Integer, nullable=True)   # 0-287 (5-min resolution)
     input_tokens = Column(BigInteger, default=0)
     output_tokens = Column(BigInteger, default=0)
     total_tokens = Column(BigInteger, default=0)
@@ -41,5 +46,5 @@ class TokenUsageHourly(Base):
     cost_krw = Column(Integer, default=0)
 
     __table_args__ = (
-        UniqueConstraint("username", "usage_date", "hour", name="uq_hourly_user_date_hour"),
+        UniqueConstraint("username", "usage_date", "slot", name="uq_slot_user_date_slot"),
     )

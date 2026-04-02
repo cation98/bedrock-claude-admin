@@ -45,82 +45,87 @@ function formatTime(iso: string | null): string {
   return d.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
-function Sparkline({ data, width = 140, height = 32 }: { data: number[]; width?: number; height?: number }) {
+// 288 slots (5-min resolution). Slot → KST time conversion.
+function slotToKst(utcSlot: number): { h: number; m: number; isYesterday: boolean } {
+  const utcMin = utcSlot * 5;
+  const kstMin = utcMin + 9 * 60; // +9h
+  const isYesterday = kstMin < 24 * 60;
+  const totalMin = kstMin % (24 * 60);
+  return { h: Math.floor(totalMin / 60), m: totalMin % 60, isYesterday: kstMin < 24 * 60 };
+}
+
+function Sparkline({ data, width = 200, height = 32 }: { data: number[]; width?: number; height?: number }) {
   const [hover, setHover] = useState<{ i: number; x: number; y: number } | null>(null);
 
   if (!data || data.length === 0 || data.every(v => v === 0)) {
     return <div style={{ width, height }} className="text-gray-300 text-xs flex items-center">—</div>;
   }
+
+  // Only show slots that have data or are before current time
   const max = Math.max(...data) || 1;
+  const len = data.length; // 288 for 5-min, 24 for legacy
 
-  // UTC hour 15 = KST 00:00 (day boundary)
-  const midnightUtcIdx = 15;
-  const midnightX = (midnightUtcIdx / (data.length - 1)) * width;
+  // KST midnight in UTC slots: UTC 15:00 = slot 180
+  const midnightSlot = len === 288 ? 180 : 15;
+  const midnightX = (midnightSlot / (len - 1)) * width;
 
-  // Split points into yesterday (UTC 0-14) and today (UTC 15-23)
-  const yesterdayPts: string[] = [];
-  const todayPts: string[] = [];
-  data.forEach((v, i) => {
-    const x = (i / (data.length - 1)) * width;
+  // Current UTC slot
+  const now = new Date();
+  const nowSlot = len === 288
+    ? now.getUTCHours() * 12 + Math.floor(now.getUTCMinutes() / 5)
+    : now.getUTCHours();
+
+  // Build polyline points — only non-zero segments
+  const points = data.map((v, i) => {
+    const x = (i / (len - 1)) * width;
     const y = height - (v / max) * (height - 6) - 3;
-    if (i < midnightUtcIdx) {
-      yesterdayPts.push(`${x},${y}`);
-    } else {
-      if (i === midnightUtcIdx && yesterdayPts.length > 0) {
-        // bridge: add last yesterday point to today for continuity
-        const lastYx = ((midnightUtcIdx - 1) / (data.length - 1)) * width;
-        const lastYy = height - ((data[midnightUtcIdx - 1] || 0) / max) * (height - 6) - 3;
-        todayPts.push(`${lastYx},${lastYy}`);
-      }
-      todayPts.push(`${x},${y}`);
-    }
+    return { x, y, v, i };
   });
 
-  const nowUtcH = new Date().getUTCHours();
+  const yesterdayPts = points.filter(p => p.i < midnightSlot).map(p => `${p.x},${p.y}`);
+  const todayPts = points.filter(p => p.i >= midnightSlot).map(p => `${p.x},${p.y}`);
+
+  // Hit areas: only at slots with data or every N slots for hover
+  const step = len === 288 ? 6 : 1; // hover every 30min for 288, every hour for 24
 
   return (
     <div className="relative inline-block" style={{ width, height }}>
       <svg width={width} height={height} onMouseLeave={() => setHover(null)}>
-        {/* KST midnight divider */}
         <line x1={midnightX} y1={0} x2={midnightX} y2={height}
           stroke="#d1d5db" strokeWidth="1" strokeDasharray="2,2" />
-        {/* Yesterday line (dimmed) */}
         {yesterdayPts.length > 1 && (
           <polyline points={yesterdayPts.join(" ")} fill="none" stroke="#93c5fd" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.5" />
         )}
-        {/* Today line (bold) */}
         {todayPts.length > 1 && (
           <polyline points={todayPts.join(" ")} fill="none" stroke="#2563eb" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
         )}
-        {data.map((v, i) => {
-          const x = (i / (data.length - 1)) * width;
-          const y = height - (v / max) * (height - 6) - 3;
-          const isToday = i >= midnightUtcIdx;
+        {/* Hit areas for hover */}
+        {points.filter((_, i) => i % step === 0 || data[i] > 0).map(p => {
+          const isToday = p.i >= midnightSlot;
           return (
-            <g key={i}>
-              <circle cx={x} cy={y} r="6" fill="transparent"
-                onMouseEnter={() => setHover({ i, x, y })} />
-              {i <= nowUtcH && v > 0 && (
-                <circle cx={x} cy={y} r="1.5" fill={isToday ? "#2563eb" : "#93c5fd"} opacity={isToday ? 0.7 : 0.4} />
+            <g key={p.i}>
+              <circle cx={p.x} cy={p.y} r={len === 288 ? 3 : 6} fill="transparent"
+                onMouseEnter={() => setHover({ i: p.i, x: p.x, y: p.y })} />
+              {p.i <= nowSlot && p.v > 0 && (
+                <circle cx={p.x} cy={p.y} r="1.5" fill={isToday ? "#2563eb" : "#93c5fd"} opacity={isToday ? 0.7 : 0.4} />
               )}
-              {hover?.i === i && (
-                <circle cx={x} cy={y} r="3" fill={isToday ? "#2563eb" : "#93c5fd"} />
+              {hover?.i === p.i && (
+                <circle cx={p.x} cy={p.y} r="3" fill={isToday ? "#2563eb" : "#93c5fd"} />
               )}
             </g>
           );
         })}
       </svg>
       {hover && (() => {
-        const kstH = (hover.i + 9) % 24;
-        // UTC 0-14 → KST same date (yesterday from user's KST "today")
-        // UTC 15-23 → KST next date (today in KST)
-        const isYesterday = hover.i + 9 < 24;
+        const kst = len === 288
+          ? slotToKst(hover.i)
+          : { h: (hover.i + 9) % 24, m: 0, isYesterday: hover.i + 9 < 24 };
         return (
           <div
             className="absolute z-10 rounded bg-gray-900 px-2 py-1 text-xs text-white shadow-lg whitespace-nowrap pointer-events-none"
-            style={{ left: Math.min(hover.x, width - 100), top: -28 }}
+            style={{ left: Math.min(hover.x, width - 120), top: -28 }}
           >
-            {String(kstH).padStart(2, "0")}시{isYesterday ? " (전일)" : ""} — {data[hover.i].toLocaleString()} tokens
+            {String(kst.h).padStart(2, "0")}:{String(kst.m).padStart(2, "0")}{kst.isYesterday ? " (전일)" : ""} — {data[hover.i].toLocaleString()} tokens
           </div>
         );
       })()}
