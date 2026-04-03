@@ -139,11 +139,28 @@ class IdleCleanupService:
                     stderr=False, stdin=False, stdout=True, tty=False,
                     _request_timeout=15,
                 )
-                # stdout 오염 대비: 마지막 비어있지 않은 줄만 JSON으로 파싱
-                lines = [ln for ln in resp.strip().splitlines() if ln.strip()]
-                if not lines:
+                raw = resp.strip()
+                if not raw:
                     raise ValueError("empty response")
-                return _json.loads(lines[-1])
+
+                # kubernetes.stream이 바깥 따옴표를 추가하는 경우 제거
+                if raw.startswith('"') and raw.endswith('"'):
+                    raw = raw[1:-1]
+
+                # 마지막 비어있지 않은 줄만 파싱
+                lines = [ln for ln in raw.splitlines() if ln.strip()]
+                if not lines:
+                    raise ValueError("no parseable lines")
+                last_line = lines[-1]
+
+                # json.loads 시도 → 실패 시 Python repr을 JSON으로 변환 후 재시도
+                try:
+                    return _json.loads(last_line)
+                except _json.JSONDecodeError:
+                    # kubernetes.stream이 Python repr로 반환하는 경우 대응
+                    # single quotes → double quotes, True/False/None → JSON 형식
+                    fixed = last_line.replace("'", '"').replace("True", "true").replace("False", "false").replace("None", "null")
+                    return _json.loads(fixed)
             except Exception as e:
                 logger.warning(f"활동 확인 실패 ({pod_name}), attempt {attempt + 1}/2: {e}")
                 if attempt < 1:
