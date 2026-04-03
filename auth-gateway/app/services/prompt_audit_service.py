@@ -118,6 +118,34 @@ CATEGORY_KEYWORDS: dict[str, list[str]] = {
         "프레젠테이션", "PPT", "번역", "영작", "작성해", "초안",
         "문장", "편지", "안내문", "공지",
     ],
+    "session_mgmt": [
+        "최근작업", "최근 작업", "계속해", "이어서", "불러", "continue",
+        "resume", "접속 url", "접속url", "실행 url", "실행url", "주소",
+        "리셋", "다시 시작", "방금전", "하던거", "마저", "이전 작업",
+        "기존 작업", "작업 보여", "찾아줘",
+    ],
+    "ui_ux": [
+        "버튼", "레이아웃", "정렬", "디자인", "색상", "스타일",
+        "팝업", "드롭다운", "필터", "탭", "아래에", "옆으로",
+        "이동해", "만들어줘", "추가해줘", "위치를", "크기",
+        "간격", "마진", "패딩", "폰트", "아이콘", "사이버틱",
+        "컬럼명", "그리드", "화면", "보여줘", "안보여",
+    ],
+    "gis_mapping": [
+        "지도", "맵핑", "위치", "좌표", "지역", "맵", "map",
+        "거리별", "포인트", "GPS", "경도", "위도", "마커",
+        "무선국", "국소",
+    ],
+    "fault_analysis": [
+        "고장", "장애", "알람", "OOS", "발생건", "고장현황",
+        "고장리스트", "fault", "alarm", "장애현황", "복구",
+        "이벤트", "트러블",
+    ],
+    "file_ops": [
+        "파일", "업로드", "다운로드", "첨부", "PDF", "pdf",
+        "변환", "다운받", "올려", "내려", "xlsx", "hwp",
+        "문서", "서식", "양식",
+    ],
 }
 
 # ── 보안 위반 패턴 ──
@@ -460,6 +488,10 @@ class PromptAuditService:
     @staticmethod
     def _classify_prompt(text: str) -> list[str]:
         """프롬프트를 카테고리 키워드로 분류 (복수 카테고리 가능)."""
+        # 시스템 메시지 제외
+        if text.startswith("<") and ("command-name" in text or "local-command" in text or "task-notification" in text):
+            return ["system_message"]
+
         matched: list[str] = []
         text_lower = text.lower()
         for category, keywords in CATEGORY_KEYWORDS.items():
@@ -467,6 +499,11 @@ class PromptAuditService:
                 if kw.lower() in text_lower:
                     matched.append(category)
                     break  # 카테고리당 1회만 매칭
+
+        # 단순 응답: 10자 이하 + 키워드 미매칭 → confirmation
+        if not matched and len(text.strip()) <= 10:
+            matched.append("confirmation")
+
         return matched
 
     @staticmethod
