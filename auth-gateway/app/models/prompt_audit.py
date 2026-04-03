@@ -34,6 +34,24 @@ class PromptAuditSummary(Base):
     )
 
 
+class PromptAuditConversation(Base):
+    """세션별 대화 이력 — user + assistant 전체 저장."""
+    __tablename__ = "prompt_audit_conversations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    username = Column(String(50), nullable=False, index=True)
+    session_id = Column(String(100), nullable=False, index=True)
+    message_type = Column(String(20), nullable=False)  # "user" or "assistant"
+    content = Column(Text, nullable=False)
+    timestamp = Column(DateTime(timezone=True))
+    collected_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        UniqueConstraint("username", "session_id", "message_type", "timestamp",
+                         name="uq_conversation_msg"),
+    )
+
+
 class PromptAuditFlag(Base):
     """보안 위반 플래그 — 개별 의심 프롬프트 기록."""
     __tablename__ = "prompt_audit_flags"

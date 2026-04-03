@@ -11,37 +11,46 @@ from kubernetes import client, config
 from kubernetes.stream import stream
 from sqlalchemy.orm import Session as DbSession
 
-from app.models.prompt_audit import PromptAuditSummary, PromptAuditFlag
+from app.models.prompt_audit import PromptAuditSummary, PromptAuditFlag, PromptAuditConversation
 
 logger = logging.getLogger(__name__)
 
 # ── Pod 내부에서 실행할 프롬프트 추출 스크립트 ──
 EXTRACT_SCRIPT = '''
-import json, glob, sys
+import json, glob, os
 prompts = []
-for f in glob.glob("/home/node/.claude/projects/-home-node/*.jsonl"):
+for f in sorted(glob.glob("/home/node/.claude/projects/-home-node/*.jsonl"), key=os.path.getmtime):
     try:
-        for line in open(f):
+        for line in open(f, encoding="utf-8"):
             try:
                 obj = json.loads(line.strip())
+                t = obj.get("type", "")
+                if t not in ("user", "assistant"):
+                    continue
                 msg = obj.get("message", {})
-                if obj.get("type") == "user" or obj.get("type") == "human" or obj.get("role") == "user":
-                    content = ""
-                    if isinstance(msg, dict):
-                        content = msg.get("content", "")
-                        if isinstance(content, list):
-                            content = " ".join(c.get("text","") for c in content if isinstance(c, dict))
-                    elif isinstance(msg, str):
-                        content = msg
-                    if content and len(content) > 5:
-                        ts = obj.get("timestamp", "")
-                        prompts.append({"text": content[:500], "ts": ts})
+                content = ""
+                if isinstance(msg, dict):
+                    c = msg.get("content", "")
+                    if isinstance(c, list):
+                        parts = []
+                        for item in c:
+                            if isinstance(item, dict):
+                                parts.append(item.get("text", ""))
+                        content = " ".join(parts)
+                    elif isinstance(c, str):
+                        content = c
+                elif isinstance(msg, str):
+                    content = msg
+                if not content or len(content) < 3:
+                    continue
+                ts = obj.get("timestamp", "")
+                session_id = obj.get("sessionId", os.path.basename(f).replace(".jsonl",""))
+                prompts.append({"type": t, "text": content[:2000], "ts": ts, "sid": session_id})
             except:
                 pass
     except:
         pass
-import json as j
-print(j.dumps(prompts[-200:]))
+print(json.dumps(prompts[-500:], ensure_ascii=False))
 '''
 
 # ── 카테고리 분류 키워드 ──
@@ -201,19 +210,45 @@ class PromptAuditService:
             pod_name = pod.metadata.name
             username = pod_name.replace("claude-terminal-", "").upper()
 
-            # Pod에서 프롬프트 추출
+            # Pod에서 대화 추출 (user + assistant)
             prompts = self._extract_prompts_from_pod(pod_name, namespace)
             if not prompts:
                 continue
 
             pods_scanned += 1
 
-            # 분류 + 보안 검사
+            # 대화 이력 저장 (upsert — 중복 무시)
+            for entry in prompts:
+                ts_str = entry.get("ts", "")
+                try:
+                    ts_dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00")) if ts_str else None
+                except (ValueError, AttributeError):
+                    ts_dt = None
+                session_id = entry.get("sid", "")
+                msg_type = entry.get("type", "user")
+
+                existing_conv = db.query(PromptAuditConversation).filter(
+                    PromptAuditConversation.username == username,
+                    PromptAuditConversation.session_id == session_id,
+                    PromptAuditConversation.message_type == msg_type,
+                    PromptAuditConversation.timestamp == ts_dt,
+                ).first()
+                if not existing_conv:
+                    db.add(PromptAuditConversation(
+                        username=username,
+                        session_id=session_id,
+                        message_type=msg_type,
+                        content=entry.get("text", ""),
+                        timestamp=ts_dt,
+                    ))
+
+            # 분류 + 보안 검사 (user 메시지만)
+            user_prompts = [p for p in prompts if p.get("type") == "user"]
             category_counter: Counter = Counter()
             char_total = 0
             flag_count = 0
 
-            for prompt_data in prompts:
+            for prompt_data in user_prompts:
                 text = prompt_data.get("text", "")
                 char_total += len(text)
 
@@ -231,7 +266,6 @@ class PromptAuditService:
                 for violation in violations:
                     flag_count += 1
                     total_flags += 1
-                    # 프라이버시 보호: 200자로 잘라서 저장
                     excerpt = text[:200] if len(text) > 200 else text
                     flag = PromptAuditFlag(
                         username=username,
@@ -242,7 +276,7 @@ class PromptAuditService:
                     )
                     db.add(flag)
 
-            total_prompts += len(prompts)
+            total_prompts += len(user_prompts)
 
             # 일별 요약 upsert
             existing = db.query(PromptAuditSummary).filter(
@@ -251,7 +285,7 @@ class PromptAuditService:
             ).first()
 
             if existing:
-                existing.total_prompts = len(prompts)
+                existing.total_prompts = len(user_prompts)
                 existing.total_chars = char_total
                 existing.category_counts = dict(category_counter)
                 existing.flagged_count = flag_count
@@ -260,7 +294,7 @@ class PromptAuditService:
                 summary = PromptAuditSummary(
                     username=username,
                     audit_date=today,
-                    total_prompts=len(prompts),
+                    total_prompts=len(user_prompts),
                     total_chars=char_total,
                     category_counts=dict(category_counter),
                     flagged_count=flag_count,

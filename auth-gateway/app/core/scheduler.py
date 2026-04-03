@@ -74,10 +74,11 @@ async def prompt_audit_loop(settings: Settings) -> None:
     from app.core.database import SessionLocal
     from app.services.prompt_audit_service import PromptAuditService
 
-    logger.info("프롬프트 감사 스케줄러 시작 — 주기=7200s (2시간)")
+    audit_interval = 1800  # 30분
+    logger.info(f"프롬프트 감사 스케줄러 시작 — 주기={audit_interval}s (30분)")
 
-    # 앱 기동 안정화 후 5분 대기
-    await asyncio.sleep(300)
+    # 앱 기동 안정화 후 2분 대기
+    await asyncio.sleep(120)
 
     while True:
         db = SessionLocal()
@@ -90,7 +91,7 @@ async def prompt_audit_loop(settings: Settings) -> None:
         finally:
             db.close()
 
-        await asyncio.sleep(7200)  # 2시간마다
+        await asyncio.sleep(audit_interval)
 
 
 # ==================== Storage Retention 파싱 ====================
