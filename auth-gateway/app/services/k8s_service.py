@@ -234,6 +234,10 @@ class K8sService:
                         key="dedicated", operator="Equal",
                         value="user", effect="NoSchedule",
                     ),
+                    client.V1Toleration(
+                        key="dedicated", operator="Equal",
+                        value="presenter", effect="NoSchedule",
+                    ),
                 ],
                 containers=[
                     client.V1Container(
