@@ -159,6 +159,8 @@ mkdir -p /home/node/workspace/team
 if [ -d /home/node/workspace/.claude-backup/projects ]; then
     cp -r /home/node/workspace/.claude-backup/projects/ /home/node/.claude/projects/ 2>/dev/null
     cp /home/node/workspace/.claude-backup/history.jsonl /home/node/.claude/history.jsonl 2>/dev/null
+    # 세션 메타데이터 복원 — /resume 목록에 이전 세션 표시
+    cp -r /home/node/workspace/.claude-backup/sessions/ /home/node/.claude/sessions/ 2>/dev/null
     echo "  이전 대화 복원 완료"
 fi
 # .serena 프로젝트 메모리 복원
@@ -226,6 +228,8 @@ cat > /home/node/.local/bin/backup-chat << 'BSCRIPT'
 mkdir -p /home/node/workspace/.claude-backup
 cp -r /home/node/.claude/projects/ /home/node/workspace/.claude-backup/ 2>/dev/null
 cp /home/node/.claude/history.jsonl /home/node/workspace/.claude-backup/ 2>/dev/null
+# 세션 메타데이터 백업 — /resume 목록 복원에 필요
+cp -r /home/node/.claude/sessions/ /home/node/workspace/.claude-backup/ 2>/dev/null
 # Serena 프로젝트 메모리 백업
 if [ -d /home/node/.serena ]; then
     cp -r /home/node/.serena/ /home/node/workspace/.serena-backup/ 2>/dev/null
@@ -240,6 +244,7 @@ cat > /home/node/.local/bin/restore-chat << 'RSCRIPT'
 if [ -d /home/node/workspace/.claude-backup/projects ]; then
     cp -r /home/node/workspace/.claude-backup/projects/ /home/node/.claude/projects/
     cp /home/node/workspace/.claude-backup/history.jsonl /home/node/.claude/history.jsonl 2>/dev/null
+    cp -r /home/node/workspace/.claude-backup/sessions/ /home/node/.claude/sessions/ 2>/dev/null
     echo "대화 복원 완료."
 else
     echo "대화 백업이 없습니다."
@@ -441,7 +446,7 @@ echo "  Claude Code를 시작합니다..."
 echo ""
 
 # Run Claude Code
-claude --dangerously-skip-permissions \
+claude --dangerously-skip-permissions --continue \
     --append-system-prompt "항상 한국어로 응답하세요. 사용자의 이름을 인지하고 존칭을 사용하세요."
 
 # Claude exited — backup conversations to EFS
