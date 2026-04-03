@@ -124,22 +124,31 @@ class IdleCleanupService:
         self.idle_timeout_minutes = idle_timeout_minutes
 
     def _check_pod_activity(self, pod_name: str, namespace: str) -> dict | None:
-        """Pod 내부 종합 활동 상태 반환. 실패 시 None."""
-        try:
-            import json as _json
-            v1 = k8s_client.CoreV1Api()
-            resp = stream(
-                v1.connect_get_namespaced_pod_exec,
-                pod_name, namespace,
-                command=["python3", "-c", ACTIVITY_CHECK_SCRIPT],
-                container="terminal",
-                stderr=False, stdin=False, stdout=True, tty=False,
-                _request_timeout=10,
-            )
-            return _json.loads(resp.strip())
-        except Exception as e:
-            logger.warning(f"활동 확인 실패 ({pod_name}): {e}")
-            return None
+        """Pod 내부 종합 활동 상태 반환. 2회 재시도 후 실패 시 None."""
+        import json as _json
+        import time as _time
+
+        for attempt in range(2):
+            try:
+                v1 = k8s_client.CoreV1Api()
+                resp = stream(
+                    v1.connect_get_namespaced_pod_exec,
+                    pod_name, namespace,
+                    command=["python3", "-c", ACTIVITY_CHECK_SCRIPT],
+                    container="terminal",
+                    stderr=False, stdin=False, stdout=True, tty=False,
+                    _request_timeout=15,
+                )
+                # stdout 오염 대비: 마지막 비어있지 않은 줄만 JSON으로 파싱
+                lines = [ln for ln in resp.strip().splitlines() if ln.strip()]
+                if not lines:
+                    raise ValueError("empty response")
+                return _json.loads(lines[-1])
+            except Exception as e:
+                logger.warning(f"활동 확인 실패 ({pod_name}), attempt {attempt + 1}/2: {e}")
+                if attempt < 1:
+                    _time.sleep(2)
+        return None
 
     def _send_warning(self, pod_name: str, namespace: str, minutes_left: int) -> None:
         """종료 경고를 Pod에 전송 — /tmp/.idle-warning 파일 생성."""
@@ -180,18 +189,30 @@ class IdleCleanupService:
         now_epoch = datetime.now(timezone.utc).timestamp()
 
         for session in candidates:
+            # 최소 생존 시간: 생성 후 15분 이내의 Pod은 절대 종료하지 않음
+            pod_age_min = (datetime.now(timezone.utc) - session.created_at).total_seconds() / 60 if session.created_at else 999
+            if pod_age_min < 15:
+                logger.debug(f"신규 Pod 보호: {session.pod_name} (age={int(pod_age_min)}min)")
+                continue
+
             activity = self._check_pod_activity(session.pod_name, self.k8s.namespace)
 
             if activity is None:
-                # Pod 접근 불가 → 정리 대상
-                idle_sessions.append(session)
+                # 활동 확인 실패 → 안전을 위해 활성으로 간주 (오판 방지)
+                logger.warning(f"활동 확인 실패 — 활성으로 간주하여 유지: {session.pod_name}")
                 continue
 
             ws_clients = activity.get("ws_clients", 0)
             claude_running = activity.get("claude_running", False)
             webapp_running = activity.get("webapp_running", False)
             last_file = activity.get("last_file_activity", 0)
-            file_idle_min = (now_epoch - last_file) / 60 if last_file > 0 else 9999
+            # 파일 활동 없음 → Pod 생성 시간 기준 (9999 대신)
+            if last_file > 0:
+                file_idle_min = (now_epoch - last_file) / 60
+            elif session.created_at:
+                file_idle_min = (datetime.now(timezone.utc) - session.created_at).total_seconds() / 60
+            else:
+                file_idle_min = 9999
 
             # ── 판정 로직 ──
 
