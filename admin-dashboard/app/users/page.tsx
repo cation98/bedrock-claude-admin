@@ -496,6 +496,11 @@ export default function UsersPage() {
                           <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-gray-900">
                             {u.name ?? u.username}
                             <span className="ml-1 text-xs text-gray-400">({u.username})</span>
+                            {u.is_presenter && (
+                              <span className="ml-1.5 inline-flex items-center rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-700">
+                                전용
+                              </span>
+                            )}
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
                             {[u.region_name, u.team_name, u.job_name].filter(Boolean).join(" / ") || "-"}

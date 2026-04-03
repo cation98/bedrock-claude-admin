@@ -47,10 +47,20 @@ class UserResponse(BaseModel):
     can_deploy_apps: bool = False
     storage_retention: str = "30d"
     security_level: str | None = None
+    is_presenter: bool = False
     approved_at: datetime | None
     last_login_at: datetime | None
 
     model_config = {"from_attributes": True}
+
+    @classmethod
+    def model_validate(cls, obj, **kwargs):
+        """infra_policy에서 presenter 자격 여부를 자동 추출."""
+        instance = super().model_validate(obj, **kwargs)
+        infra = getattr(obj, "infra_policy", None)
+        if isinstance(infra, dict) and infra.get("nodegroup") == "presenter-node":
+            instance.is_presenter = True
+        return instance
 
 
 class UserListResponse(BaseModel):

@@ -171,6 +171,7 @@ export interface User {
   is_approved: boolean;
   pod_ttl: string;
   can_deploy_apps: boolean;
+  is_presenter: boolean;
   approved_at: string | null;
   last_login_at: string | null;
 }
