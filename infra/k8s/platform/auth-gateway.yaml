@@ -55,6 +55,7 @@ spec:
           image: 680877507363.dkr.ecr.ap-northeast-2.amazonaws.com/bedrock-claude/auth-gateway:latest
           ports:
             - containerPort: 8000
+            - containerPort: 3128
           env:
             # ── Secrets (from K8s Secret: auth-gateway-secrets) ──
             - name: DATABASE_URL
@@ -153,5 +154,11 @@ spec:
   selector:
     app: auth-gateway
   ports:
-    - port: 80
+    # FastAPI (Auth Gateway API)
+    - name: http
+      port: 80
       targetPort: 8000
+    # CONNECT 프록시 — Pod에서 외부 API 접근 시 사용
+    - name: proxy
+      port: 3128
+      targetPort: 3128

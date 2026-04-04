@@ -11,6 +11,7 @@ K8s 개념 정리:
 
 import json as _json
 import logging
+import secrets
 from datetime import datetime, timezone
 
 from kubernetes import client, config
@@ -53,6 +54,7 @@ class K8sService:
         username: str,
         user_display_name: str,
         security_policy: dict | None,
+        proxy_secret: str | None = None,
     ) -> list:
         """Pod 환경변수 목록 생성. security_policy에 따라 DB 자격증명을 조건부 주입.
 
@@ -125,6 +127,24 @@ class K8sService:
                 ),
             ))
 
+        # 프록시 환경변수 — Pod에서 외부 API 접근 시 Auth Gateway 프록시를 거치도록 설정
+        # HTTPS_PROXY/HTTP_PROXY: curl, pip, npm 등이 자동으로 프록시를 사용
+        # NO_PROXY: 클러스터 내부 통신은 프록시를 우회
+        # NOTE: proxy_secret은 kubectl describe pod에서 보임. K8s Secret으로 전환 검토 (Phase 2)
+        if proxy_secret:
+            proxy_url = (
+                f"http://{username}:{proxy_secret}"
+                f"@auth-gateway.platform.svc.cluster.local:3128"
+            )
+            env_vars.extend([
+                client.V1EnvVar(name="HTTPS_PROXY", value=proxy_url),
+                client.V1EnvVar(name="HTTP_PROXY", value=proxy_url),
+                client.V1EnvVar(
+                    name="NO_PROXY",
+                    value="localhost,127.0.0.1,10.0.0.0/16,.svc.cluster.local,.cluster.local",
+                ),
+            ])
+
         logger.info(
             f"Pod env for {username}: security_level={security_level}, "
             f"safety={safety_allowed}, tango={tango_allowed}, doculog={doculog_allowed}"
@@ -140,7 +160,7 @@ class K8sService:
         target_node: str | None = None,
         security_policy: dict | None = None,
         infra_policy: dict | None = None,
-    ) -> str:
+    ) -> tuple[str, str | None]:
         """사용자용 Claude Code 터미널 Pod 생성.
 
         Args:
@@ -150,15 +170,18 @@ class K8sService:
             ttl_seconds: Pod 수명(초). 0이면 unlimited (activeDeadlineSeconds 미설정).
 
         Returns:
-            pod_name: 생성된 Pod 이름
+            (pod_name, proxy_secret): 생성된 Pod 이름과 프록시 인증 시크릿
         """
         pod_name = self._pod_name(username)
+
+        # 프록시 인증용 랜덤 시크릿 생성
+        proxy_secret = secrets.token_hex(32)
 
         # 이미 실행 중인 Pod이 있는지 확인
         existing = self.get_pod_status(pod_name)
         if existing and existing.get("phase") in ("Pending", "Running"):
             logger.info(f"Pod {pod_name} already exists, reusing")
-            return pod_name
+            return pod_name, None
 
         # 인프라 정책 기반 Pod 리소스 결정 (DB에서 관리, 하드코딩 제거)
         from app.models.infra_policy import INFRA_TEMPLATES
@@ -246,6 +269,7 @@ class K8sService:
                         ports=[client.V1ContainerPort(container_port=7681, name="ttyd")],
                         env=self._build_env_vars(
                             username, user_display_name, security_policy,
+                            proxy_secret=proxy_secret,
                         ),
                         # Container-level 보안: 권한 상승 차단, 불필요 capabilities 제거
                         security_context=client.V1SecurityContext(
@@ -321,14 +345,14 @@ class K8sService:
         except ApiException as e:
             if e.status == 409:  # Already exists
                 logger.info(f"Pod {pod_name} already exists")
-                return pod_name
+                return pod_name, None
             logger.error(f"Failed to create pod {pod_name}: {e}")
             raise K8sServiceError(f"Failed to create pod: {e.reason}")
 
         # Pod에 대한 Service + Ingress 생성 (터미널 + 파일 서버 접근)
         self._create_pod_service(pod_name, username)
         self._create_pod_ingress(pod_name, username)
-        return pod_name
+        return pod_name, proxy_secret
 
     def _create_pod_service(self, pod_name: str, username: str):
         """Pod을 위한 K8s Service 생성."""

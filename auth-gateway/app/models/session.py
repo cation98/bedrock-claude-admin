@@ -24,4 +24,7 @@ class TerminalSession(Base):
     terminated_at = Column(DateTime(timezone=True))
     last_active_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
+    # 프록시 인증용 비밀 토큰 — Pod 환경변수로 주입, CONNECT 요청 시 검증
+    proxy_secret = Column(String(64), nullable=True)
+
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

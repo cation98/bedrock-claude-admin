@@ -14,6 +14,7 @@ const NAV_ITEMS = [
   { href: "/quota", label: "토큰 정책", icon: "💰" },
   { href: "/usage", label: "토큰 사용량", icon: "📈" },
   { href: "/infra", label: "인프라", icon: "⚙" },
+  { href: "/network", label: "네트워크", icon: "🌐" },
   { href: "/surveys", label: "현장 수집", icon: "📝" },
 ];
 

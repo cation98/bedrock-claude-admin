@@ -24,6 +24,7 @@ from app.core.security import get_current_user
 from app.models.app import DeployedApp, AppACL, AppView  # noqa: F401
 from app.models.user import User  # noqa: F401
 from app.models.survey import SurveyTemplate, SurveyAssignment, SurveyResponse  # noqa: F401
+from app.models.proxy import AllowedDomain, ProxyAccessLog  # noqa: F401
 from app.routers.telegram import TelegramMapping, TelegramChatLog  # noqa: F401
 
 # Import routers under test

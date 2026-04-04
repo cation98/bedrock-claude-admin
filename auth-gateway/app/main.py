@@ -23,6 +23,7 @@ from app.models.file_share import SharedDataset, FileShareACL  # noqa: F401 — 
 from app.models.token_usage import TokenUsageHourly  # noqa: F401 — create_all이 테이블 생성하도록 import
 from app.models.prompt_audit import PromptAuditSummary, PromptAuditFlag, PromptAuditConversation  # noqa: F401 — create_all이 테이블 생성하도록 import
 from app.models.token_quota import TokenQuotaTemplate, TokenQuotaAssignment  # noqa: F401 — create_all이 테이블 생성하도록 import
+from app.models.proxy import AllowedDomain, ProxyAccessLog  # noqa: F401 — create_all이 테이블 생성하도록 import
 from app.routers import admin, apps, auth, file_share, sessions, users, sms, skills, telegram, security, scheduling, infra_policy, surveys, app_proxy
 
 logging.basicConfig(level=logging.INFO)
@@ -107,6 +108,22 @@ def _run_app_visibility_migration() -> None:
         conn.commit()
 
 
+def _run_proxy_secret_migration() -> None:
+    """terminal_sessions 테이블에 proxy_secret 컬럼이 없으면 추가 (프록시 인증용)."""
+    with engine.connect() as conn:
+        result = conn.execute(text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name='terminal_sessions' AND column_name='proxy_secret'"
+        ))
+        if result.fetchone() is None:
+            conn.execute(text(
+                "ALTER TABLE terminal_sessions "
+                "ADD COLUMN proxy_secret VARCHAR(64)"
+            ))
+            conn.commit()
+            logger.info("Migration: terminal_sessions.proxy_secret 컬럼 추가 완료")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """앱 시작/종료 라이프사이클 — DB 초기화 + 백그라운드 스케줄러 시작."""
@@ -114,6 +131,7 @@ async def lifespan(app: FastAPI):
     _run_column_migration()
     _run_can_deploy_apps_migration()
     _run_app_visibility_migration()
+    _run_proxy_secret_migration()
     idle_task = asyncio.create_task(idle_checker_loop(settings))
     snapshot_task = asyncio.create_task(token_snapshot_loop(settings))
     audit_task = asyncio.create_task(prompt_audit_loop(settings))

@@ -14,7 +14,10 @@ except k8s_config.ConfigException:
     k8s_config.load_kube_config()
 from pydantic import BaseModel
 
+from sqlalchemy.orm import Session
+
 from app.core.config import Settings, get_settings
+from app.core.database import get_db
 from app.core.security import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -406,7 +409,7 @@ async def assign_pod(
     ttl = POD_TTL_SECONDS_MAP.get(user.pod_ttl, 14400)
     user_security = user.security_policy if user.security_policy else SECURITY_TEMPLATES.get("standard", {})
     user_infra = user.infra_policy if user.infra_policy else INFRA_DEFAULTS["standard"]
-    pod_name = k8s.create_pod(
+    pod_name, proxy_secret = k8s.create_pod(
         req.username.upper(), "daily", user.name or req.username,
         ttl_seconds=ttl, target_node=req.node_name,
         security_policy=user_security,
@@ -419,11 +422,14 @@ async def assign_pod(
         session.pod_status = "creating"
         session.started_at = datetime.now(timezone.utc)
         session.terminated_at = None
+        if proxy_secret:
+            session.proxy_secret = proxy_secret
     else:
         session = TerminalSession(
             user_id=user.id, username=req.username.upper(),
             pod_name=pod_name, pod_status="creating",
             session_type="daily", started_at=datetime.now(timezone.utc),
+            proxy_secret=proxy_secret,
         )
         db.add(session)
     db.commit()
@@ -493,10 +499,12 @@ async def move_pod(
     ttl = POD_TTL_SECONDS_MAP.get(user.pod_ttl, 14400)
     user_security = user.security_policy if user.security_policy else SECURITY_TEMPLATES.get("standard", {})
     user_infra = user.infra_policy if user.infra_policy else INFRA_DEFAULTS["standard"]
-    k8s.create_pod(req.username.upper(), "daily", user.name or req.username,
-                   ttl_seconds=ttl, target_node=req.target_node,
-                   security_policy=user_security,
-                   infra_policy=user_infra)
+    _, move_proxy_secret = k8s.create_pod(
+        req.username.upper(), "daily", user.name or req.username,
+        ttl_seconds=ttl, target_node=req.target_node,
+        security_policy=user_security,
+        infra_policy=user_infra,
+    )
 
     # 세션 업데이트
     session = db.query(TerminalSession).filter(TerminalSession.pod_name == pod_name).first()
@@ -504,6 +512,8 @@ async def move_pod(
         session.pod_status = "creating"
         session.started_at = datetime.now(timezone.utc)
         session.terminated_at = None
+        if move_proxy_secret:
+            session.proxy_secret = move_proxy_secret
     db.commit()
     db.close()
 
@@ -1787,3 +1797,183 @@ async def get_storage_usage(
         }
     finally:
         db.close()
+
+
+# ==================== External API Proxy: Domain Whitelist ====================
+
+
+class AllowedDomainCreate(BaseModel):
+    domain: str
+    description: str | None = None
+    is_wildcard: bool = False
+
+
+class AllowedDomainUpdate(BaseModel):
+    enabled: bool | None = None
+    description: str | None = None
+
+
+class AllowedDomainResponse(BaseModel):
+    id: int
+    domain: str
+    is_wildcard: bool
+    description: str | None
+    enabled: bool
+    created_by: str | None
+    created_at: str | None
+
+
+@router.get("/allowed-domains")
+async def list_allowed_domains(
+    admin: dict = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """허용된 외부 도메인 목록 조회."""
+    from app.models.proxy import AllowedDomain
+
+    domains = db.query(AllowedDomain).order_by(AllowedDomain.id).all()
+    return {
+        "domains": [
+            {
+                "id": d.id,
+                "domain": d.domain,
+                "is_wildcard": d.is_wildcard,
+                "description": d.description,
+                "enabled": d.enabled,
+                "created_by": d.created_by,
+                "created_at": d.created_at.isoformat() if d.created_at else None,
+            }
+            for d in domains
+        ]
+    }
+
+
+@router.post("/allowed-domains", status_code=201)
+async def add_allowed_domain(
+    body: AllowedDomainCreate,
+    admin: dict = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """새 도메인을 화이트리스트에 추가."""
+    from app.models.proxy import AllowedDomain
+
+    # 중복 확인
+    existing = db.query(AllowedDomain).filter(AllowedDomain.domain == body.domain).first()
+    if existing:
+        raise HTTPException(status_code=409, detail=f"Domain '{body.domain}' already exists")
+
+    domain = AllowedDomain(
+        domain=body.domain,
+        is_wildcard=body.is_wildcard,
+        description=body.description,
+        enabled=True,
+        created_by=admin.get("sub"),
+    )
+    db.add(domain)
+    db.commit()
+    db.refresh(domain)
+
+    return {
+        "id": domain.id,
+        "domain": domain.domain,
+        "is_wildcard": domain.is_wildcard,
+        "description": domain.description,
+        "enabled": domain.enabled,
+        "created_by": domain.created_by,
+        "created_at": domain.created_at.isoformat() if domain.created_at else None,
+    }
+
+
+@router.patch("/allowed-domains/{domain_id}")
+async def update_allowed_domain(
+    domain_id: int,
+    body: AllowedDomainUpdate,
+    admin: dict = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """도메인 활성/비활성 토글 또는 설명 업데이트."""
+    from app.models.proxy import AllowedDomain
+
+    domain = db.query(AllowedDomain).filter(AllowedDomain.id == domain_id).first()
+    if not domain:
+        raise HTTPException(status_code=404, detail="Domain not found")
+
+    if body.enabled is not None:
+        domain.enabled = body.enabled
+    if body.description is not None:
+        domain.description = body.description
+
+    db.commit()
+    db.refresh(domain)
+
+    return {
+        "id": domain.id,
+        "domain": domain.domain,
+        "is_wildcard": domain.is_wildcard,
+        "description": domain.description,
+        "enabled": domain.enabled,
+        "created_by": domain.created_by,
+        "created_at": domain.created_at.isoformat() if domain.created_at else None,
+    }
+
+
+@router.delete("/allowed-domains/{domain_id}")
+async def delete_allowed_domain(
+    domain_id: int,
+    admin: dict = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """화이트리스트에서 도메인 삭제."""
+    from app.models.proxy import AllowedDomain
+
+    domain = db.query(AllowedDomain).filter(AllowedDomain.id == domain_id).first()
+    if not domain:
+        raise HTTPException(status_code=404, detail="Domain not found")
+
+    db.delete(domain)
+    db.commit()
+    return {"deleted": True, "domain": domain.domain}
+
+
+# ==================== External API Proxy: Access Logs ====================
+
+
+@router.get("/proxy-logs")
+async def get_proxy_logs(
+    skip: int = 0,
+    limit: int = 50,
+    user_id: str | None = None,
+    domain: str | None = None,
+    admin: dict = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """프록시 접근 로그 조회 (페이지네이션 + 필터)."""
+    from app.models.proxy import ProxyAccessLog
+
+    query = db.query(ProxyAccessLog).order_by(ProxyAccessLog.created_at.desc())
+
+    if user_id:
+        query = query.filter(ProxyAccessLog.user_id == user_id)
+    if domain:
+        query = query.filter(ProxyAccessLog.domain.ilike(f"%{domain}%"))
+
+    total = query.count()
+    logs = query.offset(skip).limit(limit).all()
+
+    return {
+        "total": total,
+        "skip": skip,
+        "limit": limit,
+        "logs": [
+            {
+                "id": log.id,
+                "user_id": log.user_id,
+                "domain": log.domain,
+                "method": log.method,
+                "allowed": log.allowed,
+                "response_time_ms": log.response_time_ms,
+                "created_at": log.created_at.isoformat() if log.created_at else None,
+            }
+            for log in logs
+        ],
+    }

@@ -11,9 +11,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# supervisord — uvicorn + CONNECT 프록시를 함께 실행
+RUN pip install --no-cache-dir supervisor
+
 # 앱 코드
 COPY app/ ./app/
 
-EXPOSE 8000
+# supervisord 설정
+COPY supervisord.conf /etc/supervisord.conf
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+EXPOSE 8000
+EXPOSE 3128
+
+CMD ["supervisord", "-c", "/etc/supervisord.conf"]

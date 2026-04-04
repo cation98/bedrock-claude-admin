@@ -1,0 +1,84 @@
+# =============================================================================
+# NetworkPolicy (강화 버전): Pod의 외부 직접 접속을 차단하고 프록시 경유로 전환
+#
+# 변경 사항 (기존 network-policy.yaml 대비):
+#   - 제거: 0.0.0.0/0:443/80 직접 egress (외부 인터넷 직접 접근 차단)
+#   - 추가: platform 네임스페이스 포트 3128 (CONNECT 프록시 경유)
+#   - 추가: platform 네임스페이스 ingress 포트 8080 (텔레그램 봇 webhook)
+#   - 유지: DNS, RDS, platform:8000 (기존 규칙)
+#
+# 주의: 아직 적용하지 마세요! 카나리 테스트 후 기존 정책과 교체합니다.
+#       kubectl apply 전에 프록시 서버가 정상 동작하는지 반드시 확인하세요.
+# =============================================================================
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: isolate-terminal-pods
+  namespace: claude-sessions
+spec:
+  # 이 정책이 적용될 Pod 선택
+  podSelector:
+    matchLabels:
+      app: claude-terminal
+
+  policyTypes:
+    - Ingress   # 들어오는 트래픽 제어
+    - Egress    # 나가는 트래픽 제어
+
+  ingress:
+    # Ingress Controller(ALB)에서 오는 트래픽만 허용
+    # 다른 claude-terminal Pod에서 오는 트래픽은 차단됨
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - port: 7681
+          protocol: TCP
+        - port: 8080
+          protocol: TCP
+        - port: 3000
+          protocol: TCP
+
+    # platform 네임스페이스에서 Pod으로의 인바운드 (텔레그램 봇 webhook 등)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: platform
+      ports:
+        - port: 8080
+          protocol: TCP
+
+  egress:
+    # DNS 조회 허용 (K8s 내부 DNS)
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+    # [제거됨] 0.0.0.0/0:443/80 직접 외부 접근
+    # 대신 Auth Gateway 프록시(3128)를 통해 허용된 도메인만 접근 가능
+
+    # Auth Gateway 내부 통신 (API: 8000, CONNECT 프록시: 3128)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: platform
+      ports:
+        - port: 8000
+          protocol: TCP
+        # CONNECT 프록시 — 외부 API 접근을 Auth Gateway가 중계
+        - port: 3128
+          protocol: TCP
+
+    # RDS ReadOnly Replica 접근 허용 (Private Subnet 내)
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/16
+      ports:
+        - port: 5432
+          protocol: TCP

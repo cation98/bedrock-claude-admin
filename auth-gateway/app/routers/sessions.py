@@ -11,6 +11,7 @@ Endpoints:
 """
 
 import logging
+import secrets
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -363,13 +364,25 @@ async def create_session(
 
     # K8s Pod 생성 (사용자 프로필 주입 + 동적 TTL + 보안 정책 + 인프라 정책)
     try:
-        pod_name = k8s.create_pod(
+        pod_name, proxy_secret = k8s.create_pod(
             username, user_pod_ttl, user_display_name,
             ttl_seconds=ttl_seconds, security_policy=user_security,
             infra_policy=user_infra,
         )
     except K8sServiceError as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+    # Pod가 이미 존재하면 proxy_secret=None이 반환됨 — 기존 세션의 proxy_secret 재사용
+    if not proxy_secret:
+        existing_session = db.query(TerminalSession).filter(
+            TerminalSession.pod_name == pod_name,
+            TerminalSession.proxy_secret.isnot(None),
+        ).order_by(TerminalSession.created_at.desc()).first()
+        if existing_session:
+            proxy_secret = existing_session.proxy_secret
+        else:
+            # Fallback: 기존 시크릿이 없으면 새로 생성 (정상 경로에서는 발생하지 않지만 안전망)
+            proxy_secret = secrets.token_hex(32)
 
     # 같은 pod_name의 이전 terminated 세션이 있으면 재활용 (unique constraint 방지)
     old_session = (
@@ -384,6 +397,8 @@ async def create_session(
         old_session.started_at = datetime.now(timezone.utc)
         old_session.last_active_at = datetime.now(timezone.utc)
         old_session.terminated_at = None
+        if proxy_secret:
+            old_session.proxy_secret = proxy_secret
         session = old_session
     else:
         session = TerminalSession(
@@ -392,6 +407,7 @@ async def create_session(
             pod_name=pod_name,
             pod_status="creating",
             session_type=user_pod_ttl,
+            proxy_secret=proxy_secret,
         )
         db.add(session)
     db.commit()
@@ -532,7 +548,17 @@ async def bulk_create_sessions(
 
     for username in request.usernames:
         try:
-            pod_name = k8s.create_pod(username, request.session_type)
+            pod_name, proxy_secret = k8s.create_pod(username, request.session_type)
+            # Pod가 이미 존재하면 proxy_secret=None — 기존 세션의 proxy_secret 재사용
+            if not proxy_secret:
+                existing_sess = db.query(TerminalSession).filter(
+                    TerminalSession.pod_name == pod_name,
+                    TerminalSession.proxy_secret.isnot(None),
+                ).order_by(TerminalSession.created_at.desc()).first()
+                if existing_sess:
+                    proxy_secret = existing_sess.proxy_secret
+                else:
+                    proxy_secret = secrets.token_hex(32)
             # 같은 pod_name의 이전 세션 재활용 (unique constraint 방지)
             old_session = (
                 db.query(TerminalSession)
@@ -545,6 +571,8 @@ async def bulk_create_sessions(
                 old_session.started_at = datetime.now(timezone.utc)
                 old_session.last_active_at = datetime.now(timezone.utc)
                 old_session.terminated_at = None
+                if proxy_secret:
+                    old_session.proxy_secret = proxy_secret
                 created_sessions.append(old_session)
             else:
                 session = TerminalSession(
@@ -553,6 +581,7 @@ async def bulk_create_sessions(
                     pod_name=pod_name,
                     pod_status="creating",
                     session_type=request.session_type,
+                    proxy_secret=proxy_secret,
                 )
                 db.add(session)
                 created_sessions.append(session)

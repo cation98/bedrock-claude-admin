@@ -908,3 +908,68 @@ export function getPhotoUrl(s3Key: string): Promise<{ url: string }> {
     `/api/v1/surveys/photo-url?s3_key=${encodeURIComponent(s3Key)}`
   );
 }
+
+// ---------- Network: Allowed Domains ----------
+
+export interface AllowedDomain {
+  id: number;
+  domain: string;
+  is_wildcard: boolean;
+  description: string | null;
+  enabled: boolean;
+  created_by: string | null;
+  created_at: string | null;
+}
+
+export function getAllowedDomains(): Promise<{ domains: AllowedDomain[] }> {
+  return request<{ domains: AllowedDomain[] }>("/api/v1/admin/allowed-domains");
+}
+
+export function addAllowedDomain(data: { domain: string; description?: string; is_wildcard?: boolean }): Promise<AllowedDomain> {
+  return request<AllowedDomain>("/api/v1/admin/allowed-domains", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function updateAllowedDomain(id: number, data: { enabled?: boolean; description?: string }): Promise<AllowedDomain> {
+  return request<AllowedDomain>(`/api/v1/admin/allowed-domains/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+export function deleteAllowedDomain(id: number): Promise<{ deleted: boolean; domain: string }> {
+  return request<{ deleted: boolean; domain: string }>(`/api/v1/admin/allowed-domains/${id}`, {
+    method: "DELETE",
+  });
+}
+
+// ---------- Network: Proxy Logs ----------
+
+export interface ProxyAccessLog {
+  id: number;
+  user_id: string | null;
+  domain: string | null;
+  method: string | null;
+  allowed: boolean | null;
+  response_time_ms: number | null;
+  created_at: string | null;
+}
+
+export interface ProxyLogsResponse {
+  total: number;
+  skip: number;
+  limit: number;
+  logs: ProxyAccessLog[];
+}
+
+export function getProxyLogs(params?: { skip?: number; limit?: number; user_id?: string; domain?: string }): Promise<ProxyLogsResponse> {
+  const searchParams = new URLSearchParams();
+  if (params?.skip !== undefined) searchParams.set("skip", String(params.skip));
+  if (params?.limit !== undefined) searchParams.set("limit", String(params.limit));
+  if (params?.user_id) searchParams.set("user_id", params.user_id);
+  if (params?.domain) searchParams.set("domain", params.domain);
+  const q = searchParams.toString();
+  return request<ProxyLogsResponse>(`/api/v1/admin/proxy-logs${q ? "?" + q : ""}`);
+}
