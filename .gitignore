@@ -36,3 +36,6 @@ build/
 # K8s Secrets (never commit actual values)
 infra/k8s/platform/secrets.yaml
 !infra/k8s/platform/secrets.yaml.example
+.gstack/
+file::memory:
+**/file::memory:
