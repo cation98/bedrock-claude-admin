@@ -22,13 +22,16 @@ from app.core.security import get_current_user
 # Import ALL models that may be queried during tests so Base.metadata
 # registers their tables for create_all.
 from app.models.app import DeployedApp, AppACL, AppView  # noqa: F401
+from app.models.bot import UserBot  # noqa: F401
 from app.models.user import User  # noqa: F401
+from app.models.session import TerminalSession  # noqa: F401
 from app.models.survey import SurveyTemplate, SurveyAssignment, SurveyResponse  # noqa: F401
 from app.routers.telegram import TelegramMapping, TelegramChatLog  # noqa: F401
 
 # Import routers under test
 from app.routers import apps as apps_router
 from app.routers import app_proxy as app_proxy_router
+from app.routers import bots as bots_router
 from app.routers import surveys as surveys_router
 
 
@@ -126,6 +129,7 @@ def _build_test_app() -> FastAPI:
     """
     test_app = FastAPI(title="Test Auth Gateway")
     test_app.include_router(apps_router.router)
+    test_app.include_router(bots_router.router)
     test_app.include_router(app_proxy_router.router)
     test_app.include_router(surveys_router.router)
     return test_app
