@@ -1085,6 +1085,9 @@ async def get_daily_usage(
     # total_tokens 내림차순 정렬
     user_list.sort(key=lambda x: x["total_tokens"], reverse=True)
 
+    # 주의: 각 사용자의 값은 세션 시작 이후 "누적" 토큰이다.
+    # 전사 합계는 각 사용자의 누적값을 합산한 것이므로 "전사 누적 합계"이다.
+    # 일간 증분 합계가 필요하면 전일 데이터와 비교해야 한다.
     return {
         "date": str(target),
         "users": user_list,
@@ -1093,6 +1096,7 @@ async def get_daily_usage(
         "total_tokens": sum(u["total_tokens"] for u in user_list),
         "total_cost_usd": round(sum(u["cost_usd"] for u in user_list), 4),
         "total_cost_krw": sum(u["cost_krw"] for u in user_list),
+        "note": "각 사용자 값은 세션 시작 이후 누적 토큰. 일간 증분은 전일 대비 차이로 계산 필요.",
     }
 
 
@@ -1101,7 +1105,12 @@ async def get_monthly_usage(
     month: str = None,  # YYYY-MM, default current
     _admin: dict = Depends(_require_admin),
 ):
-    """월별 토큰 사용량 합계 — 승인된 전체 사용자 포함 (데이터 없으면 0)."""
+    """월별 토큰 사용량 합계 — 승인된 전체 사용자 포함 (데이터 없으면 0).
+
+    주의: token_usage_daily는 누적 스냅샷을 저장한다 (Pod의 jsonl에서 읽은 전체 누적값).
+    월별 사용량 = 해당 월 마지막 스냅샷 - 해당 월 첫 스냅샷 (또는 전월 마지막 스냅샷).
+    SUM은 누적값을 중복 합산하므로 사용하면 안 된다.
+    """
     from app.core.database import SessionLocal
     from app.models.token_usage import TokenUsageDaily
     from app.models.user import User
@@ -1118,16 +1127,17 @@ async def get_monthly_usage(
     # 승인된 전체 사용자
     all_users = db.query(User).filter(User.is_approved == True).all()
 
-    # 해당 월 사용량 집계
+    # 해당 월 사용량: MAX(누적) - MIN(누적) = 해당 월 증분
+    # session_minutes는 마지막 값이 가장 정확 (누적이므로 MAX)
     records = db.query(
         TokenUsageDaily.username,
         TokenUsageDaily.user_name,
-        func.sum(TokenUsageDaily.input_tokens).label("input_tokens"),
-        func.sum(TokenUsageDaily.output_tokens).label("output_tokens"),
-        func.sum(TokenUsageDaily.total_tokens).label("total_tokens"),
-        func.sum(TokenUsageDaily.cost_usd).label("cost_usd"),
-        func.sum(TokenUsageDaily.cost_krw).label("cost_krw"),
-        func.sum(TokenUsageDaily.session_minutes).label("session_minutes"),
+        (func.max(TokenUsageDaily.input_tokens) - func.min(TokenUsageDaily.input_tokens)).label("input_tokens"),
+        (func.max(TokenUsageDaily.output_tokens) - func.min(TokenUsageDaily.output_tokens)).label("output_tokens"),
+        (func.max(TokenUsageDaily.total_tokens) - func.min(TokenUsageDaily.total_tokens)).label("total_tokens"),
+        (func.max(TokenUsageDaily.cost_usd) - func.min(TokenUsageDaily.cost_usd)).label("cost_usd"),
+        (func.max(TokenUsageDaily.cost_krw) - func.min(TokenUsageDaily.cost_krw)).label("cost_krw"),
+        func.max(TokenUsageDaily.session_minutes).label("session_minutes"),
         func.max(TokenUsageDaily.last_activity_at).label("last_activity_at"),
     ).filter(
         extract("year", TokenUsageDaily.usage_date) == int(year),
@@ -1166,20 +1176,29 @@ async def get_daily_trend(
     days: int = 30,
     _admin: dict = Depends(_require_admin),
 ):
-    """전사 일별 토큰 사용량 추이 (최근 N일)."""
+    """전사 일별 토큰 사용량 추이 (최근 N일).
+
+    주의: token_usage_daily는 누적 스냅샷을 저장한다.
+    각 날짜의 사용자별 값은 그 날까지의 누적 토큰이므로, SUM하면 중복 합산된다.
+    올바른 집계: 각 사용자의 해당일 값(MAX)을 그대로 합산 (일별 레코드는 사용자당 1행).
+    일간 증분이 필요하면 클라이언트에서 전일 대비 차이를 계산한다.
+    """
     from app.core.database import SessionLocal
     from app.models.token_usage import TokenUsageDaily
     from sqlalchemy import func
 
     cutoff = datetime.now(timezone.utc).date() - timedelta(days=days)
     db = SessionLocal()
+    # 각 날짜별 사용자 수 + 사용자별 누적값의 합 (일별 레코드는 사용자당 1행이므로 SUM = 전사 합계)
+    # 단, 이 합계는 "각 사용자의 세션 시작 이후 누적"의 합이므로, 일간 증분이 아님.
+    # 일간 증분을 구하려면 전일과의 차이를 계산해야 한다.
     records = db.query(
         TokenUsageDaily.usage_date,
-        func.sum(TokenUsageDaily.input_tokens).label("input_tokens"),
-        func.sum(TokenUsageDaily.output_tokens).label("output_tokens"),
-        func.sum(TokenUsageDaily.total_tokens).label("total_tokens"),
-        func.sum(TokenUsageDaily.cost_usd).label("cost_usd"),
-        func.sum(TokenUsageDaily.cost_krw).label("cost_krw"),
+        func.max(TokenUsageDaily.input_tokens).label("input_tokens"),
+        func.max(TokenUsageDaily.output_tokens).label("output_tokens"),
+        func.max(TokenUsageDaily.total_tokens).label("total_tokens"),
+        func.max(TokenUsageDaily.cost_usd).label("cost_usd"),
+        func.max(TokenUsageDaily.cost_krw).label("cost_krw"),
         func.count(func.distinct(TokenUsageDaily.username)).label("active_users"),
     ).filter(
         TokenUsageDaily.usage_date >= cutoff,
@@ -1205,7 +1224,10 @@ async def get_monthly_trend(
     from_month: str = "2026-03",
     _admin: dict = Depends(_require_admin),
 ):
-    """전사 월별 토큰 사용량 추이."""
+    """전사 월별 토큰 사용량 추이.
+
+    주의: token_usage_daily는 누적 스냅샷. 월별 집계는 MAX - MIN으로 증분 계산.
+    """
     from app.core.database import SessionLocal
     from app.models.token_usage import TokenUsageDaily
     from sqlalchemy import func, extract, cast, String
@@ -1214,11 +1236,11 @@ async def get_monthly_trend(
     db = SessionLocal()
     records = db.query(
         func.to_char(TokenUsageDaily.usage_date, 'YYYY-MM').label("month"),
-        func.sum(TokenUsageDaily.input_tokens).label("input_tokens"),
-        func.sum(TokenUsageDaily.output_tokens).label("output_tokens"),
-        func.sum(TokenUsageDaily.total_tokens).label("total_tokens"),
-        func.sum(TokenUsageDaily.cost_usd).label("cost_usd"),
-        func.sum(TokenUsageDaily.cost_krw).label("cost_krw"),
+        (func.max(TokenUsageDaily.input_tokens) - func.min(TokenUsageDaily.input_tokens)).label("input_tokens"),
+        (func.max(TokenUsageDaily.output_tokens) - func.min(TokenUsageDaily.output_tokens)).label("output_tokens"),
+        (func.max(TokenUsageDaily.total_tokens) - func.min(TokenUsageDaily.total_tokens)).label("total_tokens"),
+        (func.max(TokenUsageDaily.cost_usd) - func.min(TokenUsageDaily.cost_usd)).label("cost_usd"),
+        (func.max(TokenUsageDaily.cost_krw) - func.min(TokenUsageDaily.cost_krw)).label("cost_krw"),
         func.count(func.distinct(TokenUsageDaily.username)).label("active_users"),
     ).filter(
         TokenUsageDaily.usage_date >= from_date,
