@@ -1,0 +1,103 @@
+# 로컬 auth-gateway — EKS와 동일 구조, 로컬 DB 사용
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-gateway
+  namespace: platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auth-gateway
+  template:
+    metadata:
+      labels:
+        app: auth-gateway
+    spec:
+      serviceAccountName: platform-admin-sa
+      containers:
+        - name: auth-gateway
+          image: bedrock-claude/auth-gateway:local
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8000
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-secrets
+                  key: DATABASE_URL
+            - name: JWT_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-secrets
+                  key: JWT_SECRET_KEY
+            - name: SSO_AUTH_URL
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-secrets
+                  key: SSO_AUTH_URL
+            - name: SSO_AUTH_URL2
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-secrets
+                  key: SSO_AUTH_URL2
+            - name: SSO_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-secrets
+                  key: SSO_CLIENT_ID
+            - name: SSO_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-secrets
+                  key: SSO_CLIENT_SECRET
+            - name: PW_ENCODING_SALT
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-secrets
+                  key: PW_ENCODING_SALT
+            - name: SSO_AUTH_METHOD
+              value: "4302010"
+            - name: SSO_SCOPES
+              value: NeosOAuth
+            - name: SSO_TOKEN_KEY
+              value: RequestTokenResult
+            - name: K8S_IN_CLUSTER
+              value: "true"
+            - name: K8S_NAMESPACE
+              value: claude-sessions
+            - name: K8S_POD_IMAGE
+              value: bedrock-claude/claude-terminal:local
+            - name: K8S_SERVICE_ACCOUNT
+              value: claude-terminal-sa
+            - name: BEDROCK_REGION
+              value: ap-northeast-2
+            - name: BEDROCK_SONNET_MODEL
+              value: global.anthropic.claude-sonnet-4-6
+            - name: BEDROCK_HAIKU_MODEL
+              value: global.anthropic.claude-haiku-4-5-20251001-v1:0
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-gateway
+  namespace: platform
+spec:
+  selector:
+    app: auth-gateway
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8000
+  type: NodePort

@@ -1,0 +1,50 @@
+# 로컬 PostgreSQL — RDS 대체
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: local-db
+  namespace: platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: local-db
+  template:
+    metadata:
+      labels:
+        app: local-db
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: bedrock_platform
+            - name: POSTGRES_USER
+              value: bedrock_admin
+            - name: POSTGRES_PASSWORD
+              value: local-dev-password
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+      volumes:
+        - name: pgdata
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: local-db
+  namespace: platform
+spec:
+  selector:
+    app: local-db
+  ports:
+    - port: 5432
+      targetPort: 5432
