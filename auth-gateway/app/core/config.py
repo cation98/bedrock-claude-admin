@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_bot_username: str = ""  # @봇이름 (멘션 제거용)
 
+    # ----- External Host (사용자 봇 webhook URL 구성용) -----
+    external_host: str = "claude.skons.net"
+
     # ----- Bedrock (Pod에 주입할 환경변수) -----
     bedrock_region: str = "us-east-1"
     bedrock_sonnet_model: str = "us.anthropic.claude-sonnet-4-6"

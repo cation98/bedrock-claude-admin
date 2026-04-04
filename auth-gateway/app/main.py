@@ -24,7 +24,8 @@ from app.models.token_usage import TokenUsageHourly  # noqa: F401 — create_all
 from app.models.prompt_audit import PromptAuditSummary, PromptAuditFlag, PromptAuditConversation  # noqa: F401 — create_all이 테이블 생성하도록 import
 from app.models.token_quota import TokenQuotaTemplate, TokenQuotaAssignment  # noqa: F401 — create_all이 테이블 생성하도록 import
 from app.models.proxy import AllowedDomain, ProxyAccessLog  # noqa: F401 — create_all이 테이블 생성하도록 import
-from app.routers import admin, apps, auth, file_share, sessions, users, sms, skills, telegram, security, scheduling, infra_policy, surveys, app_proxy
+from app.models.bot import UserBot  # noqa: F401 — create_all이 user_bots 테이블 생성하도록 import
+from app.routers import admin, apps, auth, bots, file_share, sessions, users, sms, skills, telegram, security, scheduling, infra_policy, surveys, app_proxy
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -192,6 +193,7 @@ app.include_router(security.router)
 app.include_router(scheduling.router)
 app.include_router(infra_policy.router)
 app.include_router(apps.router)
+app.include_router(bots.router)
 app.include_router(file_share.router)
 app.include_router(surveys.router)
 # app_proxy는 catch-all 경로이므로 반드시 마지막에 등록
