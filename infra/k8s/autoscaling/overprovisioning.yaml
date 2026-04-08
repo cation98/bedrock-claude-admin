@@ -1,13 +1,16 @@
-# Overprovisioning — 더미 Pod로 노드 사전 확보
-# 사용자 Pod보다 낮은 우선순위 → 사용자 로그인 시 즉시 밀려남
-# → Autoscaler가 밀려난 더미를 위해 새 노드 생성 → 항상 여유 확보
+# Overprovisioning — 비활성화 (replicas=0)
+#
+# 1-node-1-pod 모델에서 더미 Pod은 노드 1대 전체를 점유하여 비용 대비 효용이 낮음.
+# 사용자 로그인 시 _ensure_node_capacity()가 자동으로 노드를 scale-up하며,
+# 초기 대기 2~3분은 1일 1회이므로 허용 가능.
+# 워크숍 모드(다수 동시 접속) 필요 시 replicas를 1~3으로 올려 사용.
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
 metadata:
   name: overprovisioning
 value: -1
 globalDefault: false
-description: "사용자 Pod보다 낮은 우선순위. 사용자 로그인 시 자동으로 밀려남."
+description: "사용자 Pod보다 낮은 우선순위. 워크숍 모드에서만 활성화."
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -15,7 +18,7 @@ metadata:
   name: overprovisioning
   namespace: claude-sessions
 spec:
-  replicas: 2  # 더미 2개 = 노드 2대 사전 확보 (1:1 모델에서 동시 로그인 2명 즉시 수용)
+  replicas: 0  # 상시 운영: 0 (비활성). 워크숍 모드: 1~3으로 변경
   selector:
     matchLabels:
       app: overprovisioning
@@ -24,16 +27,12 @@ spec:
       labels:
         app: overprovisioning
       annotations:
-        # Cluster Autoscaler가 이 Pod을 퇴거 가능으로 인식
-        # 이 annotation 없으면 더미 Pod 때문에 빈 노드가 축소되지 않음
         cluster-autoscaler.kubernetes.io/safe-to-evict: "true"
     spec:
       priorityClassName: overprovisioning
       terminationGracePeriodSeconds: 0
-      # 1:1 전용 노드에만 배치
       nodeSelector:
         role: claude-dedicated
-      # 1-node-1-pod 강제: 각 더미 Pod을 별도 노드에 배치
       affinity:
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -49,7 +48,6 @@ spec:
         - name: pause
           image: registry.k8s.io/pause:3.9
           resources:
-            # 사용자 Pod와 동일한 리소스 요청 → 1:1 자리 확보
             requests:
               cpu: 500m
               memory: 1536Mi
