@@ -1,6 +1,7 @@
 import hashlib
 import base64
 import logging
+import secrets
 from datetime import datetime, timedelta, timezone
 
 from jose import JWTError, jwt
@@ -110,9 +111,17 @@ async def get_current_user_or_pod(
         except HTTPException:
             pass  # JWT 실패 → Pod 내부 인증으로 fallback
 
-    # 2. Pod 내부 인증 (X-Pod-Name 헤더)
+    # 2. Pod 내부 인증 (X-Pod-Name + X-Pod-Token 헤더 모두 필요)
     pod_name = request.headers.get("X-Pod-Name", "")
     if pod_name.startswith("claude-terminal-"):
+        pod_token = request.headers.get("X-Pod-Token", "")
+        if not pod_token:
+            logger.warning(f"Pod auth attempted for {pod_name} without X-Pod-Token header")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="X-Pod-Token header is required for pod authentication",
+            )
+
         from app.models.session import TerminalSession
 
         session = (
@@ -123,9 +132,25 @@ async def get_current_user_or_pod(
             )
             .first()
         )
-        if session:
-            logger.debug(f"Pod internal auth: {pod_name} → user {session.username}")
-            return {"sub": session.username, "role": "user", "auth_type": "pod"}
+        if not session or not session.pod_token_hash:
+            logger.warning(f"Pod auth failed: no active session with token for {pod_name}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authenticated",
+            )
+
+        # 제출된 토큰을 SHA-256 해시하여 저장된 해시와 비교
+        # secrets.compare_digest: timing-safe 비교로 timing attack 방지
+        submitted_hash = hashlib.sha256(pod_token.encode()).hexdigest()
+        if not secrets.compare_digest(submitted_hash, session.pod_token_hash):
+            logger.warning(f"Pod auth failed: invalid token for {pod_name}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Invalid pod token",
+            )
+
+        logger.debug(f"Pod internal auth: {pod_name} → user {session.username}")
+        return {"sub": session.username, "role": "user", "auth_type": "pod"}
 
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,

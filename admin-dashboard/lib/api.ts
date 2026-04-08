@@ -945,6 +945,58 @@ export function deleteAllowedDomain(id: number): Promise<{ deleted: boolean; dom
   });
 }
 
+// ---------- Governance Dashboard ----------
+
+export interface GovernanceDashboardStats {
+  total_files: number;
+  sensitive_files: number;
+  expiring_soon: number;
+  storage_used_bytes: number;
+}
+
+export function getGovernanceDashboard(): Promise<GovernanceDashboardStats> {
+  return request<GovernanceDashboardStats>("/api/v1/governance/dashboard");
+}
+
+export interface GovernedFileItem {
+  id: number;
+  username: string;
+  filename: string;
+  file_path: string;
+  file_type: string;
+  file_size_bytes: number;
+  classification: "sensitive" | "normal" | "unknown";
+  classification_reason: string;
+  status: "active" | "quarantine" | "expired" | "deleted";
+  ttl_days: number | null;
+  expires_at: string | null;
+  created_at: string;
+}
+
+export interface GovernanceFilesResponse {
+  files: GovernedFileItem[];
+  total: number;
+  page: number;
+  per_page: number;
+}
+
+export function getGovernanceFiles(params?: {
+  classification?: string;
+  status?: string;
+  username?: string;
+  page?: number;
+  per_page?: number;
+}): Promise<GovernanceFilesResponse> {
+  const searchParams = new URLSearchParams();
+  if (params?.classification) searchParams.set("classification", params.classification);
+  if (params?.status) searchParams.set("status", params.status);
+  if (params?.username) searchParams.set("username", params.username);
+  if (params?.page) searchParams.set("page", String(params.page));
+  if (params?.per_page) searchParams.set("per_page", String(params.per_page));
+  const qs = searchParams.toString();
+  return request<GovernanceFilesResponse>(`/api/v1/governance/files${qs ? `?${qs}` : ""}`);
+}
+
 // ---------- Network: Proxy Logs ----------
 
 export interface ProxyAccessLog {

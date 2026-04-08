@@ -101,6 +101,12 @@ DATABASE_URL=         # Platform PostgreSQL
 - O-Guard 프로젝트의 FastAPI 패턴(config loading, auth dependencies, error handling)을 참고할 것
 - Phase 1 MVP (임원 15명 실습, 1주 내) → Phase 2 (팀장 50명) → 상시 운영 (실무자 10명) 순서로 확장
 
+## Design System
+Always read DESIGN.md before making any visual or UI decisions.
+All font choices, colors, spacing, and aesthetic direction are defined there.
+Do not deviate without explicit user approval.
+In QA mode, flag any code that doesn't match DESIGN.md.
+
 ## Design Document
 
 전체 시스템 설계: `docs/plans/2026-03-21-bedrock-claude-code-platform-design.md`

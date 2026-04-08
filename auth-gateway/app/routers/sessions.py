@@ -361,7 +361,7 @@ async def create_session(
 
     # K8s Pod 생성 (사용자 프로필 주입 + 동적 TTL + 보안 정책 + 인프라 정책)
     try:
-        pod_name, proxy_secret = k8s.create_pod(
+        pod_name, proxy_secret, pod_token_hash = k8s.create_pod(
             username, user_pod_ttl, user_display_name,
             ttl_seconds=ttl_seconds, security_policy=user_security,
             infra_policy=user_infra,
@@ -396,6 +396,8 @@ async def create_session(
         old_session.terminated_at = None
         if proxy_secret:
             old_session.proxy_secret = proxy_secret
+        if pod_token_hash:
+            old_session.pod_token_hash = pod_token_hash
         session = old_session
     else:
         session = TerminalSession(
@@ -405,6 +407,7 @@ async def create_session(
             pod_status="creating",
             session_type=user_pod_ttl,
             proxy_secret=proxy_secret,
+            pod_token_hash=pod_token_hash,
         )
         db.add(session)
     db.commit()
@@ -548,7 +551,7 @@ async def bulk_create_sessions(
 
     for username in request.usernames:
         try:
-            pod_name, proxy_secret = k8s.create_pod(username, request.session_type, infra_policy=bulk_infra)
+            pod_name, proxy_secret, pod_token_hash = k8s.create_pod(username, request.session_type, infra_policy=bulk_infra)
             # Pod가 이미 존재하면 proxy_secret=None — 기존 세션의 proxy_secret 재사용
             if not proxy_secret:
                 existing_sess = db.query(TerminalSession).filter(
@@ -573,6 +576,8 @@ async def bulk_create_sessions(
                 old_session.terminated_at = None
                 if proxy_secret:
                     old_session.proxy_secret = proxy_secret
+                if pod_token_hash:
+                    old_session.pod_token_hash = pod_token_hash
                 created_sessions.append(old_session)
             else:
                 session = TerminalSession(
@@ -582,6 +587,7 @@ async def bulk_create_sessions(
                     pod_status="creating",
                     session_type=request.session_type,
                     proxy_secret=proxy_secret,
+                    pod_token_hash=pod_token_hash,
                 )
                 db.add(session)
                 created_sessions.append(session)

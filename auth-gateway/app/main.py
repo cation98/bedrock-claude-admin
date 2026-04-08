@@ -26,7 +26,11 @@ from app.models.token_quota import TokenQuotaTemplate, TokenQuotaAssignment  # n
 from app.models.proxy import AllowedDomain, ProxyAccessLog  # noqa: F401 — create_all이 테이블 생성하도록 import
 from app.models.bot import UserBot  # noqa: F401 — create_all이 user_bots 테이블 생성하도록 import
 from app.models.skill import SharedSkill, SkillInstall  # noqa: F401 — create_all이 skill_installs 테이블 생성하도록 import
+from app.models.file_governance import GovernedFile  # noqa: F401 — create_all이 governed_files 테이블 생성하도록 import
+from app.models.file_audit import FileAuditLog  # noqa: F401 — create_all이 file_audit_logs 테이블 생성하도록 import
 from app.routers import admin, apps, auth, bots, file_share, sessions, users, sms, skills, telegram, security, scheduling, infra_policy, surveys, app_proxy, portal
+from app.routers.file_governance import router as governance_router
+from app.routers.secure_files import router as secure_files_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -310,6 +314,8 @@ app.include_router(bots.router)
 app.include_router(file_share.router)
 app.include_router(surveys.router)
 app.include_router(portal.router)
+app.include_router(governance_router)
+app.include_router(secure_files_router)
 # app_proxy는 catch-all 경로이므로 반드시 마지막에 등록
 app.include_router(app_proxy.router)
 

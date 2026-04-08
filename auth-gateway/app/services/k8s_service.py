@@ -9,6 +9,7 @@ K8s 개념 정리:
   - Label: Pod에 메타데이터 부착 (사용자명, 세션 타입 등)
 """
 
+import hashlib
 import json as _json
 import logging
 import secrets
@@ -49,12 +50,59 @@ class K8sService:
         safe_name = username.lower().replace("_", "-")
         return f"claude-terminal-{safe_name}"
 
+    def _create_pod_token_secret(self, username: str, pod_token: str) -> None:
+        """Pod 인증 토큰을 K8s Secret에 저장.
+
+        Secret 이름: pod-token-{username}
+        Pod에서 환경변수 SECURE_POD_TOKEN으로 마운트한다.
+
+        이 Secret은 Auth Gateway가 X-Pod-Token 헤더 검증에 사용하지 않는다
+        (DB에 해시를 저장). Secret은 Pod 컨테이너가 토큰을 주입받기 위한
+        K8s 네이티브 방식으로만 사용한다.
+        """
+        secret_name = f"pod-token-{username.lower()}"
+        secret_body = client.V1Secret(
+            metadata=client.V1ObjectMeta(
+                name=secret_name,
+                namespace=self.namespace,
+                labels={"app": "claude-terminal", "user": username.lower()},
+            ),
+            string_data={"token": pod_token},
+            type="Opaque",
+        )
+        try:
+            self.v1.create_namespaced_secret(namespace=self.namespace, body=secret_body)
+            logger.info(f"Pod token secret {secret_name} created for user {username}")
+        except ApiException as e:
+            if e.status == 409:
+                # Secret이 이미 존재하면 교체 (Pod 재생성 시)
+                self.v1.replace_namespaced_secret(
+                    name=secret_name,
+                    namespace=self.namespace,
+                    body=secret_body,
+                )
+                logger.info(f"Pod token secret {secret_name} replaced for user {username}")
+            else:
+                logger.error(f"Failed to create pod token secret: {e}")
+                raise K8sServiceError(f"Failed to create pod token secret: {e.reason}")
+
+    def _delete_pod_token_secret(self, username: str) -> None:
+        """Pod 인증 토큰 Secret 삭제 (Pod 종료 시 호출)."""
+        secret_name = f"pod-token-{username.lower()}"
+        try:
+            self.v1.delete_namespaced_secret(name=secret_name, namespace=self.namespace)
+            logger.info(f"Pod token secret {secret_name} deleted")
+        except ApiException as e:
+            if e.status != 404:
+                logger.error(f"Failed to delete pod token secret: {e}")
+
     def _build_env_vars(
         self,
         username: str,
         user_display_name: str,
         security_policy: dict | None,
         proxy_secret: str | None = None,
+        pod_token: str | None = None,
     ) -> list:
         """Pod 환경변수 목록 생성. security_policy에 따라 DB 자격증명을 조건부 주입.
 
@@ -127,6 +175,19 @@ class K8sService:
                 ),
             ))
 
+        # Pod 내부 API 인증 토큰 — K8s Secret에서 환경변수로 주입
+        # X-Pod-Token 헤더로 Auth Gateway에 전달하여 신원 증명
+        if pod_token:
+            env_vars.append(client.V1EnvVar(
+                name="SECURE_POD_TOKEN",
+                value_from=client.V1EnvVarSource(
+                    secret_key_ref=client.V1SecretKeySelector(
+                        name=f"pod-token-{username.lower()}",
+                        key="token",
+                    )
+                ),
+            ))
+
         # 프록시 환경변수 — Pod에서 외부 API 접근 시 Auth Gateway 프록시를 거치도록 설정
         # HTTPS_PROXY/HTTP_PROXY: curl, pip, npm 등이 자동으로 프록시를 사용
         # NO_PROXY: 클러스터 내부 통신은 프록시를 우회
@@ -160,7 +221,7 @@ class K8sService:
         target_node: str | None = None,
         security_policy: dict | None = None,
         infra_policy: dict | None = None,
-    ) -> tuple[str, str | None]:
+    ) -> tuple[str, str | None, str | None]:
         """사용자용 Claude Code 터미널 Pod 생성.
 
         Args:
@@ -170,18 +231,22 @@ class K8sService:
             ttl_seconds: Pod 수명(초). 0이면 unlimited (activeDeadlineSeconds 미설정).
 
         Returns:
-            (pod_name, proxy_secret): 생성된 Pod 이름과 프록시 인증 시크릿
+            (pod_name, proxy_secret, pod_token_hash): 생성된 Pod 이름, 프록시 인증 시크릿,
+            Pod 토큰의 SHA-256 해시. Pod 재사용 시 proxy_secret과 pod_token_hash는 None.
         """
         pod_name = self._pod_name(username)
 
         # 프록시 인증용 랜덤 시크릿 생성
         proxy_secret = secrets.token_hex(32)
 
+        # Pod 내부 API 인증용 토큰 생성 (secrets.token_urlsafe: URL-safe base64, 32바이트 엔트로피)
+        pod_token = secrets.token_urlsafe(32)
+
         # 이미 실행 중인 Pod이 있는지 확인
         existing = self.get_pod_status(pod_name)
         if existing and existing.get("phase") in ("Pending", "Running"):
             logger.info(f"Pod {pod_name} already exists, reusing")
-            return pod_name, None
+            return pod_name, None, None
 
         # 인프라 정책 기반 Pod 리소스 결정 (DB에서 관리, 하드코딩 제거)
         from app.models.infra_policy import INFRA_TEMPLATES
@@ -284,6 +349,7 @@ class K8sService:
                         env=self._build_env_vars(
                             username, user_display_name, security_policy,
                             proxy_secret=proxy_secret,
+                            pod_token=pod_token,
                         ),
                         # Container-level 보안: 권한 상승 차단, 불필요 capabilities 제거
                         security_context=client.V1SecurityContext(
@@ -353,20 +419,25 @@ class K8sService:
         # ~/workspace/team/{owner}/{name} 심링크를 생성/삭제한다.
         # 이 방식으로 공유 추가/해제 시 Pod 재시작 없이 실시간 반영된다.
 
+        # Pod 토큰 K8s Secret 생성 (Pod 매니페스트 적용 전에 Secret이 존재해야 함)
+        # DB에는 해시만 저장하고, 평문 토큰은 K8s Secret → 환경변수 경로로만 전달
+        pod_token_hash = hashlib.sha256(pod_token.encode()).hexdigest()
+        self._create_pod_token_secret(username, pod_token)
+
         try:
             self.v1.create_namespaced_pod(namespace=self.namespace, body=pod_manifest)
             logger.info(f"Pod {pod_name} created for user {username}")
         except ApiException as e:
             if e.status == 409:  # Already exists
                 logger.info(f"Pod {pod_name} already exists")
-                return pod_name, None
+                return pod_name, None, None
             logger.error(f"Failed to create pod {pod_name}: {e}")
             raise K8sServiceError(f"Failed to create pod: {e.reason}")
 
         # Pod에 대한 Service + Ingress 생성 (터미널 + 파일 서버 접근)
         self._create_pod_service(pod_name, username)
         self._create_pod_ingress(pod_name, username)
-        return pod_name, proxy_secret
+        return pod_name, proxy_secret, pod_token_hash
 
     def _create_pod_service(self, pod_name: str, username: str):
         """Pod을 위한 K8s Service 생성."""
@@ -499,8 +570,13 @@ class K8sService:
             if e.status != 409:
                 logger.error(f"Failed to create hub ingress: {e}")
 
-    def delete_pod(self, pod_name: str) -> bool:
-        """Pod + Service + Ingress 삭제."""
+    def delete_pod(self, pod_name: str, username: str | None = None) -> bool:
+        """Pod + Service + Ingress + Token Secret 삭제.
+
+        Args:
+            pod_name: 삭제할 Pod 이름 (e.g. claude-terminal-n1102359)
+            username: Pod 소유자 사번. 제공 시 pod-token-{username} Secret도 삭제.
+        """
         # Pod 삭제
         try:
             self.v1.delete_namespaced_pod(name=pod_name, namespace=self.namespace, grace_period_seconds=10)
@@ -527,6 +603,10 @@ class K8sService:
             self.networking.delete_namespaced_ingress(name=f"{pod_name}-hub", namespace=self.namespace)
         except ApiException:
             pass
+
+        # Pod 토큰 Secret 삭제 (username이 제공된 경우)
+        if username:
+            self._delete_pod_token_secret(username)
 
         return True
 

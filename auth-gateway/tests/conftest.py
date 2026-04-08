@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 
 from app.core.database import Base, get_db
 from app.core.config import Settings, get_settings
-from app.core.security import get_current_user
+from app.core.security import get_current_user, get_current_user_or_pod
 
 # Import ALL models that may be queried during tests so Base.metadata
 # registers their tables for create_all.
@@ -27,13 +27,20 @@ from app.models.user import User  # noqa: F401
 from app.models.session import TerminalSession  # noqa: F401
 from app.models.survey import SurveyTemplate, SurveyAssignment, SurveyResponse  # noqa: F401
 from app.models.proxy import AllowedDomain, ProxyAccessLog  # noqa: F401
+from app.models.file_governance import GovernedFile  # noqa: F401
+from app.models.file_audit import FileAuditLog  # noqa: F401
+from app.models.file_share import SharedDataset, FileShareACL  # noqa: F401
+from app.models.two_factor_code import TwoFactorCode  # noqa: F401
 from app.routers.telegram import TelegramMapping, TelegramChatLog  # noqa: F401
+from app.services.sqlcipher_service import SQLCipherKey  # noqa: F401
 
 # Import routers under test
 from app.routers import apps as apps_router
 from app.routers import app_proxy as app_proxy_router
 from app.routers import bots as bots_router
 from app.routers import surveys as surveys_router
+from app.routers import file_governance as file_governance_router
+from app.routers import file_share as file_share_router
 
 
 # --------------- SQLite JSONB compatibility ---------------
@@ -133,6 +140,8 @@ def _build_test_app() -> FastAPI:
     test_app.include_router(bots_router.router)
     test_app.include_router(app_proxy_router.router)
     test_app.include_router(surveys_router.router)
+    test_app.include_router(file_governance_router.router)
+    test_app.include_router(file_share_router.router)
     return test_app
 
 
@@ -172,6 +181,7 @@ def client(db_session):
     _test_app.dependency_overrides[get_db] = _override_get_db
     _test_app.dependency_overrides[get_settings] = _test_settings
     _test_app.dependency_overrides[get_current_user] = _mock_current_user
+    _test_app.dependency_overrides[get_current_user_or_pod] = _mock_current_user
 
     with TestClient(_test_app, raise_server_exceptions=False) as tc:
         yield tc

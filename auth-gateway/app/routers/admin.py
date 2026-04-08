@@ -409,7 +409,7 @@ async def assign_pod(
     ttl = POD_TTL_SECONDS_MAP.get(user.pod_ttl, 14400)
     user_security = user.security_policy if user.security_policy else SECURITY_TEMPLATES.get("standard", {})
     user_infra = user.infra_policy if user.infra_policy else INFRA_DEFAULTS["standard"]
-    pod_name, proxy_secret = k8s.create_pod(
+    pod_name, proxy_secret, pod_token_hash = k8s.create_pod(
         req.username.upper(), "daily", user.name or req.username,
         ttl_seconds=ttl, target_node=req.node_name,
         security_policy=user_security,
@@ -424,12 +424,15 @@ async def assign_pod(
         session.terminated_at = None
         if proxy_secret:
             session.proxy_secret = proxy_secret
+        if pod_token_hash:
+            session.pod_token_hash = pod_token_hash
     else:
         session = TerminalSession(
             user_id=user.id, username=req.username.upper(),
             pod_name=pod_name, pod_status="creating",
             session_type="daily", started_at=datetime.now(timezone.utc),
             proxy_secret=proxy_secret,
+            pod_token_hash=pod_token_hash,
         )
         db.add(session)
     db.commit()
@@ -499,7 +502,7 @@ async def move_pod(
     ttl = POD_TTL_SECONDS_MAP.get(user.pod_ttl, 14400)
     user_security = user.security_policy if user.security_policy else SECURITY_TEMPLATES.get("standard", {})
     user_infra = user.infra_policy if user.infra_policy else INFRA_DEFAULTS["standard"]
-    _, move_proxy_secret = k8s.create_pod(
+    _, move_proxy_secret, move_pod_token_hash = k8s.create_pod(
         req.username.upper(), "daily", user.name or req.username,
         ttl_seconds=ttl, target_node=req.target_node,
         security_policy=user_security,
@@ -514,6 +517,8 @@ async def move_pod(
         session.terminated_at = None
         if move_proxy_secret:
             session.proxy_secret = move_proxy_secret
+        if move_pod_token_hash:
+            session.pod_token_hash = move_pod_token_hash
     db.commit()
     db.close()
 

@@ -5,11 +5,44 @@
 """
 import asyncio
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 
 from app.core.config import Settings
 
 logger = logging.getLogger(__name__)
+
+
+# ==================== 인-프로세스 스케줄러 락 ====================
+# Redis가 없는 환경에서 동일 프로세스 내 중복 실행을 방지하는 단순 락.
+# 멀티-프로세스 환경에서는 Redis SETNX로 대체해야 한다.
+
+_scheduler_locks: dict[str, float] = {}  # lock_name → expiry_epoch
+
+
+def acquire_scheduler_lock(lock_name: str, ttl_seconds: int = 300) -> bool:
+    """스케줄러 락 획득 (SETNX 의미론).
+
+    Args:
+        lock_name: 락 이름 (고유 식별자)
+        ttl_seconds: 락 유효 시간 (초)
+
+    Returns:
+        True이면 락 획득 성공, False이면 이미 락이 존재함.
+    """
+    now = time.monotonic()
+    expiry = _scheduler_locks.get(lock_name, 0)
+    if expiry > now:
+        # 락이 아직 유효함
+        return False
+    # 락 획득
+    _scheduler_locks[lock_name] = now + ttl_seconds
+    return True
+
+
+def release_scheduler_lock(lock_name: str) -> None:
+    """스케줄러 락 해제."""
+    _scheduler_locks.pop(lock_name, None)
 
 
 async def idle_checker_loop(settings: Settings) -> None:
@@ -274,4 +307,72 @@ async def storage_cleanup_loop(settings: Settings) -> None:
         finally:
             db.close()
 
+        # ── 파일 수준 TTL 정리 ─────────────────────────────────
+        await _run_file_ttl_cleanup()
+
         await asyncio.sleep(CLEANUP_INTERVAL)
+
+
+async def _run_file_ttl_cleanup() -> None:
+    """만료된 GovernedFile의 status를 'expired'로 업데이트하고 감사 로그를 기록한다.
+
+    실제 파일 삭제는 Pod 에이전트에게 위임한다 (auth-gateway는 EFS에 직접 접근 불가).
+    """
+    if not acquire_scheduler_lock("file_ttl_cleanup", 300):
+        logger.debug("file_ttl_cleanup 락 획득 실패 — 이미 실행 중")
+        return
+
+    from app.core.database import SessionLocal
+    from app.models.file_governance import GovernedFile
+    from app.models.file_audit import FileAuditLog
+
+    db = SessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+
+        expired_files = (
+            db.query(GovernedFile)
+            .filter(
+                GovernedFile.expires_at < now,
+                GovernedFile.status == "active",
+            )
+            .all()
+        )
+
+        if not expired_files:
+            logger.debug("파일 TTL 정리: 만료 대상 없음")
+            return
+
+        for gf in expired_files:
+            gf.status = "expired"
+            gf.updated_at = now
+
+            audit = FileAuditLog(
+                username=gf.username,
+                action="expire",
+                filename=gf.filename,
+                file_path=gf.file_path,
+                detail=(
+                    f"TTL 만료: ttl_days={gf.ttl_days}, "
+                    f"expires_at={gf.expires_at.isoformat() if gf.expires_at else None}"
+                ),
+            )
+            db.add(audit)
+
+            # TODO: Pod 에이전트에 파일 삭제 요청
+            # POST http://claude-terminal-{username}:8080/internal/delete-file
+            # auth-gateway는 EFS에 직접 접근하지 않으므로 Pod 에이전트를 통해 삭제한다.
+            logger.info(
+                f"파일 TTL 만료 처리: {gf.username}/{gf.filename} "
+                f"(id={gf.id}, expires_at={gf.expires_at})"
+            )
+
+        db.commit()
+        logger.info(f"파일 TTL 정리 완료: {len(expired_files)}개 파일 만료 처리")
+
+    except Exception as e:
+        logger.error(f"파일 TTL 정리 오류: {e}", exc_info=True)
+        db.rollback()
+    finally:
+        db.close()
+        release_scheduler_lock("file_ttl_cleanup")

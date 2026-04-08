@@ -1,0 +1,14 @@
+{
+  "onlyoffice": {
+    "url": "http://onlyoffice.claude-sessions.svc.cluster.local",
+    "jwt_secret_env": "ONLYOFFICE_JWT_SECRET",
+    "supported_formats": {
+      "spreadsheet": [".xlsx", ".xls", ".csv", ".ods"],
+      "document": [".docx", ".doc", ".odt", ".rtf", ".txt"],
+      "presentation": [".pptx", ".ppt", ".odp"]
+    },
+    "max_file_size_mb": 50,
+    "download_disabled": true,
+    "print_disabled": false
+  }
+}

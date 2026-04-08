@@ -117,7 +117,11 @@ def verify_code(code_id: str, input_code: str, db: Session) -> bool:
         raise TwoFactorError("Code already verified")
 
     # 만료 확인
-    if now > record.expires_at:
+    # SQLite는 timezone-naive datetime을 반환하므로 비교 전 UTC로 정규화
+    expires_at = record.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if now > expires_at:
         raise CodeExpiredError("Code has expired")
 
     # 시도 횟수 초과 확인
@@ -182,7 +186,11 @@ def check_lockout(username: str, db: Session) -> None:
             .first()
         )
         if latest:
-            unlock_at = latest.created_at + timedelta(minutes=LOCKOUT_WINDOW_MINUTES)
+            # SQLite는 timezone-naive datetime을 반환하므로 UTC로 정규화
+            created_at = latest.created_at
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+            unlock_at = created_at + timedelta(minutes=LOCKOUT_WINDOW_MINUTES)
             remaining = int((unlock_at - datetime.now(timezone.utc)).total_seconds())
             remaining = max(remaining, 0)
         else:

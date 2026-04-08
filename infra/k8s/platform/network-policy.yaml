@@ -1,0 +1,270 @@
+# =============================================================================
+# Kubernetes NetworkPolicy — 네트워크 정책
+# =============================================================================
+#
+# NetworkPolicy란?
+# ─────────────────
+# K8s에서 Pod 간 트래픽을 제어하는 방화벽 규칙이다.
+# 기본적으로 K8s는 모든 Pod이 서로 통신 가능 → 보안상 위험.
+# NetworkPolicy로 "허용할 트래픽만 명시"하고 나머지는 차단한다.
+#
+# 중요: NetworkPolicy는 CNI(Container Network Interface) 플러그인이
+# 지원해야 동작한다. AWS EKS에서는 VPC CNI + Calico 또는
+# EKS 네이티브 NetworkPolicy를 사용해야 한다.
+#
+# 이 파일에는 두 네임스페이스에 대한 정책이 포함된다:
+# - claude-sessions: 사용자 터미널 Pod (claude-terminal)
+# - platform: Auth Gateway (auth-gateway)
+#
+# 정책 구조:
+# 1. default-deny-all       → 기본 전부 차단 (claude-sessions)
+# 2. allow-user-pod-traffic → 사용자 Pod 허용 규칙
+# 3. default-deny-platform  → 기본 전부 차단 (platform)
+# 4. allow-auth-gateway-traffic → Auth Gateway 허용 규칙
+# 5. allow-onlyoffice-traffic → OnlyOffice 허용 규칙
+# =============================================================================
+
+# =============================================================================
+# 1. 기본 차단 정책 — claude-sessions 네임스페이스
+# =============================================================================
+# podSelector: {} → 네임스페이스 내 모든 Pod에 적용
+# policyTypes에 Ingress + Egress 모두 지정 → 들어오는/나가는 모든 트래픽 차단
+# NetworkPolicy는 "화이트리스트" 방식: 이후 allow 정책에서 허용 범위를 추가한다.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: claude-sessions
+spec:
+  podSelector: {}    # {} = 네임스페이스의 모든 Pod에 적용
+  policyTypes:
+    - Ingress        # 인바운드 트래픽 차단
+    - Egress         # 아웃바운드 트래픽 차단
+
+---
+# =============================================================================
+# 2. 사용자 터미널 Pod 트래픽 허용 정책
+# =============================================================================
+# 대상: app=claude-terminal 라벨을 가진 Pod (사용자별 웹 터미널)
+#
+# [Ingress 허용]
+# - ingress-nginx 네임스페이스의 Pod → 포트 7681 (ttyd 웹 터미널)
+#   사용자가 브라우저에서 웹 터미널에 접속할 수 있게 허용
+#
+# [Egress 허용]
+# - DNS 쿼리 (UDP/TCP 53): 도메인 이름 해석 필수
+# - HTTPS (TCP 443): AWS Bedrock API 호출, npm/pip 패키지 다운로드
+# - Auth Gateway (TCP 8000): 같은 네임스페이스의 auth-gateway와 통신
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-user-pod-traffic
+  namespace: claude-sessions
+spec:
+  podSelector:
+    matchLabels:
+      app: claude-terminal    # 사용자 터미널 Pod에만 적용
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # ingress-nginx 컨트롤러에서 오는 웹 터미널 접속만 허용
+    # namespaceSelector: 특정 네임스페이스의 Pod에서 오는 트래픽만 허용
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - port: 7681        # ttyd 웹 터미널 포트
+          protocol: TCP
+
+  egress:
+    # DNS 해석 허용 (UDP 53 + TCP 53)
+    # to: [] → 목적지를 제한하지 않음 (kube-dns는 모든 Pod에서 접근 필요)
+    # 왜 TCP도? → 응답이 512바이트 초과 시 DNS는 TCP로 재시도한다
+    - to: []
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+    # HTTPS 아웃바운드 허용
+    # - AWS Bedrock Claude API (us-east-1, ap-northeast-2)
+    # - npm registry, PyPI (Claude Code 플러그인 설치)
+    # - AWS S3 (파일 업로드/다운로드)
+    # to: [] → IP 제한 없이 포트 443만 허용 (Bedrock IP가 동적으로 변함)
+    - to: []
+      ports:
+        - port: 443
+          protocol: TCP
+
+    # Auth Gateway 호출 허용
+    # 사용자 Pod → Auth Gateway: 토큰 검증, 파일 업로드 등의 내부 API 호출
+    # podSelector: 같은 claude-sessions 네임스페이스 내 auth-gateway Pod
+    - to:
+        - podSelector:
+            matchLabels:
+              app: auth-gateway
+      ports:
+        - port: 8000
+          protocol: TCP
+
+---
+# =============================================================================
+# 3. 기본 차단 정책 — platform 네임스페이스
+# =============================================================================
+# Auth Gateway가 배포된 platform 네임스페이스도 동일하게 기본 차단
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-platform
+  namespace: platform
+spec:
+  podSelector: {}    # platform 네임스페이스의 모든 Pod에 적용
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# =============================================================================
+# 4. Auth Gateway 트래픽 허용 정책
+# =============================================================================
+# 대상: app=auth-gateway 라벨을 가진 Pod (platform 네임스페이스)
+#
+# [Ingress 허용]
+# - ingress-nginx → 포트 8000: 외부 사용자 로그인/API 요청
+# - claude-terminal Pod → 포트 8000: 사용자 Pod에서 오는 내부 API 호출
+#   (namespaceSelector + podSelector 조합: 두 조건 AND로 적용)
+#
+# [Egress 허용]
+# - DNS (53): 도메인 해석
+# - HTTPS (443): AWS STS (임시 자격증명), KMS (암호화), S3, SSO 서버
+# - PostgreSQL RDS (5432): 플랫폼 DB (세션, 사용량 기록)
+# - Redis (6379): 세션 캐시
+# - OnlyOffice (80): 문서 편집 서비스 (향후 확장)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-auth-gateway-traffic
+  namespace: platform
+spec:
+  podSelector:
+    matchLabels:
+      app: auth-gateway    # Auth Gateway Pod에만 적용
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # ingress-nginx 컨트롤러에서 오는 외부 요청 허용
+    # 사용자 로그인, API 호출이 이 경로로 들어온다
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - port: 8000
+          protocol: TCP
+
+    # claude-sessions 네임스페이스의 사용자 Pod에서 오는 요청 허용
+    # namespaceSelector + podSelector를 함께 쓰면 AND 조건:
+    # "claude-sessions 네임스페이스에 있는 claude-terminal Pod"만 허용
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: claude-sessions
+          podSelector:
+            matchLabels:
+              app: claude-terminal
+      ports:
+        - port: 8000
+          protocol: TCP
+
+  egress:
+    # DNS 해석 허용
+    - to: []
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+    # HTTPS 허용
+    # - AWS STS: AssumeRole로 사용자별 임시 IAM 자격증명 발급
+    # - AWS KMS: Secrets Manager 복호화
+    # - SSO 서버 (sso.skons.net): 사용자 인증
+    # - AWS Bedrock: 사용량 조회
+    - to: []
+      ports:
+        - port: 443
+          protocol: TCP
+
+    # PostgreSQL RDS 허용 (플랫폼 DB)
+    # 세션 정보, 사용량, 사용자 프로필 저장
+    - to: []
+      ports:
+        - port: 5432
+          protocol: TCP
+
+    # Redis 허용 (세션 캐시)
+    # JWT 토큰 블랙리스트, 세션 임시 데이터 저장
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - port: 6379
+          protocol: TCP
+
+    # OnlyOffice 허용 (문서 편집, 향후 기능)
+    # Auth Gateway가 OnlyOffice API를 통해 문서 변환/편집 요청
+    - to:
+        - podSelector:
+            matchLabels:
+              app: onlyoffice
+      ports:
+        - port: 80
+          protocol: TCP
+
+---
+# =============================================================================
+# 5. OnlyOffice 트래픽 허용 정책
+# =============================================================================
+# 대상: app=onlyoffice 라벨을 가진 Pod
+#
+# 보안 원칙: Auth Gateway만 OnlyOffice에 접근 가능
+# 사용자 Pod가 OnlyOffice에 직접 접근하는 것을 차단
+# (문서 내용이 사용자 간 노출되는 것을 방지)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-onlyoffice-traffic
+  namespace: platform
+spec:
+  podSelector:
+    matchLabels:
+      app: onlyoffice
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # Auth Gateway에서만 접근 허용 (같은 platform 네임스페이스)
+    - from:
+        - podSelector:
+            matchLabels:
+              app: auth-gateway
+      ports:
+        - port: 80
+          protocol: TCP
+
+  egress:
+    # OnlyOffice도 DNS는 필요 (외부 폰트, 플러그인 등)
+    - to: []
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP

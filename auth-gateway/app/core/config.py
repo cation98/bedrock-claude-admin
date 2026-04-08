@@ -60,6 +60,12 @@ class Settings(BaseSettings):
     # ----- 2FA -----
     two_factor_enabled: bool = True  # SMS 2FA 활성화 (False면 SSO만으로 로그인)
 
+    # ----- Test User Bypass (개발/테스트 환경 전용) -----
+    # SECURITY: 프로덕션에서는 반드시 False(기본값) 유지.
+    # True로 설정하면 TEST로 시작하는 사번에 대해 SSO+2FA 우회를 허용합니다.
+    # 로컬 개발 또는 CI 환경에서만 .env에 ALLOW_TEST_USERS=true 설정.
+    allow_test_users: bool = False
+
     # ----- RDS (Pod에 주입할 DB URL) -----
     workshop_database_url: str = ""  # safety-prod ReadOnly Replica
     tango_database_url: str = ""  # TANGO 알람 DB (aiagentdb) ReadOnly
@@ -68,6 +74,11 @@ class Settings(BaseSettings):
     # ----- 유휴 Pod 자동 정리 -----
     idle_timeout_minutes: int = 60          # 이 시간 이상 유휴 상태면 Pod 해제
     idle_check_interval_seconds: int = 600  # 유휴 체크 주기 (10분)
+
+    # ----- S3 Vault -----
+    s3_vault_bucket: str = ""        # 민감 파일 격리 S3 버킷 이름
+    s3_vault_kms_key_id: str = ""    # KMS 키 ID (ARN 또는 별칭)
+    s3_vault_region: str = "ap-northeast-2"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

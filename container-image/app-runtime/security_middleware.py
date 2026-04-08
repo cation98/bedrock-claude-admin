@@ -89,8 +89,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        # 검색 엔진 크롤러 차단 (사내 웹앱이 외부에 인덱싱되지 않도록)
+        response.headers["X-Robots-Tag"] = "noindex, nofollow"
         # Server 헤더 제거 (정보 노출 방지)
-        response.headers.pop("Server", None)
+        if "server" in response.headers:
+            del response.headers["server"]
         return response
 
 
@@ -170,7 +173,19 @@ def add_security(app, login_rate_limit: bool = True, max_login_attempts: int = 5
         app = FastAPI()
         add_security(app)
     """
+    from starlette.middleware.cors import CORSMiddleware
+
     app.add_middleware(SecurityHeadersMiddleware)
+
+    # CORS 설정: 사내 플랫폼이므로 모든 오리진 허용하되
+    # allow_credentials=False로 크로스-오리진 쿠키/인증 헤더 차단
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["GET", "POST", "PUT", "DELETE"],
+        allow_headers=["*"],
+        allow_credentials=False,  # 크로스-오리진 쿠키 차단
+    )
 
     if login_rate_limit:
         app.add_middleware(

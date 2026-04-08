@@ -36,6 +36,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tini \
     && rm -rf /var/lib/apt/lists/*
 
+# SQLCipher support
+# SQLCipher: SQLite의 투명 암호화 확장판. 민감 데이터 격리 저장소에 사용.
+# libsqlcipher-dev: C 헤더 + 라이브러리 (Python sqlcipher3 패키지 빌드용)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libsqlcipher-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 # -----------------------------------------------------------------------------
 # ttyd 설치 (웹 터미널 서버)
 # GitHub Release에서 pre-built binary 다운로드
@@ -110,6 +117,11 @@ COPY --chown=node:node config/settings.json /home/node/.claude/settings.json
 COPY --chown=node:node config/claude-md-sections/ /home/node/.claude/claude-md-sections/
 # Minimal fallback (overwritten by entrypoint)
 COPY --chown=node:node config/CLAUDE.md.minimal /home/node/.claude/CLAUDE.md
+
+# Security configuration
+COPY --chown=node:node config/CLAUDE.md /home/node/.claude/CLAUDE.md
+COPY --chown=node:node config/robots.txt /home/node/workspace/robots.txt
+COPY app-runtime/security_middleware.py /home/node/workspace/security_middleware.py
 
 # Security hook: PreToolUse에서 위험 명령 차단
 RUN mkdir -p /home/node/.claude/hooks

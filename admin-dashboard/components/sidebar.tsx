@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   { href: "/apps", label: "앱 관리", icon: "📱" },
   { href: "/audit", label: "감사 로그", icon: "📋" },
   { href: "/security", label: "보안 정책", icon: "🛡" },
+  { href: "/data-governance", label: "거버넌스", icon: "📁" },
   { href: "/quota", label: "토큰 정책", icon: "💰" },
   { href: "/usage", label: "토큰 사용량", icon: "📈" },
   { href: "/infra", label: "인프라", icon: "⚙" },

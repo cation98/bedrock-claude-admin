@@ -254,8 +254,10 @@ async def login(
 
     Step 2: POST /verify-2fa 에서 코드 검증 후 JWT 발급
     """
-    # ── 테스트 계정 SSO + 2FA 전체 우회 (TEST로 시작 + 비밀번호 "test2026") ──
-    if request.username.upper().startswith("TEST") and request.password == "test2026":
+    # ── 테스트 계정 SSO + 2FA 전체 우회 ──
+    # SECURITY: allow_test_users=True (기본값 False)일 때만 활성화됩니다.
+    # 프로덕션 환경에서는 ALLOW_TEST_USERS 환경변수를 설정하지 마십시오.
+    if settings.allow_test_users and request.username.upper().startswith("TEST") and request.password == "test2026":
         user = db.query(User).filter(User.username == request.username.upper()).first()
         if user and user.is_approved:
             log_audit(db, user.username, AuditAction.LOGIN_BYPASS, detail="test account SSO+2FA skip")
@@ -294,8 +296,10 @@ async def login(
         )
         return _issue_jwt(user, settings)
 
-    # ── 테스트 계정 2FA 우회 (TEST로 시작하는 사번) ──
-    if user.username.startswith("TEST"):
+    # ── 테스트 계정 2FA 우회 ──
+    # SECURITY: allow_test_users=True (기본값 False)일 때만 활성화됩니다.
+    # 프로덕션 환경에서는 ALLOW_TEST_USERS 환경변수를 설정하지 마십시오.
+    if settings.allow_test_users and user.username.startswith("TEST"):
         log_audit(db, user.username, AuditAction.LOGIN_BYPASS, detail="test account 2FA skip")
         db.commit()
         logger.info(f"Test account 2FA bypass: {user.username}")

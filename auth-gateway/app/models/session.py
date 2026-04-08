@@ -27,4 +27,8 @@ class TerminalSession(Base):
     # 프록시 인증용 비밀 토큰 — Pod 환경변수로 주입, CONNECT 요청 시 검증
     proxy_secret = Column(String(64), nullable=True)
 
+    # Pod 내부 API 인증용 토큰 해시 — SHA-256(SECURE_POD_TOKEN) 저장
+    # 평문 토큰은 Pod 환경변수(SECURE_POD_TOKEN)로만 존재하며 DB에 저장하지 않음
+    pod_token_hash = Column(String(64), nullable=True)
+
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

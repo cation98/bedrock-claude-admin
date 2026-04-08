@@ -9,22 +9,28 @@ Endpoints:
   GET    /api/v1/files/datasets/{name}/share  -- 공유 대상 목록
   GET    /api/v1/files/shared-mounts/{username} -- Pod 생성 시 마운트 목록
   GET    /api/v1/files/teams                  -- 조직 목록 (공유 대상 선택용)
+  POST   /api/v1/files/datasets/{name}/verify-access      -- 공유 파일 SMS 인증 시작
+  POST   /api/v1/files/datasets/{name}/verify-access-code -- SMS 코드 검증 → 임시 토큰 발급
 
 보안 고려사항:
   - 데이터셋 소유자만 공유 설정/해제 가능 (소유권 검증 필수).
   - ACL은 revoked_at으로 소프트 삭제하여 감사 추적 가능.
   - share_type은 "user" 또는 "team"만 허용.
+  - 공유 받은 사용자가 민감 파일 접근 시 SMS 인증 필요 (30분 임시 토큰 발급).
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.core.config import Settings, get_settings
 from app.core.database import get_db
-from app.core.security import get_current_user, get_current_user_or_pod
+from app.core.security import create_access_token, get_current_user, get_current_user_or_pod
+from app.models.file_governance import GovernedFile
 from app.models.file_share import FileShareACL, SharedDataset
 from app.models.user import User
 from app.schemas.file_share import (
@@ -439,6 +445,129 @@ async def share_dataset(
 
     logger.info(f"Share granted: {username}/{name} → {request.share_type}:{share_target}")
     return ShareACLResponse.model_validate(acl)
+
+
+@router.post("/datasets/{name}/verify-access")
+async def verify_share_access(
+    name: str,
+    current_user: dict = Depends(get_current_user_or_pod),
+    db: Session = Depends(get_db),
+):
+    """공유 민감 파일 접근을 위한 SMS 인증 시작.
+
+    플로우:
+    1. 사용자가 공유 받은 파일 접근 요청
+    2. 파일이 sensitive로 분류되어 있으면 SMS 인증 필요
+    3. 인증 코드 발송 → code_id 반환
+    4. 클라이언트가 /verify-access-code로 코드 검증
+    5. 검증 성공 → 임시 접근 토큰 발급 (30분 유효)
+    """
+    username = current_user["sub"]
+
+    # 1. 데이터셋 조회
+    dataset = db.query(SharedDataset).filter(SharedDataset.dataset_name == name).first()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="데이터셋을 찾을 수 없습니다")
+
+    # 소유자는 SMS 인증 불필요
+    if dataset.owner_username == username:
+        return {"access_granted": True, "message": "소유자는 인증이 필요 없습니다"}
+
+    # 2. ACL 확인 (공유 받은 사용자인지)
+    user = db.query(User).filter(User.username == username).first()
+    team_name = user.team_name if user else None
+
+    acl_filter = (
+        FileShareACL.dataset_id == dataset.id,
+        FileShareACL.revoked_at.is_(None),
+    )
+
+    if team_name:
+        has_access = db.query(FileShareACL).filter(
+            FileShareACL.dataset_id == dataset.id,
+            FileShareACL.revoked_at.is_(None),
+            (
+                ((FileShareACL.share_type == "user") & (FileShareACL.share_target == username))
+                | ((FileShareACL.share_type == "team") & (FileShareACL.share_target == team_name))
+            ),
+        ).first()
+    else:
+        has_access = db.query(FileShareACL).filter(
+            FileShareACL.dataset_id == dataset.id,
+            FileShareACL.revoked_at.is_(None),
+            FileShareACL.share_type == "user",
+            FileShareACL.share_target == username,
+        ).first()
+
+    if not has_access:
+        raise HTTPException(status_code=403, detail="이 데이터셋에 대한 접근 권한이 없습니다")
+
+    # 3. 민감 파일인지 확인 (GovernedFile 조회)
+    governed = db.query(GovernedFile).filter(
+        GovernedFile.username == dataset.owner_username,
+        GovernedFile.filename == dataset.dataset_name,
+        GovernedFile.classification == "sensitive",
+    ).first()
+
+    if not governed:
+        # 민감하지 않으면 바로 접근 허용
+        return {"access_granted": True, "message": "일반 파일은 인증이 필요 없습니다"}
+
+    # 4. SMS 인증 코드 발송
+    if not user or not user.phone_number:
+        raise HTTPException(status_code=400, detail="전화번호가 등록되어 있지 않습니다")
+
+    from app.services.two_factor_service import check_lockout, generate_code
+
+    check_lockout(username, db)
+    code_id, code = generate_code(username, user.phone_number, db)
+
+    logger.info(
+        f"Share access SMS sent: user={username}, dataset={name}, code_id={code_id}"
+    )
+
+    return {
+        "access_granted": False,
+        "requires_sms": True,
+        "code_id": code_id,
+        "message": f"{user.phone_number[-4:]}로 인증코드를 발송했습니다",
+    }
+
+
+@router.post("/datasets/{name}/verify-access-code")
+async def verify_access_code(
+    name: str,
+    request_body: dict[str, Any],  # {"code_id": str, "code": str}
+    current_user: dict = Depends(get_current_user_or_pod),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    """SMS 인증코드 검증 → 임시 접근 토큰 발급 (30분 유효)."""
+    from app.services.two_factor_service import verify_code
+
+    code_id = request_body.get("code_id")
+    code = request_body.get("code")
+
+    if not code_id or not code:
+        raise HTTPException(status_code=400, detail="code_id와 code가 필요합니다")
+
+    verify_code(code_id, code, db)  # raises on failure
+
+    username = current_user["sub"]
+    access_token = create_access_token(
+        data={"sub": username, "dataset": name, "type": "share_access"},
+        settings=settings,
+        expires_delta=timedelta(minutes=30),
+    )
+
+    logger.info(f"Share access token issued: user={username}, dataset={name}")
+
+    return {
+        "access_granted": True,
+        "access_token": access_token,
+        "expires_in": 1800,
+        "message": "인증 완료. 30분간 파일에 접근할 수 있습니다.",
+    }
 
 
 @router.delete("/datasets/{name}/share/{acl_id}", status_code=200)

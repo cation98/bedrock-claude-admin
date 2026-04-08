@@ -330,6 +330,42 @@ async def index():
 # 접속: https://claude.skons.net/app/{HOSTNAME}/
 ```
 
+## Web App Security (MANDATORY)
+
+When generating any web application (FastAPI, Flask, Express, Django, or any HTTP server):
+
+1. **ALWAYS import and apply the security middleware:**
+   ```python
+   # For FastAPI/Starlette:
+   from security_middleware import add_security
+   app = FastAPI()
+   add_security(app)
+   ```
+
+2. **ALWAYS create a robots.txt** in the project root:
+   ```
+   User-agent: *
+   Disallow: /
+   ```
+
+3. **NEVER expose sensitive data** in API responses without authentication.
+
+4. **ALWAYS use parameterized queries** for database operations. Never use string interpolation for SQL.
+
+5. **ALWAYS validate user input** before processing.
+
+The security_middleware.py file is pre-installed at /home/node/workspace/security_middleware.py. It provides:
+- Rate limiting (5 req/5min on login endpoints)
+- Security headers (CSP, X-Frame-Options, X-Content-Type-Options)
+- File upload validation (blocked extensions, size limits)
+
+## File Security
+
+- Files classified as "sensitive" (🔴) should not be exposed via web apps.
+- Use `secure-put` / `secure-get` CLI tools for sensitive file management.
+- All uploaded files are automatically scanned and classified.
+- Files have retention periods (TTL) and will be auto-deleted when expired.
+
 ## 텔레그램 봇 연동
 
 사내 텔레그램 봇(@SKO_Claude_Bot)이 운영 중입니다.

@@ -1,14 +1,33 @@
 # Auth Gateway가 claude-sessions 네임스페이스의 Pod을 관리할 수 있는 권한
+#
+# ClusterRole vs Role:
+# - Role: 특정 네임스페이스 내에서만 유효
+# - ClusterRole: 클러스터 전체 또는 여러 네임스페이스에 걸쳐 유효
+# Auth Gateway는 platform 네임스페이스에서 실행되지만
+# claude-sessions 네임스페이스의 리소스를 관리해야 하므로 ClusterRole 사용
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: auth-gateway-pod-manager
 rules:
+  # Pod과 Service 관리: 사용자 세션 생성/삭제/조회
   - apiGroups: [""]
     resources: ["pods", "services"]
     verbs: ["get", "list", "create", "delete"]
+  # Ingress 관리: 사용자 Pod에 대한 URL 라우팅 규칙 생성
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses"]
+    verbs: ["get", "list", "create", "delete"]
+  # Secrets 관리: 사용자별 AWS 임시 자격증명(STS 토큰)을 K8s Secret으로 저장
+  # k8s_service.py가 Pod 생성 시 Secret을 만들고 Pod에 envFrom으로 주입
+  # update 필요: STS 토큰 갱신 시 기존 Secret 업데이트
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create", "update", "delete"]
+  # PersistentVolume/PersistentVolumeClaim 관리: EFS Access Point 연동
+  # 사용자별 EFS 마운트를 위해 PV/PVC를 동적으로 생성/삭제
+  - apiGroups: [""]
+    resources: ["persistentvolumes", "persistentvolumeclaims"]
     verbs: ["get", "list", "create", "delete"]
 
 ---
