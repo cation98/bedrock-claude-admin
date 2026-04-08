@@ -8,7 +8,6 @@ import {
   getNodeGroups,
   scaleNodeGroup,
   assignPod,
-  movePod,
   terminatePod,
   drainNode,
   getInfraTemplates,
@@ -113,26 +112,6 @@ function NodeCard({ node, allNodes, onAction }: { node: NodeInfo; allNodes: Node
                 <StatusBadge status={pod.status} />
                 {pod.username !== "SYSTEM" && (
                   <div className="flex gap-1">
-                    <select
-                      className="rounded border border-gray-200 px-1 py-0.5 text-xs"
-                      defaultValue=""
-                      onChange={async (e) => {
-                        const target = e.target.value;
-                        if (!target) return;
-                        if (confirm(`${pod.user_name ?? pod.username} Pod을 이동하시겠습니까?\n대화는 자동 백업됩니다.`)) {
-                          try {
-                            await movePod(pod.username, target);
-                            onAction();
-                          } catch (err) { alert(err instanceof Error ? err.message : "이동 실패"); }
-                        }
-                        e.target.value = "";
-                      }}
-                    >
-                      <option value="">이동</option>
-                      {allNodes.filter((n) => n.node_name !== node.node_name && n.node_role !== "system").map((n) => (
-                        <option key={n.node_name} value={n.node_name}>{shortNode(n.node_name)} ({n.instance_type})</option>
-                      ))}
-                    </select>
                     <button
                       onClick={async () => {
                         if (confirm(`${pod.user_name ?? pod.username} Pod을 종료하시겠습니까?`)) {
