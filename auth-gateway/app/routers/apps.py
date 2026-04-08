@@ -455,6 +455,117 @@ async def list_gallery_apps(
     return {"apps": results}
 
 
+# ==================== 공유 관리 (통합 조회/일괄 회수) ====================
+
+
+@router.get("/my-shares")
+async def list_my_shares(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """내가 공유한 모든 항목 (앱 ACL + 데이터셋 공유) 통합 조회."""
+    username = current_user["sub"]
+
+    # 1. 내 앱의 활성 ACL
+    my_apps = (
+        db.query(DeployedApp)
+        .filter(
+            DeployedApp.owner_username == username,
+            DeployedApp.status != "deleted",
+        )
+        .all()
+    )
+
+    shares = []
+    for app in my_apps:
+        acls = (
+            db.query(AppACL)
+            .filter(AppACL.app_id == app.id, AppACL.revoked_at.is_(None))
+            .all()
+        )
+        for acl in acls:
+            # Skip self-grants
+            if acl.grant_type == "user" and acl.grant_value.upper() == username.upper():
+                continue
+            shares.append({
+                "id": acl.id,
+                "type": "app",
+                "resource_name": app.app_name,
+                "resource_id": app.id,
+                "grant_type": acl.grant_type,
+                "grant_value": acl.grant_value,
+                "granted_at": acl.granted_at.isoformat() if acl.granted_at else None,
+            })
+
+    # 2. 내 데이터셋의 활성 공유
+    from app.models.file_share import SharedDataset, FileShareACL
+    my_datasets = (
+        db.query(SharedDataset)
+        .filter(SharedDataset.owner_username == username)
+        .all()
+    )
+    for ds in my_datasets:
+        ds_acls = (
+            db.query(FileShareACL)
+            .filter(FileShareACL.dataset_id == ds.id, FileShareACL.revoked_at.is_(None))
+            .all()
+        )
+        for acl in ds_acls:
+            shares.append({
+                "id": acl.id,
+                "type": "dataset",
+                "resource_name": ds.dataset_name,
+                "resource_id": ds.id,
+                "grant_type": getattr(acl, 'share_type', 'user'),
+                "grant_value": getattr(acl, 'share_target', ''),
+                "granted_at": acl.granted_at.isoformat() if hasattr(acl, 'granted_at') and acl.granted_at else None,
+            })
+
+    return {"shares": shares, "total": len(shares)}
+
+
+@router.post("/my-shares/bulk-revoke")
+async def bulk_revoke_shares(
+    request: dict,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """선택한 공유 항목 일괄 회수."""
+    username = current_user["sub"]
+    items = request.get("items", [])
+
+    revoked_count = 0
+    from app.models.file_share import FileShareACL
+
+    for item in items:
+        item_type = item.get("type")
+        item_id = item.get("id")
+
+        if item_type == "app":
+            acl = db.query(AppACL).filter(AppACL.id == item_id, AppACL.revoked_at.is_(None)).first()
+            if acl:
+                # Verify ownership
+                app = db.query(DeployedApp).filter(DeployedApp.id == acl.app_id, DeployedApp.owner_username == username).first()
+                if app:
+                    acl.revoked_at = datetime.now(timezone.utc)
+                    revoked_count += 1
+
+        elif item_type == "dataset":
+            ds_acl = db.query(FileShareACL).filter(
+                FileShareACL.id == item_id,
+                FileShareACL.revoked_at.is_(None)
+            ).first()
+            if ds_acl:
+                from app.models.file_share import SharedDataset
+                ds = db.query(SharedDataset).filter(SharedDataset.id == ds_acl.dataset_id, SharedDataset.owner_username == username).first()
+                if ds:
+                    ds_acl.revoked_at = datetime.now(timezone.utc)
+                    revoked_count += 1
+
+    db.commit()
+    return {"revoked": revoked_count}
+
+
 # ==================== 배포/삭제/롤백 ====================
 
 
@@ -769,117 +880,6 @@ async def revoke_app_access(
 
     logger.info(f"ACL revoked: {acl.grant_type}={acl.grant_value} from {username}/{app_name}")
     return {"revoked": True, "acl_id": acl_id, "grant_type": acl.grant_type, "grant_value": acl.grant_value, "app_name": app_name}
-
-
-# ==================== 공유 관리 (통합 조회/일괄 회수) ====================
-
-
-@router.get("/my-shares")
-async def list_my_shares(
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """내가 공유한 모든 항목 (앱 ACL + 데이터셋 공유) 통합 조회."""
-    username = current_user["sub"]
-
-    # 1. 내 앱의 활성 ACL
-    my_apps = (
-        db.query(DeployedApp)
-        .filter(
-            DeployedApp.owner_username == username,
-            DeployedApp.status != "deleted",
-        )
-        .all()
-    )
-
-    shares = []
-    for app in my_apps:
-        acls = (
-            db.query(AppACL)
-            .filter(AppACL.app_id == app.id, AppACL.revoked_at.is_(None))
-            .all()
-        )
-        for acl in acls:
-            # Skip self-grants
-            if acl.grant_type == "user" and acl.grant_value.upper() == username.upper():
-                continue
-            shares.append({
-                "id": acl.id,
-                "type": "app",
-                "resource_name": app.app_name,
-                "resource_id": app.id,
-                "grant_type": acl.grant_type,
-                "grant_value": acl.grant_value,
-                "granted_at": acl.granted_at.isoformat() if acl.granted_at else None,
-            })
-
-    # 2. 내 데이터셋의 활성 공유
-    from app.models.file_share import SharedDataset, FileShareACL
-    my_datasets = (
-        db.query(SharedDataset)
-        .filter(SharedDataset.owner_username == username)
-        .all()
-    )
-    for ds in my_datasets:
-        ds_acls = (
-            db.query(FileShareACL)
-            .filter(FileShareACL.dataset_id == ds.id, FileShareACL.revoked_at.is_(None))
-            .all()
-        )
-        for acl in ds_acls:
-            shares.append({
-                "id": acl.id,
-                "type": "dataset",
-                "resource_name": ds.dataset_name,
-                "resource_id": ds.id,
-                "grant_type": getattr(acl, 'share_type', 'user'),
-                "grant_value": getattr(acl, 'share_target', ''),
-                "granted_at": acl.granted_at.isoformat() if hasattr(acl, 'granted_at') and acl.granted_at else None,
-            })
-
-    return {"shares": shares, "total": len(shares)}
-
-
-@router.post("/my-shares/bulk-revoke")
-async def bulk_revoke_shares(
-    request: dict,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """선택한 공유 항목 일괄 회수."""
-    username = current_user["sub"]
-    items = request.get("items", [])
-
-    revoked_count = 0
-    from app.models.file_share import FileShareACL
-
-    for item in items:
-        item_type = item.get("type")
-        item_id = item.get("id")
-
-        if item_type == "app":
-            acl = db.query(AppACL).filter(AppACL.id == item_id, AppACL.revoked_at.is_(None)).first()
-            if acl:
-                # Verify ownership
-                app = db.query(DeployedApp).filter(DeployedApp.id == acl.app_id, DeployedApp.owner_username == username).first()
-                if app:
-                    acl.revoked_at = datetime.now(timezone.utc)
-                    revoked_count += 1
-
-        elif item_type == "dataset":
-            ds_acl = db.query(FileShareACL).filter(
-                FileShareACL.id == item_id,
-                FileShareACL.revoked_at.is_(None)
-            ).first()
-            if ds_acl:
-                from app.models.file_share import SharedDataset
-                ds = db.query(SharedDataset).filter(SharedDataset.id == ds_acl.dataset_id, SharedDataset.owner_username == username).first()
-                if ds:
-                    ds_acl.revoked_at = datetime.now(timezone.utc)
-                    revoked_count += 1
-
-    db.commit()
-    return {"revoked": revoked_count}
 
 
 # ==================== 사용자 검색 (ACL 관리 UI용) ====================

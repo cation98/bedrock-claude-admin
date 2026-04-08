@@ -108,78 +108,6 @@ async def list_pending_skills(
     return SkillListResponse(total=len(skills), skills=skills)
 
 
-@router.patch("/{skill_id}/approve", response_model=SkillResponse)
-async def approve_skill(
-    skill_id: int,
-    admin: dict = Depends(_require_admin),
-    db: Session = Depends(get_db),
-):
-    """스킬 승인 (관리자).
-
-    승인된 스킬은 /approved-contents 엔드포인트를 통해
-    새 Pod 생성 시 자동으로 배포됨.
-    """
-    skill = db.query(SharedSkill).filter(SharedSkill.id == skill_id).first()
-    if not skill:
-        raise HTTPException(status_code=404, detail="Skill not found")
-
-    skill.is_approved = True
-    skill.approved_by = admin["sub"]
-    skill.approved_at = datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(skill)
-    logger.info(f"Skill approved: {skill.title} by {admin['sub']}")
-    return skill
-
-
-@router.delete("/{skill_id}")
-async def delete_skill(
-    skill_id: int,
-    _admin: dict = Depends(_require_admin),
-    db: Session = Depends(get_db),
-):
-    """스킬 삭제/거절 (관리자).
-
-    승인 전 거절 또는 부적절한 스킬 삭제에 사용.
-    """
-    skill = db.query(SharedSkill).filter(SharedSkill.id == skill_id).first()
-    if not skill:
-        raise HTTPException(status_code=404, detail="Skill not found")
-
-    title = skill.title
-    db.delete(skill)
-    db.commit()
-    logger.info(f"Skill deleted: {title}")
-    return {"deleted": True, "title": title}
-
-
-# ==================== Pod Init API (인증 불필요) ====================
-
-
-@router.get("/approved-contents")
-async def get_approved_skill_contents(db: Session = Depends(get_db)):
-    """승인된 스킬 내용 반환 (Pod init 스크립트에서 호출).
-
-    인증 불필요 — Pod 시작 시 init 컨테이너가 이 엔드포인트를 호출하여
-    승인된 스킬을 사용자 환경에 자동 배포함.
-
-    Returns:
-        list[dict]: 각 스킬의 name(파일명용)과 content.
-    """
-    skills = (
-        db.query(SharedSkill)
-        .filter(SharedSkill.is_approved == True)  # noqa: E712
-        .all()
-    )
-    return [
-        {"name": s.title.lower().replace(" ", "-"), "content": s.content}
-        for s in skills
-    ]
-
-
-# ==================== 스킬 스토어 API ====================
-
-
 @router.get("/store")
 async def list_store_skills(
     q: str = "",
@@ -349,6 +277,78 @@ async def publish_skill(
     db.commit()
     db.refresh(skill)
     return {"id": skill.id, "published": True}
+
+
+@router.patch("/{skill_id}/approve", response_model=SkillResponse)
+async def approve_skill(
+    skill_id: int,
+    admin: dict = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """스킬 승인 (관리자).
+
+    승인된 스킬은 /approved-contents 엔드포인트를 통해
+    새 Pod 생성 시 자동으로 배포됨.
+    """
+    skill = db.query(SharedSkill).filter(SharedSkill.id == skill_id).first()
+    if not skill:
+        raise HTTPException(status_code=404, detail="Skill not found")
+
+    skill.is_approved = True
+    skill.approved_by = admin["sub"]
+    skill.approved_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(skill)
+    logger.info(f"Skill approved: {skill.title} by {admin['sub']}")
+    return skill
+
+
+@router.delete("/{skill_id}")
+async def delete_skill(
+    skill_id: int,
+    _admin: dict = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """스킬 삭제/거절 (관리자).
+
+    승인 전 거절 또는 부적절한 스킬 삭제에 사용.
+    """
+    skill = db.query(SharedSkill).filter(SharedSkill.id == skill_id).first()
+    if not skill:
+        raise HTTPException(status_code=404, detail="Skill not found")
+
+    title = skill.title
+    db.delete(skill)
+    db.commit()
+    logger.info(f"Skill deleted: {title}")
+    return {"deleted": True, "title": title}
+
+
+# ==================== Pod Init API (인증 불필요) ====================
+
+
+@router.get("/approved-contents")
+async def get_approved_skill_contents(db: Session = Depends(get_db)):
+    """승인된 스킬 내용 반환 (Pod init 스크립트에서 호출).
+
+    인증 불필요 — Pod 시작 시 init 컨테이너가 이 엔드포인트를 호출하여
+    승인된 스킬을 사용자 환경에 자동 배포함.
+
+    Returns:
+        list[dict]: 각 스킬의 name(파일명용)과 content.
+    """
+    skills = (
+        db.query(SharedSkill)
+        .filter(SharedSkill.is_approved == True)  # noqa: E712
+        .all()
+    )
+    return [
+        {"name": s.title.lower().replace(" ", "-"), "content": s.content}
+        for s in skills
+    ]
+
+
+# ==================== 스킬 스토어 API ====================
 
 
 @router.post("/{skill_id}/install")
