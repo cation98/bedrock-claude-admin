@@ -14,6 +14,10 @@ rules:
   - apiGroups: [""]
     resources: ["pods", "services"]
     verbs: ["get", "list", "create", "delete"]
+  # Pod exec: 유휴 체커에서 Pod 내부 활동 상태 확인
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
   # Ingress 관리: 사용자 Pod에 대한 URL 라우팅 규칙 생성
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses"]
@@ -29,6 +33,10 @@ rules:
   - apiGroups: [""]
     resources: ["persistentvolumes", "persistentvolumeclaims"]
     verbs: ["get", "list", "create", "delete"]
+  # Node 조회: infrastructure 대시보드에서 노드 현황 표시
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -37,7 +45,7 @@ metadata:
   name: auth-gateway-pod-manager-binding
 subjects:
   - kind: ServiceAccount
-    name: default
+    name: platform-admin-sa
     namespace: platform
 roleRef:
   kind: ClusterRole
