@@ -517,10 +517,11 @@ class AppDeployService:
         # 5) ACL 레코드 저장 — 배포자 본인도 자동 포함
         acl_set = set(acl_usernames)
         acl_set.add(username)  # 배포자 본인은 항상 접근 가능
-        for granted_username in acl_set:
+        for acl_username in acl_set:
             acl = AppACL(
                 app_id=deployed_app.id,
-                granted_username=granted_username,
+                grant_type="user",
+                grant_value=acl_username,
                 granted_by=username,
             )
             db.add(acl)
@@ -607,7 +608,7 @@ class AppDeployService:
         acl_usernames = []
         if existing:
             acl_usernames = [
-                acl.granted_username
+                acl.grant_value
                 for acl in db.query(AppACL)
                 .filter(AppACL.app_id == existing.id, AppACL.revoked_at.is_(None))
                 .all()
@@ -717,7 +718,7 @@ class AppDeployService:
         acl_entries = (
             db.query(AppACL)
             .filter(
-                AppACL.granted_username == username,
+                (AppACL.grant_type == "user") & (AppACL.grant_value == username),
                 AppACL.revoked_at.is_(None),
             )
             .all()
@@ -778,7 +779,8 @@ class AppDeployService:
         return [
             {
                 "id": acl.id,
-                "granted_username": acl.granted_username,
+                "grant_type": acl.grant_type,
+                "grant_value": acl.grant_value,
                 "granted_by": acl.granted_by,
                 "granted_at": acl.granted_at.isoformat() if acl.granted_at else None,
             }
@@ -789,8 +791,9 @@ class AppDeployService:
         self,
         username: str,
         app_name: str,
-        granted_username: str,
+        grant_value: str,
         db: DbSession,
+        grant_type: str = "user",
     ) -> AppACL:
         """앱에 사용자 접근 권한 추가."""
         deployed = (
@@ -810,23 +813,24 @@ class AppDeployService:
             db.query(AppACL)
             .filter(
                 AppACL.app_id == deployed.id,
-                AppACL.granted_username == granted_username,
+                (AppACL.grant_type == grant_type) & (AppACL.grant_value == grant_value),
                 AppACL.revoked_at.is_(None),
             )
             .first()
         )
         if existing:
-            logger.info(f"ACL already exists: {granted_username} → {app_name}")
+            logger.info(f"ACL already exists: {grant_type}:{grant_value} → {app_name}")
             return existing
 
         acl = AppACL(
             app_id=deployed.id,
-            granted_username=granted_username,
+            grant_type=grant_type,
+            grant_value=grant_value,
             granted_by=username,
         )
         db.add(acl)
         db.commit()
-        logger.info(f"ACL 추가: {granted_username} → {app_name}")
+        logger.info(f"ACL 추가: {grant_type}:{grant_value} → {app_name}")
         return acl
 
     def revoke_acl(
@@ -857,7 +861,7 @@ class AppDeployService:
             db.query(AppACL)
             .filter(
                 AppACL.app_id == deployed.id,
-                AppACL.granted_username == target_username,
+                (AppACL.grant_type == "user") & (AppACL.grant_value == target_username),
                 AppACL.revoked_at.is_(None),
             )
             .first()
@@ -900,7 +904,7 @@ class AppDeployService:
             db.query(AppACL)
             .filter(
                 AppACL.app_id == deployed.id,
-                AppACL.granted_username == username,
+                (AppACL.grant_type == "user") & (AppACL.grant_value == username),
                 AppACL.revoked_at.is_(None),
             )
             .first()

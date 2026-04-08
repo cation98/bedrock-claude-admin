@@ -49,13 +49,21 @@ class AppView(Base):
 
 
 class AppACL(Base):
-    """앱별 접근 제어 목록 (revoked_at이 NULL이면 활성 상태)."""
+    """앱별 접근 제어 목록 (revoked_at이 NULL이면 활성 상태).
+
+    grant_type: user | team | region | job | company
+    grant_value: 사번(N1102359) | 팀명(안전기술팀) | 지역(서울본사) | 직책(팀장) | *
+    """
 
     __tablename__ = "app_acl"
+    __table_args__ = (
+        Index("ix_app_acl_grant", "app_id", "grant_type", "grant_value", "revoked_at"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     app_id = Column(Integer, ForeignKey("deployed_apps.id"), nullable=False, index=True)
-    granted_username = Column(String(50), nullable=False)  # 접근 허용 사번
-    granted_by = Column(String(50), nullable=False)        # 권한 부여자 사번
+    grant_type = Column(String(10), nullable=False, default="user")  # user|team|region|job|company
+    grant_value = Column(String(100), nullable=False)                # 사번|팀명|지역|직책|*
+    granted_by = Column(String(50), nullable=False)
     granted_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    revoked_at = Column(DateTime(timezone=True), nullable=True)  # NULL = 활성, 값 있으면 회수됨
+    revoked_at = Column(DateTime(timezone=True), nullable=True)

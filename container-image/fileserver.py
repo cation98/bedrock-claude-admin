@@ -957,14 +957,14 @@ function closeAclModal() {{
 function buildAclItem(u, canRevoke) {{
   var li = document.createElement('li'); li.className = 'acl-item';
   var info = document.createElement('span'); info.className = 'user-info';
-  info.textContent = (u.name || u.username) + ' (' + u.username + ') ';
+  info.textContent = u.grant_type + ': ' + u.grant_value + ' ';
   var team = document.createElement('span'); team.className = 'team';
   team.textContent = u.team_name || '';
   info.appendChild(team); li.appendChild(info);
   if (canRevoke) {{
     var btn = document.createElement('button'); btn.className = 'btn-sm danger';
     btn.textContent = '\ud68c\uc218';
-    btn.onclick = function() {{ revokeAccess(u.username); }};
+    btn.onclick = function() {{ revokeAccess(u.id); }};
     li.appendChild(btn);
   }} else {{
     var btn = document.createElement('button'); btn.className = 'btn-sm';
@@ -1026,7 +1026,7 @@ function grantAccess(username) {{
   apiFetch('/apps/' + currentAclApp + '/acl', {{
     method: 'POST',
     headers: {{'Content-Type': 'application/json'}},
-    body: JSON.stringify({{username: username}})
+    body: JSON.stringify({{grant_type: 'user', grant_value: username}})
   }}).then(function() {{
     loadAclUsers(currentAclApp);
     document.getElementById('searchResults').replaceChildren();
@@ -1034,9 +1034,9 @@ function grantAccess(username) {{
   }});
 }}
 
-function revokeAccess(username) {{
-  if (!confirm(username + ' \uc758 \uc811\uadfc \uad8c\ud55c\uc744 \ud68c\uc218\ud569\ub2c8\ub2e4.')) return;
-  apiFetch('/apps/' + currentAclApp + '/acl/' + username, {{ method: 'DELETE' }})
+function revokeAccess(aclId) {{
+  if (!confirm('\uc811\uadfc \uad8c\ud55c\uc744 \ud68c\uc218\ud569\ub2c8\ub2e4.')) return;
+  apiFetch('/apps/' + currentAclApp + '/acl/' + aclId, {{ method: 'DELETE' }})
     .then(function() {{ loadAclUsers(currentAclApp); }});
 }}
 

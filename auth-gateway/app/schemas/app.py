@@ -35,6 +35,8 @@ class DeployedAppResponse(BaseModel):
     app_port: int = 3000
     view_count: int = 0
     unique_viewers: int = 0
+    dau: int = 0
+    mau: int = 0
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -44,7 +46,8 @@ class DeployedAppResponse(BaseModel):
 class AppACLRequest(BaseModel):
     """앱 접근 권한 부여 요청."""
 
-    username: str  # 접근 허용할 사번
+    grant_type: str = "user"   # user | team | region | job | company
+    grant_value: str           # 사번, 팀명, 지역, 직책, 또는 "*"
 
 
 class AppACLResponse(BaseModel):
@@ -52,7 +55,8 @@ class AppACLResponse(BaseModel):
 
     id: int
     app_id: int
-    granted_username: str
+    grant_type: str
+    grant_value: str
     granted_by: str
     granted_at: datetime | None = None
     revoked_at: datetime | None = None
@@ -61,14 +65,14 @@ class AppACLResponse(BaseModel):
 
 
 class AppACLDetailResponse(BaseModel):
-    """앱 접근 권한 상세 응답 (사용자 이름 포함)."""
+    """앱 접근 권한 상세 응답."""
 
     id: int
     app_id: int
-    granted_username: str
+    grant_type: str
+    grant_value: str
     granted_by: str
-    user_name: str | None = None     # 허용된 사용자 표시 이름
-    team_name: str | None = None     # 허용된 사용자 팀
+    display_label: str | None = None  # "안전기술팀 (팀)" or "N1102359 (김부장)"
     granted_at: datetime | None = None
     revoked_at: datetime | None = None
 
@@ -86,3 +90,22 @@ class UserSearchResponse(BaseModel):
 
     total: int
     results: list[UserSearchResult]
+
+
+class AppStatsResponse(BaseModel):
+    """앱 통계 응답."""
+
+    app_id: int
+    app_name: str
+    dau: int = 0          # 오늘 순방문자
+    mau: int = 0          # 이번 달 순방문자
+    total_views: int = 0  # 총 조회수
+    recent_visitors: list[dict] = []  # 최근 접속자 [{username, name, team, visited_at}]
+
+
+class AppACLOptionsResponse(BaseModel):
+    """ACL 드롭다운 옵션 응답."""
+
+    teams: list[str] = []
+    regions: list[str] = []
+    jobs: list[str] = []

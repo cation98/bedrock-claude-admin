@@ -8,7 +8,7 @@ Endpoints:
   GET    /api/v1/apps/shared              -- 나에게 공유된 앱 목록
   GET    /api/v1/apps/{app_name}/acl       -- 앱 접근 허용 사용자 목록
   POST   /api/v1/apps/{app_name}/acl       -- 앱 접근 권한 부여
-  DELETE /api/v1/apps/{app_name}/acl/{username} -- 앱 접근 권한 회수
+  DELETE /api/v1/apps/{app_name}/acl/{acl_id}   -- 앱 접근 권한 회수 (ACL ID 기반)
   GET    /api/v1/apps/auth-check           -- Ingress auth-url (SSO + ACL 검증)
   GET    /api/v1/users/search              -- 승인된 사용자 검색
 
@@ -25,7 +25,8 @@ import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import func
+from fastapi.responses import JSONResponse, RedirectResponse
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
@@ -167,6 +168,7 @@ async def auth_check(
             user_payload = decode_token(token, settings)
 
     if user_payload is None:
+        # 401 반환 — NGINX Ingress auth-signin annotation이 /webapp-login으로 리다이렉트 처리
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="인증이 필요합니다",
@@ -226,22 +228,38 @@ async def auth_check(
             detail="앱을 찾을 수 없거나 접근 권한이 없습니다",
         )
 
-    # 5-1. visibility='company' → 인증된 SSO 사용자면 ACL 검사 없이 허용
-    if app.visibility == "company":
-        await _maybe_record_view(original_uri, app.id, requesting_username)
-        return _auth_check_success(requesting_username)
+    # 5-2. ACL 검사 (5-type grant)
+    # 요청자의 프로필 조회
+    requesting_user = db.query(User).filter(User.username == requesting_username.upper()).first()
 
-    # 5-2. visibility='private' (기본) → ACL 검사
-    acl_entry = (
+    active_acls = (
         db.query(AppACL)
         .filter(
             AppACL.app_id == app.id,
-            AppACL.granted_username == requesting_username.upper(),
-            AppACL.revoked_at.is_(None),  # 활성 ACL만
+            AppACL.revoked_at.is_(None),
         )
-        .first()
+        .all()
     )
-    if not acl_entry:
+
+    acl_matched = False
+    for acl in active_acls:
+        if acl.grant_type == "company":
+            acl_matched = True
+            break
+        if acl.grant_type == "region" and requesting_user and requesting_user.region_name == acl.grant_value:
+            acl_matched = True
+            break
+        if acl.grant_type == "team" and requesting_user and requesting_user.team_name == acl.grant_value:
+            acl_matched = True
+            break
+        if acl.grant_type == "job" and requesting_user and requesting_user.job_name == acl.grant_value:
+            acl_matched = True
+            break
+        if acl.grant_type == "user" and requesting_username.upper() == acl.grant_value.upper():
+            acl_matched = True
+            break
+
+    if not acl_matched:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="이 앱에 대한 접근 권한이 없습니다",
@@ -257,8 +275,6 @@ def _auth_check_success(username: str) -> dict:
     NGINX Ingress는 auth-url 응답의 헤더를 upstream으로 전달할 수 있다.
     auth_response_headers 설정으로 X-Auth-Username을 앱에 전달.
     """
-    from fastapi.responses import JSONResponse
-
     return JSONResponse(
         content={"authenticated": True, "username": username},
         headers={"X-Auth-Username": username},
@@ -341,15 +357,36 @@ async def list_shared_apps(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """나에게 공유된 앱 목록 조회 (ACL에 등록된 앱)."""
+    """나에게 공유된 앱 목록 조회 (5-type ACL 기반)."""
     username = current_user["sub"]
 
-    # 활성 ACL이 있는 앱 ID 목록 조회
+    # 요청자의 프로필 조회 (team, region, job 매칭용)
+    requesting_user = db.query(User).filter(User.username == username.upper()).first()
+
+    # 활성 ACL 중 요청자에게 매칭되는 조건 구성
+    acl_conditions = [
+        AppACL.grant_type == "company",  # 전사 공개
+        (AppACL.grant_type == "user") & (AppACL.grant_value == username.upper()),
+    ]
+    if requesting_user:
+        if requesting_user.region_name:
+            acl_conditions.append(
+                (AppACL.grant_type == "region") & (AppACL.grant_value == requesting_user.region_name)
+            )
+        if requesting_user.team_name:
+            acl_conditions.append(
+                (AppACL.grant_type == "team") & (AppACL.grant_value == requesting_user.team_name)
+            )
+        if requesting_user.job_name:
+            acl_conditions.append(
+                (AppACL.grant_type == "job") & (AppACL.grant_value == requesting_user.job_name)
+            )
+
     acl_app_ids = (
         db.query(AppACL.app_id)
         .filter(
-            AppACL.granted_username == username,
             AppACL.revoked_at.is_(None),
+            or_(*acl_conditions),
         )
         .subquery()
     )
@@ -358,6 +395,7 @@ async def list_shared_apps(
         db.query(DeployedApp)
         .filter(
             DeployedApp.id.in_(acl_app_ids),
+            DeployedApp.owner_username != username,  # 본인 앱 제외 (my에서 조회)
             DeployedApp.status != "deleted",
         )
         .order_by(DeployedApp.created_at.desc())
@@ -509,7 +547,8 @@ async def deploy_app(
             if target_user:
                 acl = AppACL(
                     app_id=new_app.id,
-                    granted_username=acl_user,
+                    grant_type="user",
+                    grant_value=acl_user,
                     granted_by=username,
                 )
                 db.add(acl)
@@ -566,11 +605,11 @@ async def list_app_acl(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """앱 접근 허용 사용자 목록 (소유자만 조회 가능)."""
+    """앱 접근 권한 목록 (소유자만 조회 가능)."""
     username = current_user["sub"]
     app = _get_owned_app(app_name, username, db)
 
-    # 활성 ACL 목록 + 사용자 이름/팀 조인
+    # 활성 ACL 목록
     acl_entries = (
         db.query(AppACL)
         .filter(
@@ -581,27 +620,34 @@ async def list_app_acl(
         .all()
     )
 
-    # 사용자 정보 일괄 조회 (N+1 방지)
-    usernames = [entry.granted_username for entry in acl_entries]
+    # grant_type=user인 항목의 사용자 정보 일괄 조회 (display_label용)
+    user_grant_values = [e.grant_value for e in acl_entries if e.grant_type == "user"]
     users_map = {}
-    if usernames:
-        users = (
-            db.query(User)
-            .filter(User.username.in_(usernames))
-            .all()
-        )
+    if user_grant_values:
+        users = db.query(User).filter(User.username.in_(user_grant_values)).all()
         users_map = {u.username: u for u in users}
 
     results = []
     for entry in acl_entries:
-        user = users_map.get(entry.granted_username)
+        # display_label 생성
+        if entry.grant_type == "company":
+            display_label = "전사 공개"
+        elif entry.grant_type == "user":
+            user = users_map.get(entry.grant_value)
+            display_label = f"{entry.grant_value} ({user.name})" if user and user.name else entry.grant_value
+        else:
+            # team, region, job
+            type_labels = {"team": "팀", "region": "지역", "job": "직책"}
+            label = type_labels.get(entry.grant_type, entry.grant_type)
+            display_label = f"{entry.grant_value} ({label})"
+
         results.append(AppACLDetailResponse(
             id=entry.id,
             app_id=entry.app_id,
-            granted_username=entry.granted_username,
+            grant_type=entry.grant_type,
+            grant_value=entry.grant_value,
             granted_by=entry.granted_by,
-            user_name=user.name if user else None,
-            team_name=user.team_name if user else None,
+            display_label=display_label,
             granted_at=entry.granted_at,
             revoked_at=entry.revoked_at,
         ))
@@ -616,41 +662,57 @@ async def grant_app_access(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """앱 접근 권한 부여 (소유자만 가능).
+    """앱 접근 권한 부여 (소유자만 가능, 5-type grant).
 
-    중복 방지: 이미 활성 ACL이 있으면 409 반환.
-    이전에 회수된 ACL이 있으면 새로운 레코드로 재부여.
+    grant_type: user | team | region | job | company
+    중복 방지: 동일 grant_type+grant_value 활성 ACL이 있으면 409 반환.
     """
     username = current_user["sub"]
     app = _get_owned_app(app_name, username, db)
 
-    target_username = request.username.upper()
+    grant_type = request.grant_type.lower()
+    grant_value = request.grant_value.strip()
 
-    # 자기 자신에게 권한 부여 방지
-    if target_username == username:
+    # grant_type 유효성 검사
+    valid_grant_types = {"user", "team", "region", "job", "company"}
+    if grant_type not in valid_grant_types:
+        raise HTTPException(
+            status_code=400,
+            detail=f"grant_type은 {', '.join(sorted(valid_grant_types))} 중 하나여야 합니다",
+        )
+
+    # company 타입은 grant_value를 "*"로 정규화
+    if grant_type == "company":
+        grant_value = "*"
+
+    # user 타입: 자기 자신에게 권한 부여 방지
+    if grant_type == "user" and grant_value.upper() == username:
         raise HTTPException(
             status_code=400,
             detail="앱 소유자는 이미 접근 권한이 있습니다",
         )
 
-    # 대상 사용자 존재 + 승인 여부 확인
-    target_user = (
-        db.query(User)
-        .filter(User.username == target_username, User.is_approved == True)  # noqa: E712
-        .first()
-    )
-    if not target_user:
-        raise HTTPException(
-            status_code=404,
-            detail="승인된 사용자를 찾을 수 없습니다",
+    # user 타입: 대상 사용자 존재 + 승인 여부 확인
+    if grant_type == "user":
+        grant_value = grant_value.upper()  # 사번은 대문자 정규화
+        target_user = (
+            db.query(User)
+            .filter(User.username == grant_value, User.is_approved == True)  # noqa: E712
+            .first()
         )
+        if not target_user:
+            raise HTTPException(
+                status_code=404,
+                detail="승인된 사용자를 찾을 수 없습니다",
+            )
 
-    # 활성 ACL 중복 확인
+    # 활성 ACL 중복 확인 (동일 grant_type + grant_value)
     existing_acl = (
         db.query(AppACL)
         .filter(
             AppACL.app_id == app.id,
-            AppACL.granted_username == target_username,
+            AppACL.grant_type == grant_type,
+            AppACL.grant_value == grant_value,
             AppACL.revoked_at.is_(None),
         )
         .first()
@@ -658,40 +720,40 @@ async def grant_app_access(
     if existing_acl:
         raise HTTPException(
             status_code=409,
-            detail="이미 접근 권한이 부여된 사용자입니다",
+            detail="이미 동일한 접근 권한이 부여되어 있습니다",
         )
 
     # ACL 생성
     acl = AppACL(
         app_id=app.id,
-        granted_username=target_username,
+        grant_type=grant_type,
+        grant_value=grant_value,
         granted_by=username,
     )
     db.add(acl)
     db.commit()
     db.refresh(acl)
 
-    logger.info(f"ACL granted: {target_username} → {username}/{app_name}")
+    logger.info(f"ACL granted: {grant_type}={grant_value} → {username}/{app_name}")
     return AppACLResponse.model_validate(acl)
 
 
-@router.delete("/{app_name}/acl/{target_username}", status_code=200)
+@router.delete("/{app_name}/acl/{acl_id}", status_code=200)
 async def revoke_app_access(
     app_name: str,
-    target_username: str,
+    acl_id: int,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """앱 접근 권한 회수 (소유자만 가능). revoked_at 설정으로 소프트 삭제."""
+    """앱 접근 권한 회수 (소유자만 가능, ACL ID 기반). revoked_at 설정으로 소프트 삭제."""
     username = current_user["sub"]
     app = _get_owned_app(app_name, username, db)
 
-    target_upper = target_username.upper()
     acl = (
         db.query(AppACL)
         .filter(
+            AppACL.id == acl_id,
             AppACL.app_id == app.id,
-            AppACL.granted_username == target_upper,
             AppACL.revoked_at.is_(None),
         )
         .first()
@@ -699,14 +761,14 @@ async def revoke_app_access(
     if not acl:
         raise HTTPException(
             status_code=404,
-            detail="해당 사용자의 활성 접근 권한을 찾을 수 없습니다",
+            detail="해당 활성 접근 권한을 찾을 수 없습니다",
         )
 
     acl.revoked_at = datetime.now(timezone.utc)
     db.commit()
 
-    logger.info(f"ACL revoked: {target_upper} from {username}/{app_name}")
-    return {"revoked": True, "username": target_upper, "app_name": app_name}
+    logger.info(f"ACL revoked: {acl.grant_type}={acl.grant_value} from {username}/{app_name}")
+    return {"revoked": True, "acl_id": acl_id, "grant_type": acl.grant_type, "grant_value": acl.grant_value, "app_name": app_name}
 
 
 # ==================== 사용자 검색 (ACL 관리 UI용) ====================

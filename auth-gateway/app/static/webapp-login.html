@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>웹앱 접근 — 로그인</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .container {
+            width: 100%;
+            max-width: 420px;
+            padding: 2rem;
+        }
+        .logo {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        .logo h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: #f8fafc;
+            margin-bottom: 0.5rem;
+        }
+        .logo p {
+            font-size: 0.875rem;
+            color: #94a3b8;
+        }
+        .card {
+            background: #1e293b;
+            border-radius: 12px;
+            padding: 2rem;
+            border: 1px solid #334155;
+        }
+        .form-group {
+            margin-bottom: 1.25rem;
+        }
+        label {
+            display: block;
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: #cbd5e1;
+            margin-bottom: 0.5rem;
+        }
+        input {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            background: #0f172a;
+            border: 1px solid #475569;
+            border-radius: 8px;
+            color: #f1f5f9;
+            font-size: 1rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        input:focus {
+            border-color: #6366f1;
+        }
+        input::placeholder {
+            color: #64748b;
+        }
+        .btn {
+            width: 100%;
+            padding: 0.75rem;
+            background: #6366f1;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+            margin-top: 0.5rem;
+        }
+        .btn:hover { background: #4f46e5; }
+        .btn:disabled {
+            background: #475569;
+            cursor: not-allowed;
+        }
+        .btn.loading::after {
+            content: '';
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid transparent;
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            margin-left: 8px;
+            vertical-align: middle;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .error {
+            background: #450a0a;
+            border: 1px solid #dc2626;
+            color: #fca5a5;
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            font-size: 0.875rem;
+            margin-bottom: 1rem;
+            display: none;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 1.5rem;
+            font-size: 0.75rem;
+            color: #64748b;
+        }
+        .footer a {
+            color: #818cf8;
+            text-decoration: none;
+        }
+        .footer a:hover {
+            text-decoration: underline;
+        }
+        /* 2FA 인증코드 입력 UI */
+        .twofa-section {
+            display: none;
+            text-align: center;
+        }
+        .twofa-section.active {
+            display: block;
+        }
+        .tfa-code-input {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid #334155;
+            background: #1e293b;
+            color: #f1f5f9;
+            border-radius: 0.5rem;
+            font-size: 1.5rem;
+            text-align: center;
+            letter-spacing: 0.5rem;
+            font-family: monospace;
+        }
+        .tfa-code-input:focus {
+            border-color: #818cf8;
+            outline: none;
+        }
+        .tfa-info {
+            color: #94a3b8;
+            font-size: 0.85rem;
+            margin-bottom: 1rem;
+        }
+        .tfa-timer {
+            color: #86efac;
+            font-size: 0.85rem;
+            margin-top: 0.75rem;
+        }
+        .tfa-timer.expired {
+            color: #f87171;
+        }
+        .tfa-resend {
+            color: #818cf8;
+            text-decoration: none;
+            font-size: 0.8rem;
+            cursor: pointer;
+            margin-top: 0.5rem;
+            display: inline-block;
+        }
+        .tfa-resend:hover {
+            text-decoration: underline;
+        }
+        .back-link {
+            display: block;
+            text-align: center;
+            margin-top: 1rem;
+            color: #818cf8;
+            text-decoration: none;
+            font-size: 0.85rem;
+        }
+        .back-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">
+            <h1>웹앱 접근 — 로그인</h1>
+            <p>웹앱에 접근하려면 로그인이 필요합니다</p>
+        </div>
+
+        <div class="card">
+            <div class="error" id="error"></div>
+
+            <!-- 로그인 폼 -->
+            <div id="loginSection">
+            <form id="loginForm" onsubmit="handleLogin(event)">
+                <div class="form-group">
+                    <label for="username">사번</label>
+                    <input type="text" id="username" name="username"
+                           placeholder="예: N1102359" required autocomplete="username">
+                </div>
+                <div class="form-group">
+                    <label for="password">비밀번호</label>
+                    <input type="password" id="password" name="password"
+                           placeholder="I-Net 비밀번호" required autocomplete="current-password">
+                </div>
+                <button type="submit" class="btn" id="loginBtn">로그인</button>
+            </form>
+            </div>
+
+            <!-- 2FA 인증코드 입력 -->
+            <div class="twofa-section" id="tfaSection">
+                <p class="tfa-info" id="tfaMessage">인증코드가 발송되었습니다</p>
+                <div class="form-group">
+                    <label for="tfaCode">인증코드</label>
+                    <input type="text" id="tfaCode" class="tfa-code-input"
+                           maxlength="6" placeholder="000000"
+                           inputmode="numeric" pattern="[0-9]*"
+                           autocomplete="one-time-code">
+                </div>
+                <button class="btn" id="tfaBtn" onclick="handleVerify2fa()">인증 확인</button>
+                <p class="tfa-timer" id="tfaTimer">남은 시간: 5:00</p>
+                <a class="tfa-resend" onclick="handleResend()">코드 재발송</a>
+            </div>
+        </div>
+
+        <div class="footer">
+            <a href="javascript:history.back()" class="back-link">돌아가기</a>
+            Powered by AWS Bedrock + Claude Code
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin;
+
+        // 2FA state
+        let currentCodeId = null;
+        let tfaTimerInterval = null;
+        let loginCredentials = null;
+
+        // URL params
+        const params = new URLSearchParams(window.location.search);
+        const returnUrl = params.get('return_url') || '/portal/';
+
+        // Auto-focus username field on load
+        window.addEventListener('DOMContentLoaded', function() {
+            document.getElementById('username').focus();
+        });
+
+        async function handleLogin(e) {
+            e.preventDefault();
+            const btn = document.getElementById('loginBtn');
+            const errorEl = document.getElementById('error');
+
+            errorEl.style.display = 'none';
+            btn.disabled = true;
+            btn.classList.add('loading');
+            btn.textContent = '인증 중';
+
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value;
+
+            // 재발송용 자격증명 저장
+            loginCredentials = { username, password };
+
+            try {
+                const loginRes = await fetch(`${API_BASE}/api/v1/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+
+                if (!loginRes.ok) {
+                    const err = await loginRes.json();
+                    throw new Error(err.detail?.message || err.detail || '인증에 실패했습니다.');
+                }
+
+                const loginData = await loginRes.json();
+
+                // 2FA 필요 여부 확인
+                if (loginData.requires_2fa) {
+                    currentCodeId = loginData.code_id;
+                    document.getElementById('loginSection').style.display = 'none';
+                    document.getElementById('tfaSection').classList.add('active');
+                    document.getElementById('tfaMessage').textContent =
+                        `${loginData.phone_masked} 로 인증코드를 발송했습니다`;
+                    document.getElementById('tfaCode').value = '';
+                    document.getElementById('tfaCode').focus();
+                    startTfaTimer(300);  // 5분
+
+                    errorEl.style.display = 'none';
+                    btn.disabled = false;
+                    btn.classList.remove('loading');
+                    btn.textContent = '로그인';
+                    return;
+                }
+
+                // 2FA 불필요 (bypass) — 바로 토큰 저장 후 리다이렉트
+                if (loginData.access_token) {
+                    completeLogin(loginData.access_token);
+                }
+
+            } catch (err) {
+                errorEl.textContent = err.message;
+                errorEl.style.display = 'block';
+                btn.disabled = false;
+                btn.classList.remove('loading');
+                btn.textContent = '로그인';
+            }
+        }
+
+        async function handleVerify2fa() {
+            const code = document.getElementById('tfaCode').value.trim();
+            const errorEl = document.getElementById('error');
+            const tfaBtn = document.getElementById('tfaBtn');
+
+            if (code.length !== 6) {
+                errorEl.textContent = '6자리 인증코드를 입력해주세요.';
+                errorEl.style.display = 'block';
+                return;
+            }
+
+            tfaBtn.disabled = true;
+            tfaBtn.textContent = '인증 확인 중...';
+            errorEl.style.display = 'none';
+
+            try {
+                const res = await fetch(`${API_BASE}/api/v1/auth/verify-2fa`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ code_id: currentCodeId, code: code })
+                });
+
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.detail || '인증코드 확인에 실패했습니다.');
+                }
+
+                const data = await res.json();
+                clearInterval(tfaTimerInterval);
+
+                if (data.access_token) {
+                    completeLogin(data.access_token);
+                }
+
+            } catch (err) {
+                errorEl.textContent = err.message;
+                errorEl.style.display = 'block';
+                tfaBtn.disabled = false;
+                tfaBtn.textContent = '인증 확인';
+                document.getElementById('tfaCode').value = '';
+                document.getElementById('tfaCode').focus();
+            }
+        }
+
+        async function handleResend() {
+            if (!loginCredentials) return;
+            const errorEl = document.getElementById('error');
+
+            try {
+                const res = await fetch(`${API_BASE}/api/v1/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(loginCredentials)
+                });
+
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.detail?.message || err.detail || '코드 재발송에 실패했습니다.');
+                }
+
+                const data = await res.json();
+                if (data.requires_2fa) {
+                    currentCodeId = data.code_id;
+                    document.getElementById('tfaMessage').textContent =
+                        `새 인증코드가 ${data.phone_masked} 로 발송되었습니다`;
+                    document.getElementById('tfaCode').value = '';
+                    document.getElementById('tfaCode').focus();
+                    startTfaTimer(300);
+                    errorEl.style.display = 'none';
+                }
+            } catch (err) {
+                errorEl.textContent = err.message;
+                errorEl.style.display = 'block';
+            }
+        }
+
+        function completeLogin(token) {
+            // JWT 쿠키 저장 (8시간 만료, Secure 플래그)
+            document.cookie = `claude_token=${token}; path=/; max-age=28800; SameSite=Lax; Secure`;
+            // return_url 검증: 상대 경로만 허용 (open redirect 방지)
+            let safeUrl = '/portal/';
+            if (returnUrl && returnUrl.startsWith('/') && !returnUrl.startsWith('//')) {
+                safeUrl = returnUrl;
+            }
+            window.location.href = safeUrl;
+        }
+
+        function startTfaTimer(seconds) {
+            clearInterval(tfaTimerInterval);
+            let remaining = seconds;
+            const timerEl = document.getElementById('tfaTimer');
+            timerEl.classList.remove('expired');
+            timerEl.style.color = '';
+
+            tfaTimerInterval = setInterval(() => {
+                remaining--;
+                const min = Math.floor(remaining / 60);
+                const sec = remaining % 60;
+                timerEl.textContent = `남은 시간: ${min}:${String(sec).padStart(2, '0')}`;
+
+                if (remaining <= 60) timerEl.style.color = '#fbbf24';
+                if (remaining <= 0) {
+                    clearInterval(tfaTimerInterval);
+                    timerEl.textContent = '인증코드가 만료되었습니다';
+                    timerEl.classList.add('expired');
+                    timerEl.style.color = '';
+                }
+            }, 1000);
+        }
+
+        // Enter key handler for 2FA code input
+        document.getElementById('tfaCode').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') handleVerify2fa();
+        });
+    </script>
+</body>
+</html>

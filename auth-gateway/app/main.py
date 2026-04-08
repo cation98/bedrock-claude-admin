@@ -25,7 +25,7 @@ from app.models.prompt_audit import PromptAuditSummary, PromptAuditFlag, PromptA
 from app.models.token_quota import TokenQuotaTemplate, TokenQuotaAssignment  # noqa: F401 — create_all이 테이블 생성하도록 import
 from app.models.proxy import AllowedDomain, ProxyAccessLog  # noqa: F401 — create_all이 테이블 생성하도록 import
 from app.models.bot import UserBot  # noqa: F401 — create_all이 user_bots 테이블 생성하도록 import
-from app.routers import admin, apps, auth, bots, file_share, sessions, users, sms, skills, telegram, security, scheduling, infra_policy, surveys, app_proxy
+from app.routers import admin, apps, auth, bots, file_share, sessions, users, sms, skills, telegram, security, scheduling, infra_policy, surveys, app_proxy, portal
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -125,6 +125,51 @@ def _run_proxy_secret_migration() -> None:
             logger.info("Migration: terminal_sessions.proxy_secret 컬럼 추가 완료")
 
 
+def _run_app_acl_grant_migration() -> None:
+    """app_acl 테이블을 grant_type/grant_value 스키마로 마이그레이션."""
+    with engine.connect() as conn:
+        # grant_type 컬럼 추가
+        result = conn.execute(text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name='app_acl' AND column_name='grant_type'"
+        ))
+        if result.fetchone() is None:
+            conn.execute(text(
+                "ALTER TABLE app_acl ADD COLUMN grant_type VARCHAR(10) NOT NULL DEFAULT 'user'"
+            ))
+            logger.info("Migration: app_acl.grant_type 컬럼 추가")
+
+        # grant_value 컬럼 추가
+        result = conn.execute(text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name='app_acl' AND column_name='grant_value'"
+        ))
+        if result.fetchone() is None:
+            conn.execute(text(
+                "ALTER TABLE app_acl ADD COLUMN grant_value VARCHAR(100) DEFAULT ''"
+            ))
+            # granted_username → grant_value 데이터 이관
+            conn.execute(text(
+                "UPDATE app_acl SET grant_value = granted_username WHERE granted_username IS NOT NULL AND grant_value = ''"
+            ))
+            conn.execute(text(
+                "ALTER TABLE app_acl ALTER COLUMN grant_value SET NOT NULL"
+            ))
+            logger.info("Migration: app_acl.grant_value 컬럼 추가 + granted_username 데이터 이관")
+
+        # 인덱스 추가
+        result = conn.execute(text(
+            "SELECT indexname FROM pg_indexes WHERE tablename='app_acl' AND indexname='ix_app_acl_grant'"
+        ))
+        if result.fetchone() is None:
+            conn.execute(text(
+                "CREATE INDEX ix_app_acl_grant ON app_acl(app_id, grant_type, grant_value, revoked_at)"
+            ))
+            logger.info("Migration: app_acl grant 인덱스 추가")
+
+        conn.commit()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """앱 시작/종료 라이프사이클 — DB 초기화 + 백그라운드 스케줄러 시작."""
@@ -133,6 +178,7 @@ async def lifespan(app: FastAPI):
     _run_can_deploy_apps_migration()
     _run_app_visibility_migration()
     _run_proxy_secret_migration()
+    _run_app_acl_grant_migration()
     idle_task = asyncio.create_task(idle_checker_loop(settings))
     snapshot_task = asyncio.create_task(token_snapshot_loop(settings))
     audit_task = asyncio.create_task(prompt_audit_loop(settings))
@@ -196,6 +242,7 @@ app.include_router(apps.router)
 app.include_router(bots.router)
 app.include_router(file_share.router)
 app.include_router(surveys.router)
+app.include_router(portal.router)
 # app_proxy는 catch-all 경로이므로 반드시 마지막에 등록
 app.include_router(app_proxy.router)
 
@@ -209,6 +256,12 @@ app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 @app.get("/")
 async def root():
     return FileResponse(str(static_dir / "login.html"))
+
+
+@app.get("/webapp-login")
+async def webapp_login():
+    """경량 로그인 페이지 — SSO+2FA 인증만, Pod 미생성."""
+    return FileResponse(str(static_dir / "webapp-login.html"))
 
 
 @app.get("/health")
