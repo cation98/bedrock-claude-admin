@@ -25,9 +25,9 @@ BACKUP_TIMEOUT_SECONDS = 30
 BACKUP_SCRIPT = "/home/node/.local/bin/backup-chat"
 
 # 유휴 판정 시간 (분)
-IDLE_TIMEOUT_NO_WS = 60     # WebSocket 미연결 + 파일 무활동 시
-IDLE_TIMEOUT_WS_IDLE = 30   # WebSocket 연결 + Claude 미실행 + 파일 무활동 시
-WARNING_BEFORE_MINUTES = 5   # 종료 N분 전 경고
+IDLE_TIMEOUT_NO_WS = 1800    # WebSocket 미연결 + 파일 무활동 시 (30시간)
+IDLE_TIMEOUT_WS_IDLE = 1800  # WebSocket 연결 + Claude 미실행 + 파일 무활동 시 (30시간)
+WARNING_BEFORE_MINUTES = 30  # 종료 30분 전 경고
 
 # Pod 내부 종합 활동 확인 스크립트
 # 반환: {last_file_activity, ws_clients, claude_running, webapp_running, now}
