@@ -15,7 +15,7 @@ metadata:
   name: overprovisioning
   namespace: claude-sessions
 spec:
-  replicas: 2  # 더미 2개 = 노드 1대 여유 확보 (Pod당 500m CPU)
+  replicas: 2  # 더미 2개 = 노드 2대 사전 확보 (1:1 모델에서 동시 로그인 2명 즉시 수용)
   selector:
     matchLabels:
       app: overprovisioning
@@ -30,14 +30,21 @@ spec:
     spec:
       priorityClassName: overprovisioning
       terminationGracePeriodSeconds: 0
-      # 사용자 노드에만 배치 (전용 노드, 시스템 노드 제외)
+      # 1:1 전용 노드에만 배치
       nodeSelector:
-        role: claude-terminal
-      tolerations:
-        - key: "dedicated"
-          operator: "Equal"
-          value: "user"
-          effect: "NoSchedule"
+        role: claude-dedicated
+      # 1-node-1-pod 강제: 각 더미 Pod을 별도 노드에 배치
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: overprovisioning
+              topologyKey: "kubernetes.io/hostname"
+            - labelSelector:
+                matchLabels:
+                  app: claude-terminal
+              topologyKey: "kubernetes.io/hostname"
       containers:
         - name: pause
           image: registry.k8s.io/pause:3.9

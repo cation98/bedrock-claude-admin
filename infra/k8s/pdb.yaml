@@ -1,0 +1,16 @@
+# PodDisruptionBudget — 사용자 터미널 Pod의 voluntary eviction 차단
+# kubectl drain, 노드 업데이트, Autoscaler voluntary scale-down 시
+# claude-terminal Pod이 퇴거되지 않도록 보호
+#
+# involuntary eviction(OOM kill, 노드 장애)은 PDB로 차단 불가 — 이는
+# 1-node-1-pod 모델로 리소스 간섭을 제거하여 해결한다.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: claude-terminal-pdb
+  namespace: claude-sessions
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: claude-terminal

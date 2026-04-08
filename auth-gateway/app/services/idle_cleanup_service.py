@@ -4,12 +4,10 @@
   1. WebSocket 연결 + Claude 실행 중 → 절대 종료 안 함
   2. WebSocket 연결 + Claude 미실행 + 파일 무활동 30분 → 종료
   3. WebSocket 미연결 + 파일 무활동 60분 → 종료
-  4. WebSocket 미연결 + 파일 활동 있음 → 유지 (백그라운드 작업)
+  4. 파일 활동이 30분 이내 → 유지 (백그라운드 작업)
 
 종료 5분 전 경고: Pod 내 /tmp/.idle-warning 파일 생성
   → ttyd WebSocket 클라이언트가 감지하여 브라우저에 경고 표시
-
-포트 3000 웹앱 구동 여부도 확인 — 웹앱이 실행 중이면 유휴로 판정하지 않음.
 """
 import logging
 from datetime import datetime, timedelta, timezone
@@ -240,14 +238,7 @@ class IdleCleanupService:
                 logger.info(f"활성: {session.pod_name} — WS={ws_clients}, Claude=실행 중")
                 continue
 
-            # 규칙 4: 웹앱(3000) 실행 중 → 유지 (사용자 앱 서비스)
-            if webapp_running:
-                session.last_active_at = datetime.now(timezone.utc)
-                db.commit()
-                logger.info(f"활성: {session.pod_name} — 웹앱 실행 중 (port 3000)")
-                continue
-
-            # 규칙 4b: 파일 활동이 최근이면 유지 (백그라운드 작업)
+            # 규칙 4: 파일 활동이 최근이면 유지 (백그라운드 작업)
             if file_idle_min < IDLE_TIMEOUT_WS_IDLE:
                 active_dt = datetime.fromtimestamp(last_file, tz=timezone.utc)
                 session.last_active_at = active_dt
@@ -362,7 +353,7 @@ class IdleCleanupService:
             nodes = v1.list_node().items
             for node in nodes:
                 labels = node.metadata.labels or {}
-                if labels.get("role") != "presenter":
+                if labels.get("role") not in ("presenter", "claude-dedicated"):
                     continue
                 node_name = node.metadata.name
                 pods = v1.list_pod_for_all_namespaces(

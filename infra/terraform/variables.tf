@@ -91,6 +91,32 @@ variable "eks_node_max_size" {
   default     = 4
 }
 
+# ----- 1:1 전용 노드그룹 (t3.medium, 사용자별 1 node) -----
+
+variable "eks_dedicated_node_instance_types" {
+  description = "1:1 전용 노드 인스턴스 타입"
+  type        = list(string)
+  default     = ["t3.medium"]
+}
+
+variable "eks_dedicated_node_desired_size" {
+  description = "1:1 전용 노드 희망 개수"
+  type        = number
+  default     = 2
+}
+
+variable "eks_dedicated_node_min_size" {
+  description = "1:1 전용 노드 최소 개수 (0 = 야간 완전 축소 가능)"
+  type        = number
+  default     = 0
+}
+
+variable "eks_dedicated_node_max_size" {
+  description = "1:1 전용 노드 최대 개수"
+  type        = number
+  default     = 15
+}
+
 # ----- Bedrock -----
 
 variable "bedrock_region" {

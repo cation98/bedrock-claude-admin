@@ -28,5 +28,11 @@ eks_node_desired_size   = 2
 eks_node_min_size       = 2
 eks_node_max_size       = 4
 
+# ----- 1:1 전용 노드그룹 (t3.medium) -----
+eks_dedicated_node_instance_types = ["t3.medium"]
+eks_dedicated_node_desired_size   = 2
+eks_dedicated_node_min_size       = 0
+eks_dedicated_node_max_size       = 15
+
 # Bedrock 리전 (VPC Endpoint가 ap-northeast-2에서 Bedrock 접근 제공)
 bedrock_region = "us-east-1"

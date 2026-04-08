@@ -42,17 +42,14 @@ logger = logging.getLogger(__name__)
 EKS_CLUSTER_NAME = "bedrock-claude-eks"
 EKS_REGION = "ap-northeast-2"
 
-# 노드그룹 매핑: 시연자 → presenter-node, 일반 사용자 → bedrock-claude-nodes
+# 노드그룹 매핑: 시연자 → presenter-node, 일반 사용자 → dedicated-nodes
 NODEGROUP_MAP = {
     "presenter": "presenter-node",
-    "user": "bedrock-claude-nodes",
+    "user": "bedrock-claude-dedicated-nodes",
 }
 
 # Pod 생성에 필요한 최소 여유 CPU (millicores)
 MIN_FREE_CPU_MILLICORES = 1000
-
-# 노드당 최대 사용자 Pod 수 (app=claude-terminal)
-MAX_USER_PODS_PER_NODE = 3
 
 
 def _parse_cpu_to_millicores(cpu_str: str) -> int:
@@ -93,7 +90,7 @@ def _ensure_node_capacity(username: str, security_policy: dict | None = None, in
         infra_policy: 인프라 정책. 노드그룹, 노드 셀렉터, Pod 수 제한 등.
     """
     from app.models.infra_policy import INFRA_TEMPLATES as INFRA_DEFAULTS
-    infra = infra_policy or INFRA_DEFAULTS["standard"]
+    infra = infra_policy or INFRA_DEFAULTS["dedicated"]
     target_nodegroup = infra.get("nodegroup", "bedrock-claude-nodes")
     node_label = infra.get("node_selector")  # e.g., {"role": "presenter"} or None
     max_pods = infra.get("max_pods_per_node", 3)
@@ -106,12 +103,11 @@ def _ensure_node_capacity(username: str, security_policy: dict | None = None, in
             label_str = ",".join(f"{k}={v}" for k, v in node_label.items())
             nodes = v1.list_node(label_selector=label_str).items
         else:
-            # 일반 사용자: role 라벨이 없는(= presenter/system이 아닌) 노드
-            # bedrock-claude-nodes 노드그룹의 노드는 별도 role 라벨이 없음
+            # 일반 사용자: claude-terminal 또는 claude-dedicated 노드
             all_nodes = v1.list_node().items
             nodes = [
                 n for n in all_nodes
-                if n.metadata.labels.get("role") not in ("presenter", "system")
+                if n.metadata.labels.get("role") in ("claude-terminal", "claude-dedicated")
             ]
 
         # cordon된 노드가 있으면 uncordon (이전 auto-scale-down 잔여)
@@ -357,7 +353,7 @@ async def create_session(
 
     # 사용자 인프라 정책 조회 → Pod 리소스/노드 배치 결정
     from app.models.infra_policy import INFRA_TEMPLATES as INFRA_DEFAULTS
-    user_infra = user.infra_policy if (user and user.infra_policy) else INFRA_DEFAULTS["standard"]
+    user_infra = user.infra_policy if (user and user.infra_policy) else INFRA_DEFAULTS["dedicated"]
 
     # 노드 용량 확인 → 부족하면 노드그룹 스케일업 (비차단)
     _ensure_node_capacity(username, security_policy=user_security, infra_policy=user_infra)
@@ -546,9 +542,12 @@ async def bulk_create_sessions(
     """일괄 세션 생성 (관리자용 — 실습 시작 시 사용)."""
     created_sessions = []
 
+    from app.models.infra_policy import INFRA_TEMPLATES as INFRA_DEFAULTS
+    bulk_infra = INFRA_DEFAULTS["dedicated"]
+
     for username in request.usernames:
         try:
-            pod_name, proxy_secret = k8s.create_pod(username, request.session_type)
+            pod_name, proxy_secret = k8s.create_pod(username, request.session_type, infra_policy=bulk_infra)
             # Pod가 이미 존재하면 proxy_secret=None — 기존 세션의 proxy_secret 재사용
             if not proxy_secret:
                 existing_sess = db.query(TerminalSession).filter(

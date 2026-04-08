@@ -47,10 +47,21 @@ INFRA_TEMPLATES = {
         "memory_limit": "6Gi",
         "shared_dir_writable": False,
     },
+    "dedicated": {
+        "nodegroup": "bedrock-claude-dedicated-nodes",
+        "node_selector": {"role": "claude-dedicated"},
+        "max_pods_per_node": 1,
+        "cpu_request": "500m",
+        "cpu_limit": "1000m",
+        "memory_request": "1.5Gi",
+        "memory_limit": "3Gi",
+        "shared_dir_writable": False,
+    },
 }
 
 INFRA_TEMPLATE_DESCRIPTIONS = {
     "standard": "기본 (m5.large, 노드당 3명, CPU 500m)",
     "premium": "고사양 전용 (m5.xlarge, 노드당 1명, CPU 3코어)",
     "shared-large": "공유 대형 (m5.large, 노드당 2명, CPU 750m)",
+    "dedicated": "전용 (t3.medium, 노드당 1명, 리소스 격리)",
 }

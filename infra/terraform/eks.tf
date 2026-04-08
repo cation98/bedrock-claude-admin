@@ -208,8 +208,54 @@ resource "aws_eks_node_group" "main" {
   # Cluster Autoscaler 자동 탐색 태그
   # 이 태그가 ASG에 전파되어 Autoscaler가 관리 대상으로 인식
   tags = {
-    "k8s.io/cluster-autoscaler/enabled"                       = "true"
-    "k8s.io/cluster-autoscaler/${var.project_name}-eks"       = "owned"
+    "k8s.io/cluster-autoscaler/enabled"                 = "true"
+    "k8s.io/cluster-autoscaler/${var.project_name}-eks" = "owned"
+    Owner   = "N1102359"
+    Env     = var.environment
+    Service = "sko-claude-ai-agent"
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.eks_worker_node_policy,
+    aws_iam_role_policy_attachment.eks_cni_policy,
+    aws_iam_role_policy_attachment.eks_container_registry,
+  ]
+}
+
+# ----- 1:1 전용 Node Group (t3.medium) -----
+# 사용자별 노드 1대 전용 할당 — Pod 간 리소스 간섭 원천 제거
+# Pod Anti-Affinity(k8s_service.py)와 함께 1-node-1-pod 모델 구현
+
+resource "aws_eks_node_group" "dedicated" {
+  cluster_name    = aws_eks_cluster.main.name
+  node_group_name = "${var.project_name}-dedicated-nodes"
+  node_role_arn   = aws_iam_role.eks_nodes.arn
+  subnet_ids      = aws_subnet.eks_private[*].id
+
+  instance_types = var.eks_dedicated_node_instance_types
+
+  scaling_config {
+    desired_size = var.eks_dedicated_node_desired_size
+    min_size     = var.eks_dedicated_node_min_size
+    max_size     = var.eks_dedicated_node_max_size
+  }
+
+  update_config {
+    max_unavailable = 1
+  }
+
+  labels = {
+    role = "claude-dedicated"
+  }
+
+  disk_size = 30
+
+  tags = {
+    "k8s.io/cluster-autoscaler/enabled"                 = "true"
+    "k8s.io/cluster-autoscaler/${var.project_name}-eks" = "owned"
+    Owner   = "N1102359"
+    Env     = var.environment
+    Service = "sko-claude-ai-agent"
   }
 
   depends_on = [

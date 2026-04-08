@@ -185,7 +185,7 @@ class K8sService:
 
         # 인프라 정책 기반 Pod 리소스 결정 (DB에서 관리, 하드코딩 제거)
         from app.models.infra_policy import INFRA_TEMPLATES
-        infra = infra_policy or INFRA_TEMPLATES["standard"]
+        infra = infra_policy or INFRA_TEMPLATES["dedicated"]
 
         cpu_req = infra.get("cpu_request", "500m")
         cpu_lim = infra.get("cpu_limit", "1000m")
@@ -262,6 +262,19 @@ class K8sService:
                         value="presenter", effect="NoSchedule",
                     ),
                 ],
+                # 1-node-1-pod 격리: max_pods_per_node==1 템플릿에서만 활성화
+                affinity=client.V1Affinity(
+                    pod_anti_affinity=client.V1PodAntiAffinity(
+                        required_during_scheduling_ignored_during_execution=[
+                            client.V1PodAffinityTerm(
+                                label_selector=client.V1LabelSelector(
+                                    match_labels={"app": "claude-terminal"},
+                                ),
+                                topology_key="kubernetes.io/hostname",
+                            ),
+                        ],
+                    ),
+                ) if infra.get("max_pods_per_node", 3) == 1 else None,
                 containers=[
                     client.V1Container(
                         name="terminal",
