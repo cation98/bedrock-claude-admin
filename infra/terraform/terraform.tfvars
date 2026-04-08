@@ -23,9 +23,10 @@ eks_private_subnet_cidrs = ["10.0.10.0/24", "10.0.20.0/24"]
 eks_private_subnet_azs   = ["ap-northeast-2a", "ap-northeast-2c"]
 
 # ----- EKS 노드 설정 -----
+# premium 노드그룹 (m5.large, 1:1 전용)
 eks_node_instance_types = ["m5.large"]
-eks_node_desired_size   = 2
-eks_node_min_size       = 2
+eks_node_desired_size   = 0
+eks_node_min_size       = 0
 eks_node_max_size       = 4
 
 # ----- 1:1 전용 노드그룹 (t3.medium) -----

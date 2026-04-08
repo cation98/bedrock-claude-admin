@@ -18,26 +18,6 @@ class InfraTemplate(Base):
 
 INFRA_TEMPLATES = {
     "standard": {
-        "nodegroup": "bedrock-claude-nodes",
-        "node_selector": {"role": "claude-terminal"},
-        "max_pods_per_node": 1,
-        "cpu_request": "500m",
-        "cpu_limit": "1000m",
-        "memory_request": "1.5Gi",
-        "memory_limit": "3Gi",
-        "shared_dir_writable": False,
-    },
-    "premium": {
-        "nodegroup": "presenter-node",
-        "node_selector": {"role": "presenter"},
-        "max_pods_per_node": 1,
-        "cpu_request": "3",
-        "cpu_limit": "3500m",
-        "memory_request": "8Gi",
-        "memory_limit": "12Gi",
-        "shared_dir_writable": True,
-    },
-    "dedicated": {
         "nodegroup": "bedrock-claude-dedicated-nodes",
         "node_selector": {"role": "claude-dedicated"},
         "max_pods_per_node": 1,
@@ -47,10 +27,30 @@ INFRA_TEMPLATES = {
         "memory_limit": "3Gi",
         "shared_dir_writable": False,
     },
+    "premium": {
+        "nodegroup": "bedrock-claude-nodes",
+        "node_selector": {"role": "claude-terminal"},
+        "max_pods_per_node": 1,
+        "cpu_request": "1",
+        "cpu_limit": "1500m",
+        "memory_request": "3Gi",
+        "memory_limit": "6Gi",
+        "shared_dir_writable": False,
+    },
+    "enterprise": {
+        "nodegroup": "presenter-node",
+        "node_selector": {"role": "presenter"},
+        "max_pods_per_node": 1,
+        "cpu_request": "3",
+        "cpu_limit": "3500m",
+        "memory_request": "8Gi",
+        "memory_limit": "12Gi",
+        "shared_dir_writable": True,
+    },
 }
 
 INFRA_TEMPLATE_DESCRIPTIONS = {
-    "standard": "기본 (m5.large, 노드당 1명, 1:1 격리)",
-    "premium": "고사양 전용 (m5.xlarge, 노드당 1명, CPU 3코어)",
-    "dedicated": "전용 (t3.medium, 노드당 1명, 리소스 격리)",
+    "standard": "기본 (t3.medium, 노드당 1명, 1:1 격리)",
+    "premium": "고사양 (m5.large, 노드당 1명, CPU 1코어+)",
+    "enterprise": "최고사양 (m5.xlarge, 노드당 1명, CPU 3코어+)",
 }

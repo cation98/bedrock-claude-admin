@@ -42,10 +42,11 @@ logger = logging.getLogger(__name__)
 EKS_CLUSTER_NAME = "bedrock-claude-eks"
 EKS_REGION = "ap-northeast-2"
 
-# 노드그룹 매핑: 시연자 → presenter-node, 일반 사용자 → dedicated-nodes
+# 노드그룹 매핑: 템플릿별 노드그룹 참조
 NODEGROUP_MAP = {
-    "presenter": "presenter-node",
-    "user": "bedrock-claude-dedicated-nodes",
+    "standard": "bedrock-claude-dedicated-nodes",
+    "premium": "bedrock-claude-nodes",
+    "enterprise": "presenter-node",
 }
 
 # Pod 생성에 필요한 최소 여유 CPU (millicores)
@@ -90,7 +91,7 @@ def _ensure_node_capacity(username: str, security_policy: dict | None = None, in
         infra_policy: 인프라 정책. 노드그룹, 노드 셀렉터, Pod 수 제한 등.
     """
     from app.models.infra_policy import INFRA_TEMPLATES as INFRA_DEFAULTS
-    infra = infra_policy or INFRA_DEFAULTS["dedicated"]
+    infra = infra_policy or INFRA_DEFAULTS["standard"]
     target_nodegroup = infra.get("nodegroup", "bedrock-claude-nodes")
     node_label = infra.get("node_selector")  # e.g., {"role": "presenter"} or None
     max_pods = infra.get("max_pods_per_node", 3)
@@ -353,7 +354,7 @@ async def create_session(
 
     # 사용자 인프라 정책 조회 → Pod 리소스/노드 배치 결정
     from app.models.infra_policy import INFRA_TEMPLATES as INFRA_DEFAULTS
-    user_infra = user.infra_policy if (user and user.infra_policy) else INFRA_DEFAULTS["dedicated"]
+    user_infra = user.infra_policy if (user and user.infra_policy) else INFRA_DEFAULTS["standard"]
 
     # 노드 용량 확인 → 부족하면 노드그룹 스케일업 (비차단)
     _ensure_node_capacity(username, security_policy=user_security, infra_policy=user_infra)
@@ -543,7 +544,7 @@ async def bulk_create_sessions(
     created_sessions = []
 
     from app.models.infra_policy import INFRA_TEMPLATES as INFRA_DEFAULTS
-    bulk_infra = INFRA_DEFAULTS["dedicated"]
+    bulk_infra = INFRA_DEFAULTS["standard"]
 
     for username in request.usernames:
         try:

@@ -185,7 +185,7 @@ class K8sService:
 
         # 인프라 정책 기반 Pod 리소스 결정 (DB에서 관리, 하드코딩 제거)
         from app.models.infra_policy import INFRA_TEMPLATES
-        infra = infra_policy or INFRA_TEMPLATES["dedicated"]
+        infra = infra_policy or INFRA_TEMPLATES["standard"]
 
         cpu_req = infra.get("cpu_request", "500m")
         cpu_lim = infra.get("cpu_limit", "1000m")

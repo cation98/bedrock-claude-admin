@@ -108,8 +108,8 @@ async def list_assignments(_admin=Depends(_require_admin), db: Session = Depends
             "user_id": u.id,
             "username": u.username,
             "name": u.name,
-            "infra_policy_name": (u.infra_policy or {}).get("_template_name", "dedicated"),
-            "infra_policy": u.infra_policy or INFRA_TEMPLATES["dedicated"],
+            "infra_policy_name": (u.infra_policy or {}).get("_template_name", "standard"),
+            "infra_policy": u.infra_policy or INFRA_TEMPLATES["standard"],
         } for u in users]
     }
 
