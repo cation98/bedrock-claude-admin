@@ -19,8 +19,8 @@ class InfraTemplate(Base):
 INFRA_TEMPLATES = {
     "standard": {
         "nodegroup": "bedrock-claude-nodes",
-        "node_selector": None,
-        "max_pods_per_node": 3,
+        "node_selector": {"role": "claude-terminal"},
+        "max_pods_per_node": 1,
         "cpu_request": "500m",
         "cpu_limit": "1000m",
         "memory_request": "1.5Gi",
@@ -37,16 +37,6 @@ INFRA_TEMPLATES = {
         "memory_limit": "12Gi",
         "shared_dir_writable": True,
     },
-    "shared-large": {
-        "nodegroup": "bedrock-claude-nodes",
-        "node_selector": None,
-        "max_pods_per_node": 2,
-        "cpu_request": "750m",
-        "cpu_limit": "1500m",
-        "memory_request": "3Gi",
-        "memory_limit": "6Gi",
-        "shared_dir_writable": False,
-    },
     "dedicated": {
         "nodegroup": "bedrock-claude-dedicated-nodes",
         "node_selector": {"role": "claude-dedicated"},
@@ -60,8 +50,7 @@ INFRA_TEMPLATES = {
 }
 
 INFRA_TEMPLATE_DESCRIPTIONS = {
-    "standard": "기본 (m5.large, 노드당 3명, CPU 500m)",
+    "standard": "기본 (m5.large, 노드당 1명, 1:1 격리)",
     "premium": "고사양 전용 (m5.xlarge, 노드당 1명, CPU 3코어)",
-    "shared-large": "공유 대형 (m5.large, 노드당 2명, CPU 750m)",
     "dedicated": "전용 (t3.medium, 노드당 1명, 리소스 격리)",
 }
