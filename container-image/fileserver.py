@@ -2157,16 +2157,16 @@ function deleteProject(path) {{
 function openVersionModal(appName) {{
   localFetch('/api/apps/versions/' + encodeURIComponent(appName)).then(function(data) {{
     var versions = data.versions || [];
-    var msg = appName + ' 버전 이력:\n\n';
+    var msg = appName + ' 버전 이력:\\n\\n';
     if (versions.length === 0) {{
       msg += '버전 이력이 없습니다.';
     }} else {{
       versions.forEach(function(v, i) {{
         msg += (i + 1) + '. ' + v.version + ' (' + v.date + ')';
         if (v.is_current) msg += ' [현재]';
-        msg += '\n';
+        msg += '\\n';
       }});
-      msg += '\n복원할 버전 번호를 입력하세요 (취소: 빈 값):';
+      msg += '\\n복원할 버전 번호를 입력하세요 (취소: 빈 값):';
     }}
     var choice = prompt(msg);
     if (choice && versions[parseInt(choice) - 1]) {{
