@@ -22,7 +22,9 @@ import subprocess
 import argparse
 import urllib.parse
 import cgi
+import datetime
 import functools
+import mimetypes
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 
@@ -83,6 +85,15 @@ class FileServerHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path.startswith('/api/apps/versions/') and parsed.path.endswith('/label'):
             self._handle_apps_version_label(parsed)
+            return
+        if parsed.path == '/api/rename':
+            self._handle_rename()
+            return
+        if parsed.path == '/api/delete':
+            self._handle_delete()
+            return
+        if parsed.path == '/api/mkdir':
+            self._handle_mkdir()
             return
         # --- End webapp management API ---
 
@@ -175,6 +186,12 @@ class FileServerHandler(SimpleHTTPRequestHandler):
         if parsed.path.startswith("/api/browse"):
             self._send_file_listing_json(parsed)
             return
+        if parsed.path == "/api/download":
+            self._handle_download(parsed)
+            return
+        if parsed.path.startswith("/static/"):
+            self._serve_static(parsed.path)
+            return
 
         # --- Webapp management API (GET) ---
         if parsed.path == '/api/apps/status':
@@ -216,15 +233,179 @@ class FileServerHandler(SimpleHTTPRequestHandler):
                 if name.startswith("."):
                     continue
                 entry_path = os.path.join(rel_path, name) if rel_path else name
+                stat = os.stat(full)
+                mtime = datetime.datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds")
                 if os.path.isdir(full):
-                    entries.append({"name": name, "path": entry_path, "type": "dir", "size": 0})
+                    entries.append({"name": name, "path": entry_path, "type": "dir", "size": 0, "mtime": mtime, "extension": ""})
                 else:
-                    size = os.path.getsize(full)
-                    entries.append({"name": name, "path": entry_path, "type": "file", "size": size})
+                    _, ext = os.path.splitext(name)
+                    entries.append({"name": name, "path": entry_path, "type": "file", "size": stat.st_size, "mtime": mtime, "extension": ext})
         except OSError:
             pass
 
         self._send_json(200, {"path": rel_path, "entries": entries})
+
+    def _handle_download(self, parsed):
+        """파일 다운로드 API — GET /api/download?path=relpath"""
+        params = urllib.parse.parse_qs(parsed.query)
+        rel_path = params.get("path", [""])[0]
+
+        if not rel_path or ".." in rel_path:
+            self._send_json(400, {"error": "invalid path"})
+            return
+
+        target = os.path.join(self.directory, rel_path)
+        real_target = os.path.realpath(target)
+        if not real_target.startswith(os.path.realpath(self.directory)):
+            self._send_json(403, {"error": "access denied"})
+            return
+
+        if not os.path.isfile(real_target):
+            self._send_json(404, {"error": "file not found"})
+            return
+
+        try:
+            content_type, _ = mimetypes.guess_type(real_target)
+            if content_type is None:
+                content_type = "application/octet-stream"
+            file_size = os.path.getsize(real_target)
+            file_name = os.path.basename(real_target)
+
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(file_size))
+            self.send_header("Content-Disposition", f'attachment; filename="{file_name}"')
+            self.end_headers()
+
+            with open(real_target, "rb") as f:
+                shutil.copyfileobj(f, self.wfile)
+        except OSError as e:
+            self.send_error(500, str(e))
+
+    def _handle_rename(self):
+        """파일/디렉토리 이름 변경 API — POST /api/rename  body: {"old_path": "...", "new_name": "..."}"""
+        try:
+            body = self._read_body()
+            data = json.loads(body)
+        except (json.JSONDecodeError, ValueError):
+            self._send_json(400, {"error": "invalid JSON body"})
+            return
+
+        old_path = data.get("old_path", "")
+        new_name = data.get("new_name", "")
+
+        if not old_path or not new_name:
+            self._send_json(400, {"error": "old_path and new_name are required"})
+            return
+
+        if ".." in old_path or ".." in new_name or "/" in new_name or "\\" in new_name:
+            self._send_json(400, {"error": "invalid path or name"})
+            return
+
+        target = os.path.join(self.directory, old_path)
+        real_target = os.path.realpath(target)
+        if not real_target.startswith(os.path.realpath(self.directory)):
+            self._send_json(403, {"error": "access denied"})
+            return
+
+        if not os.path.exists(real_target):
+            self._send_json(404, {"error": "file or directory not found"})
+            return
+
+        new_target = os.path.join(os.path.dirname(real_target), new_name)
+        real_new_target = os.path.realpath(new_target)
+        if not real_new_target.startswith(os.path.realpath(self.directory)):
+            self._send_json(403, {"error": "access denied"})
+            return
+
+        if os.path.exists(new_target):
+            self._send_json(409, {"error": "target name already exists"})
+            return
+
+        try:
+            os.rename(real_target, new_target)
+            self._send_json(200, {"success": True})
+        except OSError as e:
+            self._send_json(500, {"error": str(e)})
+
+    def _handle_delete(self):
+        """파일/디렉토리 삭제 API — POST /api/delete  body: {"path": "relative/path"}"""
+        try:
+            body = self._read_body()
+            data = json.loads(body)
+        except (json.JSONDecodeError, ValueError):
+            self._send_json(400, {"error": "invalid JSON body"})
+            return
+        rel_path = data.get("path", "")
+        if not rel_path or ".." in rel_path:
+            self._send_json(400, {"error": "invalid path"})
+            return
+        target = os.path.join(self.directory, rel_path)
+        real_target = os.path.realpath(target)
+        if not real_target.startswith(os.path.realpath(self.directory)):
+            self._send_json(403, {"error": "access denied"})
+            return
+        if not os.path.exists(real_target):
+            self._send_json(404, {"error": "not found"})
+            return
+        try:
+            if os.path.isdir(real_target):
+                shutil.rmtree(real_target)
+            else:
+                os.unlink(real_target)
+            self._send_json(200, {"success": True})
+        except OSError as e:
+            self._send_json(500, {"error": str(e)})
+
+    def _handle_mkdir(self):
+        """디렉토리 생성 API — POST /api/mkdir  body: {"path": "relative/path"}"""
+        try:
+            body = self._read_body()
+            data = json.loads(body)
+        except (json.JSONDecodeError, ValueError):
+            self._send_json(400, {"error": "invalid JSON body"})
+            return
+        rel_path = data.get("path", "")
+        if not rel_path or ".." in rel_path:
+            self._send_json(400, {"error": "invalid path"})
+            return
+        target = os.path.join(self.directory, rel_path)
+        real_target = os.path.realpath(target)
+        if not real_target.startswith(os.path.realpath(self.directory)):
+            self._send_json(403, {"error": "access denied"})
+            return
+        if os.path.exists(real_target):
+            self._send_json(409, {"error": "already exists"})
+            return
+        try:
+            os.makedirs(real_target, exist_ok=True)
+            self._send_json(200, {"success": True})
+        except OSError as e:
+            self._send_json(500, {"error": str(e)})
+
+    STATIC_DIR = "/opt/static"
+
+    def _serve_static(self, url_path):
+        """Serve bundled static assets from /opt/static/ (Tabulator etc.)."""
+        filename = os.path.basename(url_path)
+        filepath = os.path.join(self.STATIC_DIR, filename)
+        if not os.path.isfile(filepath):
+            self.send_error(404, "Not Found")
+            return
+        content_type, _ = mimetypes.guess_type(filepath)
+        if content_type is None:
+            content_type = "application/octet-stream"
+        try:
+            size = os.path.getsize(filepath)
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(size))
+            self.send_header("Cache-Control", "public, max-age=604800")
+            self.end_headers()
+            with open(filepath, "rb") as f:
+                shutil.copyfileobj(f, self.wfile)
+        except OSError as e:
+            self.send_error(500, str(e))
 
     def _send_json(self, status, data):
         body = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
@@ -747,13 +928,15 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Claude Code — {user_name}</title>
+<link rel="stylesheet" href="/files/{pod_name}/static/tabulator_midnight.min.css">
+<script src="/files/{pod_name}/static/tabulator.min.js"></script>
 <style>
   * {{ margin: 0; padding: 0; box-sizing: border-box; }}
   body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
          background: #0d1117; color: #e6edf3; min-height: 100vh;
-         display: flex; flex-direction: column; align-items: center; justify-content: center; }}
+         display: flex; flex-direction: column; align-items: center; }}
 
-  .container {{ max-width: 720px; width: 90%; padding: 40px 0; }}
+  .container {{ max-width: 720px; width: 90%; padding: 32px 0; }}
 
   /* Header */
   .header {{ text-align: center; margin-bottom: 40px; }}
@@ -903,6 +1086,95 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
   .skill-rank {{ font-size:1.2rem; margin-right:12px; min-width:28px; text-align:center; }}
   .store-header {{ display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; }}
   .store-search {{ padding:6px 10px; background:#0d1117; border:1px solid #30363d; border-radius:6px; color:#e6edf3; font-size:0.82rem; outline:none; width:200px; }}
+
+  /* ===== File Explorer (Windows 11 Dark) ===== */
+  .file-explorer-container {{
+    background: #1e1e2e; border-radius: 12px; border: 1px solid #333348;
+    overflow: hidden; margin-top: 16px;
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+  }}
+  .file-toolbar {{
+    display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+    background: #252536; border-bottom: 1px solid #333348; flex-wrap: wrap;
+  }}
+  .file-toolbar .breadcrumb {{
+    display: flex; align-items: center; gap: 2px; flex: 1; min-width: 200px;
+    background: #1a1a2e; border-radius: 4px; padding: 6px 10px;
+    overflow-x: auto; white-space: nowrap; font-size: 13px; color: #cdd6f4;
+    border: 1px solid #333348;
+  }}
+  .file-toolbar .breadcrumb .bc-sep {{ color: #585b70; margin: 0 2px; font-size: 11px; user-select: none; }}
+  .file-toolbar .breadcrumb .bc-item {{
+    cursor: pointer; padding: 2px 4px; border-radius: 3px; color: #89b4fa; transition: background 0.15s;
+  }}
+  .file-toolbar .breadcrumb .bc-item:hover {{ background: #2a2d3e; text-decoration: underline; }}
+  .file-toolbar .breadcrumb .bc-item.current {{ color: #cdd6f4; cursor: default; }}
+  .file-toolbar .breadcrumb .bc-item.current:hover {{ background: transparent; text-decoration: none; }}
+  .file-toolbar .breadcrumb .bc-home {{ cursor: pointer; font-size: 15px; padding: 2px 4px; border-radius: 3px; transition: background 0.15s; }}
+  .file-toolbar .breadcrumb .bc-home:hover {{ background: #2a2d3e; }}
+  .fe-btn {{
+    display: inline-flex; align-items: center; gap: 5px; padding: 6px 14px;
+    border: 1px solid #444466; background: #2a2d3e; color: #cdd6f4; border-radius: 4px;
+    cursor: pointer; font-size: 12.5px; font-family: inherit; transition: background 0.15s, border-color 0.15s; white-space: nowrap;
+  }}
+  .fe-btn:hover {{ background: #363952; border-color: #5865f2; }}
+  .fe-btn.danger {{ border-color: #f3425f; color: #f3425f; }}
+  .fe-btn.danger:hover {{ background: #3d1a24; }}
+  .fe-btn.primary {{ background: #264f78; border-color: #3a7bd5; color: #fff; }}
+  .fe-btn.primary:hover {{ background: #2d5f8e; }}
+
+  /* Tabulator overrides */
+  #file-table .tabulator-header {{
+    background: #252536 !important; border-bottom: 1px solid #333348 !important;
+    color: #a6adc8 !important; font-weight: 600; font-size: 12px;
+  }}
+  #file-table .tabulator-header .tabulator-col {{
+    background: #252536 !important; border-right: 1px solid #333348 !important;
+  }}
+  #file-table .tabulator-header .tabulator-col:hover {{ background: #2a2d3e !important; }}
+  #file-table .tabulator-header .tabulator-col .tabulator-col-content {{ padding: 8px 10px; }}
+  #file-table .tabulator-header .tabulator-col-resize-handle {{ width: 6px; right: -3px; }}
+  #file-table .tabulator-header .tabulator-col-resize-handle:hover {{ background: #5865f2; opacity: 0.5; }}
+  #file-table .tabulator-tableholder {{ background: #1e1e2e; }}
+  #file-table .tabulator-row {{
+    background: #1e1e2e !important; border-bottom: 1px solid #292940 !important;
+    color: #cdd6f4; transition: background 0.1s; min-height: 36px;
+  }}
+  #file-table .tabulator-row:hover {{ background: #2a2d3e !important; }}
+  #file-table .tabulator-row.tabulator-selected {{ background: #264f78 !important; }}
+  #file-table .tabulator-row.tabulator-selected:hover {{ background: #2d5f8e !important; }}
+  #file-table .tabulator-row .tabulator-cell {{ border-right: none !important; padding: 6px 10px; }}
+  #file-table .tabulator-row .tabulator-cell.tabulator-frozen {{ background: inherit !important; }}
+  #file-table .tabulator-row .tabulator-cell input[type="checkbox"],
+  #file-table .tabulator-header .tabulator-col input[type="checkbox"] {{
+    accent-color: #5865f2; width: 15px; height: 15px; cursor: pointer;
+  }}
+  .fe-name-cell {{ display: flex; align-items: center; gap: 8px; cursor: default; user-select: none; }}
+  .fe-name-cell .fe-icon {{ font-size: 16px; flex-shrink: 0; width: 20px; text-align: center; }}
+  .fe-name-cell.is-dir {{ cursor: pointer; }}
+  .fe-name-cell.is-dir .fe-label {{ color: #89b4fa; }}
+  .fe-name-cell.is-dir:hover .fe-label {{ text-decoration: underline; }}
+  .fe-name-cell .fe-label {{ overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+  .fe-empty {{ text-align: center; padding: 48px 20px; color: #585b70; font-size: 14px; }}
+  .fe-empty .fe-empty-icon {{ font-size: 40px; margin-bottom: 12px; opacity: 0.5; }}
+
+  /* Context menu */
+  .fe-context-menu {{
+    position: fixed; background: #252536; border: 1px solid #444466; border-radius: 6px;
+    padding: 4px 0; min-width: 180px; z-index: 10000; box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    font-size: 13px; display: none;
+  }}
+  .fe-context-menu.visible {{ display: block; }}
+  .fe-context-menu .ctx-item {{
+    display: flex; align-items: center; gap: 10px; padding: 7px 16px;
+    cursor: pointer; color: #cdd6f4; transition: background 0.1s;
+  }}
+  .fe-context-menu .ctx-item:hover {{ background: #2a2d3e; }}
+  .fe-context-menu .ctx-item.danger {{ color: #f3425f; }}
+  .fe-context-menu .ctx-item.danger:hover {{ background: #3d1a24; }}
+  .fe-context-menu .ctx-sep {{ height: 1px; background: #333348; margin: 4px 0; }}
+  .fe-context-menu .ctx-icon {{ width: 18px; text-align: center; font-size: 14px; }}
+  #fe-upload-input {{ display: none; }}
 </style>
 </head>
 <body>
@@ -967,13 +1239,14 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
 
   <!-- 탭 바 -->
   <div class="hub-tabs">
-    <button class="hub-tab active" onclick="switchHubTab('manage')">앱/데이터 관리</button>
+    <button class="hub-tab active" onclick="switchHubTab('apps')">앱 관리</button>
+    <button class="hub-tab" onclick="switchHubTab('files')">파일 관리</button>
     <button class="hub-tab" onclick="switchHubTab('skills')">스킬 관리</button>
     <button class="hub-tab" onclick="switchHubTab('guide')">명령어 가이드</button>
   </div>
 
-  <!-- 탭 1: 앱/데이터 관리 -->
-  <div class="hub-tab-content active" id="tab-manage">
+  <!-- 탭 1: 앱 관리 -->
+  <div class="hub-tab-content active" id="tab-apps">
 
   <!-- 내 웹앱 (통합 뷰) -->
   <div class="app-section" id="myAppsSection">
@@ -988,48 +1261,6 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
     <h3>공유 받은 앱 <span class="count" id="sharedAppsCount">(0)</span></h3>
     <ul class="app-list" id="sharedAppsList">
       <li class="empty-msg">공유 받은 앱이 없습니다.</li>
-    </ul>
-  </div>
-
-  <!-- 내 공유 데이터 -->
-  <div class="app-section" id="myDatasetsSection">
-    <h3 style="display:flex;justify-content:space-between;align-items:center;">
-      <span>내 공유 데이터 <span class="count" id="myDatasetsCount">(0)</span></span>
-      <button class="btn-sm" style="border-color:#238636;color:#3fb950;padding:5px 12px;font-size:0.78rem;"
-              onclick="toggleRegisterForm()">+ 데이터셋 등록</button>
-    </h3>
-    <!-- 데이터셋 등록 폼 -->
-    <div id="registerDatasetForm" style="display:none;margin-bottom:14px;padding:14px;background:#0d1117;border:1px solid #30363d;border-radius:8px;">
-      <div style="font-size:0.82rem;color:#8b949e;margin-bottom:10px;">
-        workspace 내 파일/디렉토리를 공유 데이터셋으로 등록합니다.
-      </div>
-      <div style="display:flex;gap:8px;margin-bottom:8px;">
-        <input type="text" id="regDatasetName" placeholder="데이터셋 이름 (예: erp-2026q1)"
-               style="flex:1;padding:7px 10px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font-size:0.82rem;outline:none;">
-      </div>
-      <div style="display:flex;gap:8px;margin-bottom:8px;">
-        <input type="text" id="regFilePath" placeholder="[찾아보기]로 파일 또는 폴더 선택"
-               style="flex:1;padding:7px 10px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font-size:0.82rem;outline:none;" readonly>
-        <input type="hidden" id="regFileType" value="directory">
-        <button onclick="openFileBrowser(function(path) {{ document.getElementById('regFilePath').value = path; var ext = path.split('.').pop().toLowerCase(); var typeMap = {{'sqlite':'sqlite','xlsx':'excel','xls':'excel','csv':'csv'}}; document.getElementById('regFileType').value = typeMap[ext] || (path.endsWith('/') ? 'directory' : 'file'); }})"
-                style="padding:7px 14px;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#58a6ff;font-size:0.82rem;cursor:pointer;white-space:nowrap;">찾아보기</button>
-      </div>
-      <div style="display:flex;gap:8px;">
-        <input type="text" id="regDescription" placeholder="설명 (선택)"
-               style="flex:1;padding:7px 10px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font-size:0.82rem;outline:none;">
-        <button onclick="registerDataset()" style="padding:7px 16px;background:#238636;border:none;border-radius:6px;color:#fff;font-size:0.82rem;cursor:pointer;">등록</button>
-      </div>
-    </div>
-    <ul class="app-list" id="myDatasetsList">
-      <li class="empty-msg">공유 데이터가 없습니다. 위 "데이터셋 등록" 버튼으로 등록하거나, 10MB 초과 파일 업로드 시 자동 생성됩니다.</li>
-    </ul>
-  </div>
-
-  <!-- 공유 받은 데이터 -->
-  <div class="app-section" id="sharedDatasetsSection">
-    <h3>공유 받은 데이터 <span class="count" id="sharedDatasetsCount">(0)</span></h3>
-    <ul class="app-list" id="sharedDatasetsList">
-      <li class="empty-msg">공유 받은 데이터가 없습니다.</li>
     </ul>
   </div>
 
@@ -1049,15 +1280,67 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
     </ul>
   </div>
 
-  <div class="guide" style="margin-top:16px;">
-    <div style="font-size:0.82rem;color:#8b949e;line-height:1.8;">
-      <p><strong style="color:#e6edf3;">데이터 공유</strong>: 10MB 초과 Excel/CSV → SQLite 자동 변환 → 위 "내 공유 데이터"에서 개인/조직 지정</p>
-      <p><strong style="color:#e6edf3;">웹앱 공유</strong>: <code style="background:#21262d;padding:2px 6px;border-radius:4px;font-size:0.78rem;color:#79c0ff;">deploy my-app --acl "N1001063"</code> 또는 위 "내 웹앱"에서 접근 관리</p>
-      <p style="margin-top:4px;color:#58a6ff;">공유 변경은 60초 이내 자동 반영됩니다.</p>
-    </div>
-  </div>
+  </div><!-- /tab-apps -->
 
-  </div><!-- /tab-manage -->
+  <!-- 탭 2: 파일 관리 -->
+  <div class="hub-tab-content" id="tab-files">
+    <div class="file-explorer-container">
+      <div class="file-toolbar">
+        <button class="fe-btn" onclick="navigateUp()" title="상위 폴더"><span style="font-size:14px;">&#11014;</span></button>
+        <div class="breadcrumb" id="fe-breadcrumb">
+          <span class="bc-home" onclick="loadDirectory('')">&#127968;</span>
+          <span class="bc-sep">&#8250;</span>
+          <span class="bc-item current">workspace</span>
+        </div>
+        <button class="fe-btn primary" onclick="document.getElementById('fe-upload-input').click()">&#128228; 업로드</button>
+        <button class="fe-btn" onclick="createNewFolder()">&#128193; 새 폴더</button>
+        <button class="fe-btn danger" onclick="deleteSelectedFiles()">&#128465; 삭제</button>
+      </div>
+      <div id="file-table"></div>
+      <input type="file" id="fe-upload-input" multiple onchange="uploadFilesExplorer(this.files)" />
+    </div>
+
+    <!-- 내 공유 데이터 -->
+    <div class="app-section" id="myDatasetsSection">
+      <h3 style="display:flex;justify-content:space-between;align-items:center;">
+        <span>내 공유 데이터 <span class="count" id="myDatasetsCount">(0)</span></span>
+        <button class="btn-sm" style="border-color:#238636;color:#3fb950;padding:5px 12px;font-size:0.78rem;"
+                onclick="toggleRegisterForm()">+ 데이터셋 등록</button>
+      </h3>
+      <div id="registerDatasetForm" style="display:none;margin-bottom:14px;padding:14px;background:#0d1117;border:1px solid #30363d;border-radius:8px;">
+        <div style="font-size:0.82rem;color:#8b949e;margin-bottom:10px;">
+          workspace 내 파일/디렉토리를 공유 데이터셋으로 등록합니다.
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:8px;">
+          <input type="text" id="regDatasetName" placeholder="데이터셋 이름 (예: erp-2026q1)"
+                 style="flex:1;padding:7px 10px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font-size:0.82rem;outline:none;">
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:8px;">
+          <input type="text" id="regFilePath" placeholder="[찾아보기]로 파일 또는 폴더 선택"
+                 style="flex:1;padding:7px 10px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font-size:0.82rem;outline:none;" readonly>
+          <input type="hidden" id="regFileType" value="directory">
+          <button onclick="openFileBrowser(function(path) {{ document.getElementById('regFilePath').value = path; var ext = path.split('.').pop().toLowerCase(); var typeMap = {{'sqlite':'sqlite','xlsx':'excel','xls':'excel','csv':'csv'}}; document.getElementById('regFileType').value = typeMap[ext] || (path.endsWith('/') ? 'directory' : 'file'); }})"
+                  style="padding:7px 14px;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#58a6ff;font-size:0.82rem;cursor:pointer;white-space:nowrap;">찾아보기</button>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <input type="text" id="regDescription" placeholder="설명 (선택)"
+                 style="flex:1;padding:7px 10px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font-size:0.82rem;outline:none;">
+          <button onclick="registerDataset()" style="padding:7px 16px;background:#238636;border:none;border-radius:6px;color:#fff;font-size:0.82rem;cursor:pointer;">등록</button>
+        </div>
+      </div>
+      <ul class="app-list" id="myDatasetsList">
+        <li class="empty-msg">공유 데이터가 없습니다. 위 "데이터셋 등록" 버튼으로 등록하거나, 10MB 초과 파일 업로드 시 자동 생성됩니다.</li>
+      </ul>
+    </div>
+
+    <!-- 공유 받은 데이터 -->
+    <div class="app-section" id="sharedDatasetsSection">
+      <h3>공유 받은 데이터 <span class="count" id="sharedDatasetsCount">(0)</span></h3>
+      <ul class="app-list" id="sharedDatasetsList">
+        <li class="empty-msg">공유 받은 데이터가 없습니다.</li>
+      </ul>
+    </div>
+  </div><!-- /tab-files -->
 
   <!-- 탭 2: 스킬 관리 -->
   <div class="hub-tab-content" id="tab-skills">
@@ -1244,6 +1527,17 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
   </div>
 </div>
 
+<!-- 파일 탐색기 우클릭 메뉴 -->
+<div class="fe-context-menu" id="fe-context-menu">
+  <div class="ctx-item" onclick="ctxOpen()"><span class="ctx-icon">&#128194;</span> 열기</div>
+  <div class="ctx-item" onclick="ctxDownload()"><span class="ctx-icon">&#128190;</span> 다운로드</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item" onclick="ctxRename()"><span class="ctx-icon">&#9999;</span> 이름 바꾸기</div>
+  <div class="ctx-item" onclick="ctxCopyPath()"><span class="ctx-icon">&#128203;</span> 경로 복사</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item danger" onclick="ctxDelete()"><span class="ctx-icon">&#128465;</span> 삭제</div>
+</div>
+
 <div id="hubToast" style="position:fixed;top:20px;right:20px;padding:14px 22px;
   background:#1e293b;border:1px solid #58a6ff;border-radius:8px;color:#e6edf3;font-size:0.9rem;
   display:none;z-index:100;box-shadow:0 4px 20px rgba(0,0,0,0.4);">
@@ -1324,10 +1618,11 @@ function apiFetch(path, opts) {{
   return fetch('/api/v1' + path, opts).then(function(r) {{ return r.json(); }});
 }}
 
+var fileserverBase = '/files/{pod_name}';
 function localFetch(path, opts) {{
   opts = opts || {{}};
   opts.headers = Object.assign({{}}, authHeaders, opts.headers || {{}});
-  return fetch(path, opts).then(function(r) {{ return r.json(); }});
+  return fetch(fileserverBase + path, opts).then(function(r) {{ return r.json(); }});
 }}
 
 function esc(s) {{ var d = document.createElement('div'); d.textContent = s || ''; return d.textContent; }}
@@ -1807,8 +2102,7 @@ function closeFileBrowser() {{
 }}
 
 function browseDirectory(dirPath) {{
-  var filesUrl = '/files/{pod_name}/';
-  fetch(filesUrl.replace(/\/$/, '') + '/api/browse?path=' + encodeURIComponent(dirPath))
+  fetch(fileserverBase + '/api/browse?path=' + encodeURIComponent(dirPath))
     .then(function(r) {{ return r.json(); }})
     .then(function(data) {{
       // 빵 부스러기 네비게이션
@@ -1968,7 +2262,7 @@ function registerDataset() {{
 
 // ── 탭 전환 ──
 function switchHubTab(tab) {{
-  ['manage','skills','guide'].forEach(function(t) {{
+  ['apps','files','skills','guide'].forEach(function(t) {{
     var el = document.getElementById('tab-' + t);
     var btn = document.querySelector('.hub-tab[onclick*="' + t + '"]');
     if (t === tab) {{
@@ -1979,13 +2273,263 @@ function switchHubTab(tab) {{
       if (btn) btn.classList.remove('active');
     }}
   }});
-  // Load skill data when switching to skills tab
   if (tab === 'skills') {{
     loadMySkills();
     loadSkillStore('popular');
     loadInstalledSkills();
   }}
+  if (tab === 'files') {{
+    if (!feTable) initFileExplorer();
+    else loadDirectory(feCurrentPath);
+    loadMyDatasets();
+    loadSharedDatasets();
+  }}
 }}
+
+// ── 파일 탐색기 (Tabulator) ──
+var feTable = null;
+var feCurrentPath = '';
+var feContextTarget = null;
+
+function getFileIcon(name, isDir) {{
+  if (isDir) return '\\ud83d\\udcc1';
+  var ext = (name.split('.').pop() || '').toLowerCase();
+  var m = {{'py':'\\ud83d\\udc0d','js':'\\ud83d\\udcdc','ts':'\\ud83d\\udcd8','html':'\\ud83c\\udf10','css':'\\ud83c\\udfa8','json':'\\ud83d\\udccb','yaml':'\\ud83d\\udccb','md':'\\ud83d\\udcdd','txt':'\\ud83d\\udcdd','csv':'\\ud83d\\udcca','xlsx':'\\ud83d\\udcca','xls':'\\ud83d\\udcca','sql':'\\ud83d\\uddc4','png':'\\ud83d\\uddbc','jpg':'\\ud83d\\uddbc','svg':'\\ud83d\\uddbc','pdf':'\\ud83d\\udcd5','zip':'\\ud83d\\udce6','sh':'\\u2699','env':'\\ud83d\\udd12','lock':'\\ud83d\\udd12','java':'\\u2615','go':'\\ud83d\\udc39'}};
+  return m[ext] || '\\ud83d\\udcc4';
+}}
+function formatFileSize(bytes) {{
+  if (bytes == null || bytes === 0) return '\\u2014';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+  if (bytes < 1073741824) return (bytes / 1048576).toFixed(1) + ' MB';
+  return (bytes / 1073741824).toFixed(2) + ' GB';
+}}
+function formatFileDate(dateStr) {{
+  if (!dateStr) return '\\u2014';
+  var d = new Date(dateStr);
+  if (isNaN(d.getTime())) return '\\u2014';
+  var y=d.getFullYear(),mo=String(d.getMonth()+1).padStart(2,'0'),dy=String(d.getDate()).padStart(2,'0');
+  var h=d.getHours(),mi=String(d.getMinutes()).padStart(2,'0');
+  var ap=h>=12?'\\uc624\\ud6c4':'\\uc624\\uc804';
+  var h12=h%12; if(h12===0) h12=12;
+  return y+'-'+mo+'-'+dy+' '+ap+' '+h12+':'+mi;
+}}
+function getFileType(name, isDir) {{
+  if (isDir) return '\\ud30c\\uc77c \\ud3f4\\ub354';
+  var ext = (name.split('.').pop() || '').toLowerCase();
+  if (ext === name.toLowerCase()) return '\\ud30c\\uc77c';
+  var t={{'py':'Python','js':'JavaScript','ts':'TypeScript','html':'HTML','css':'CSS','json':'JSON','yaml':'YAML','md':'Markdown','txt':'\\ud14d\\uc2a4\\ud2b8','csv':'CSV','xlsx':'Excel','sql':'SQL','pdf':'PDF','png':'PNG','jpg':'JPEG','svg':'SVG','zip':'ZIP','sh':'\\uc178 \\uc2a4\\ud06c\\ub9bd\\ud2b8'}};
+  return t[ext] || ext.toUpperCase()+' \\ud30c\\uc77c';
+}}
+
+function updateBreadcrumb(path) {{
+  var el = document.getElementById('fe-breadcrumb');
+  if (!el) return;
+  var parts = path ? path.split('/').filter(function(p){{return p;}}) : [];
+  // Build breadcrumb via DOM (safe, no raw HTML injection)
+  el.textContent = '';
+  var home = document.createElement('span'); home.className='bc-home'; home.textContent='\\ud83c\\udfe0';
+  home.onclick = function(){{loadDirectory('');}};
+  el.appendChild(home);
+  var sep0 = document.createElement('span'); sep0.className='bc-sep'; sep0.textContent='\\u203a';
+  el.appendChild(sep0);
+  if (parts.length === 0) {{
+    var cur = document.createElement('span'); cur.className='bc-item current'; cur.textContent='workspace';
+    el.appendChild(cur);
+  }} else {{
+    var wsLink = document.createElement('span'); wsLink.className='bc-item'; wsLink.textContent='workspace';
+    wsLink.onclick = function(){{loadDirectory('');}};
+    el.appendChild(wsLink);
+    var acc = '';
+    for (var i=0; i<parts.length; i++) {{
+      acc = acc ? acc+'/'+parts[i] : parts[i];
+      var s = document.createElement('span'); s.className='bc-sep'; s.textContent='\\u203a';
+      el.appendChild(s);
+      var item = document.createElement('span');
+      if (i === parts.length-1) {{
+        item.className='bc-item current'; item.textContent=parts[i];
+      }} else {{
+        item.className='bc-item'; item.textContent=parts[i];
+        (function(target){{ item.onclick=function(){{loadDirectory(target);}}; }})(acc);
+      }}
+      el.appendChild(item);
+    }}
+  }}
+}}
+
+function initFileExplorer() {{
+  feTable = new Tabulator('#file-table', {{
+    layout: 'fitColumns', height: '460px',
+    placeholder: '<div class="fe-empty"><div class="fe-empty-icon">&#128194;</div><div>\\uc774 \\ud3f4\\ub354\\ub294 \\ube44\\uc5b4 \\uc788\\uc2b5\\ub2c8\\ub2e4</div></div>',
+    selectable: true, selectableRangeMode: 'click', headerSortTristate: true,
+    columns: [
+      {{ formatter:'rowSelection', titleFormatter:'rowSelection',
+         titleFormatterParams:{{rowRange:'active'}},
+         hozAlign:'center', headerHozAlign:'center', headerSort:false, width:40, frozen:true }},
+      {{ title:'\\uc774\\ub984', field:'name', minWidth:250,
+         formatter:function(cell){{
+           var data=cell.getRow().getData(); var isDir=data.type==='dir';
+           var div=document.createElement('div'); div.className='fe-name-cell'+(isDir?' is-dir':'');
+           var iconSpan=document.createElement('span'); iconSpan.className='fe-icon'; iconSpan.textContent=getFileIcon(data.name,isDir);
+           var label=document.createElement('span'); label.className='fe-label'; label.textContent=data.name;
+           div.appendChild(iconSpan); div.appendChild(label); return div;
+         }},
+         sorter:function(a,b,aRow,bRow){{
+           var ad=aRow.getData().type==='dir'?0:1, bd=bRow.getData().type==='dir'?0:1;
+           if(ad!==bd) return ad-bd; return a.localeCompare(b);
+         }},
+         cellClick:function(e,cell){{
+           var d=cell.getRow().getData();
+           if(d.type==='dir') loadDirectory(d.path);
+         }}
+      }},
+      {{ title:'\\uc218\\uc815\\ud55c \\ub0a0\\uc9dc', field:'mtime', width:180,
+         formatter:function(cell){{return formatFileDate(cell.getValue());}}, sorter:'string' }},
+      {{ title:'\\uc720\\ud615', field:'type_display', width:140,
+         mutator:function(v,data){{return getFileType(data.name,data.type==='dir');}}, sorter:'string' }},
+      {{ title:'\\ud06c\\uae30', field:'size', width:110, hozAlign:'right',
+         formatter:function(cell){{
+           if(cell.getRow().getData().type==='dir') return '\\u2014';
+           return formatFileSize(cell.getValue());
+         }},
+         sorter:function(a,b,aRow,bRow){{
+           if(aRow.getData().type==='dir'&&bRow.getData().type!=='dir') return -1;
+           if(aRow.getData().type!=='dir'&&bRow.getData().type==='dir') return 1;
+           return (a||0)-(b||0);
+         }}
+      }}
+    ],
+    rowDblClick:function(e,row){{ var d=row.getData(); if(d.type==='dir') loadDirectory(d.path); }},
+    rowContext:function(e,row){{ e.preventDefault(); feContextTarget=row.getData(); row.select(); showContextMenu(e.pageX,e.pageY); }}
+  }});
+  loadDirectory('');
+}}
+
+function loadDirectory(path) {{
+  feCurrentPath = path || '';
+  updateBreadcrumb(feCurrentPath);
+  fetch(fileserverBase + '/api/browse?path=' + encodeURIComponent(feCurrentPath))
+    .then(function(r){{return r.json();}})
+    .then(function(data){{
+      var entries = data.entries || [];
+      entries.sort(function(a,b){{
+        if(a.type==='dir'&&b.type!=='dir') return -1;
+        if(a.type!=='dir'&&b.type==='dir') return 1;
+        return a.name.localeCompare(b.name);
+      }});
+      if(feTable) feTable.setData(entries);
+    }}).catch(function(){{ if(feTable) feTable.clearData(); }});
+}}
+
+function navigateUp() {{
+  if (!feCurrentPath) return;
+  var parts = feCurrentPath.split('/').filter(function(p){{return p;}});
+  parts.pop(); loadDirectory(parts.join('/'));
+}}
+
+function uploadFilesExplorer(files) {{
+  if (!files||files.length===0) return;
+  var formData = new FormData();
+  for (var i=0;i<files.length;i++) formData.append('files',files[i]);
+  fetch(fileserverBase + '/upload', {{ method:'POST', body:formData }})
+    .then(function(r){{return r.json();}})
+    .then(function(){{ loadDirectory(feCurrentPath); }})
+    .catch(function(err){{ alert('\\uc5c5\\ub85c\\ub4dc \\uc2e4\\ud328: '+err); }});
+  document.getElementById('fe-upload-input').value = '';
+}}
+
+function deleteSelectedFiles() {{
+  if (!feTable) return;
+  var selected = feTable.getSelectedData();
+  if (selected.length===0) {{ alert('\\uc0ad\\uc81c\\ud560 \\ud30c\\uc77c\\uc744 \\uc120\\ud0dd\\ud558\\uc138\\uc694.'); return; }}
+  var names = selected.map(function(s){{return s.name;}}).join(', ');
+  if (!confirm(selected.length+'\\uac1c \\ud56d\\ubaa9 \\uc0ad\\uc81c?\\n\\n'+names)) return;
+  var promises = selected.map(function(item){{
+    var p = feCurrentPath ? feCurrentPath+'/'+item.name : item.name;
+    return fetch(fileserverBase + '/api/delete', {{
+      method:'POST', headers:{{'Content-Type':'application/json'}},
+      body:JSON.stringify({{path:p}})
+    }});
+  }});
+  Promise.all(promises).then(function(){{loadDirectory(feCurrentPath);}}).catch(function(){{loadDirectory(feCurrentPath);}});
+}}
+
+function createNewFolder() {{
+  var name = prompt('\\uc0c8 \\ud3f4\\ub354 \\uc774\\ub984:');
+  if (!name) return;
+  var dirPath = feCurrentPath ? feCurrentPath+'/'+name : name;
+  fetch(fileserverBase + '/api/mkdir', {{
+    method:'POST', headers:{{'Content-Type':'application/json'}},
+    body:JSON.stringify({{path:dirPath}})
+  }}).then(function(){{ loadDirectory(feCurrentPath); }})
+    .catch(function(err){{ alert('\\ud3f4\\ub354 \\uc0dd\\uc131 \\uc2e4\\ud328: '+err); }});
+}}
+
+function downloadFileExplorer(filePath) {{
+  var a = document.createElement('a');
+  a.href = fileserverBase + '/api/download?path='+encodeURIComponent(filePath);
+  a.download = ''; document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}}
+
+function renameFileExplorer(filePath, oldName) {{
+  var newName = prompt('\\uc0c8 \\uc774\\ub984:', oldName);
+  if (!newName || newName===oldName) return;
+  fetch(fileserverBase + '/api/rename', {{
+    method:'POST', headers:{{'Content-Type':'application/json'}},
+    body:JSON.stringify({{old_path:filePath, new_name:newName}})
+  }}).then(function(r){{return r.json();}})
+    .then(function(data){{
+      if(data.error) alert('\\uc774\\ub984 \\ubcc0\\uacbd \\uc2e4\\ud328: '+data.error);
+      else loadDirectory(feCurrentPath);
+    }}).catch(function(err){{ alert('\\uc624\\ub958: '+err); }});
+}}
+
+// Context menu
+function showContextMenu(x,y) {{
+  var menu=document.getElementById('fe-context-menu');
+  menu.style.left=x+'px'; menu.style.top=y+'px'; menu.classList.add('visible');
+  var rect=menu.getBoundingClientRect();
+  if(rect.right>window.innerWidth) menu.style.left=(x-rect.width)+'px';
+  if(rect.bottom>window.innerHeight) menu.style.top=(y-rect.height)+'px';
+}}
+function hideContextMenu() {{
+  var menu=document.getElementById('fe-context-menu');
+  if(menu) menu.classList.remove('visible'); feContextTarget=null;
+}}
+document.addEventListener('click', function(){{ hideContextMenu(); }});
+document.addEventListener('keydown', function(e){{ if(e.key==='Escape') hideContextMenu(); }});
+function ctxOpen() {{
+  if(!feContextTarget) return;
+  if(feContextTarget.type==='dir') loadDirectory(feContextTarget.path);
+  else downloadFileExplorer(feContextTarget.path);
+  hideContextMenu();
+}}
+function ctxDownload() {{ if(!feContextTarget) return; downloadFileExplorer(feContextTarget.path); hideContextMenu(); }}
+function ctxRename() {{ if(!feContextTarget) return; renameFileExplorer(feContextTarget.path,feContextTarget.name); hideContextMenu(); }}
+function ctxCopyPath() {{
+  if(!feContextTarget) return;
+  if(navigator.clipboard) navigator.clipboard.writeText(feContextTarget.path);
+  hideContextMenu();
+}}
+function ctxDelete() {{
+  if(!feContextTarget) return;
+  if(!confirm('"'+feContextTarget.name+'" \\uc0ad\\uc81c?')) {{ hideContextMenu(); return; }}
+  fetch(fileserverBase + '/api/delete', {{
+    method:'POST', headers:{{'Content-Type':'application/json'}},
+    body:JSON.stringify({{path:feContextTarget.path}})
+  }}).then(function(){{ loadDirectory(feCurrentPath); }});
+  hideContextMenu();
+}}
+// 키보드 단축키 (파일 탭 활성 시)
+document.addEventListener('keydown', function(e) {{
+  var tab=document.getElementById('tab-files');
+  if(!tab||!tab.classList.contains('active')) return;
+  if(e.key==='Backspace'&&!e.target.matches('input,textarea')){{ e.preventDefault(); navigateUp(); }}
+  if(e.key==='Delete'&&!e.target.matches('input,textarea')) deleteSelectedFiles();
+  if(e.key==='F2'&&feTable){{ var s=feTable.getSelectedData(); if(s.length===1) renameFileExplorer(s[0].path,s[0].name); }}
+  if(e.key==='Enter'&&!e.target.matches('input,textarea')&&feTable){{ var s=feTable.getSelectedData(); if(s.length===1&&s[0].type==='dir') loadDirectory(s[0].path); }}
+  if(e.key==='a'&&(e.ctrlKey||e.metaKey)&&!e.target.matches('input,textarea')){{ e.preventDefault(); if(feTable) feTable.selectRow(); }}
+}});
 
 // ── 앱 상태 통합 로드 ──
 function loadAppStatus() {{
@@ -2411,11 +2955,9 @@ function publishSkill(name) {{
   }}).catch(function() {{}});
 }}
 
-// 초기 로드
+// 초기 로드 (앱 탭 — 기본 활성)
 loadMyApps();
 loadSharedApps();
-loadMyDatasets();
-loadSharedDatasets();
 loadAppStatus();
 loadMyShares();
 

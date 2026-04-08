@@ -34,11 +34,11 @@ class Settings(BaseSettings):
     k8s_pod_image: str = ""  # ECR image URL
     k8s_service_account: str = "claude-terminal-sa"
     k8s_pod_ttl_seconds: int = 14400  # 4시간
-    # 1node-1pod: t3.medium(2CPU/4GB) 기준, 시스템 예약 제외 후 최대 활용
-    k8s_pod_cpu_request: str = "500m"
-    k8s_pod_cpu_limit: str = "1800m"
-    k8s_pod_memory_request: str = "1.5Gi"
-    k8s_pod_memory_limit: str = "3584Mi"
+    # 1node-1pod: t3.medium allocatable=1930m/3297Mi, 시스템 ~200m/~300Mi 예약
+    k8s_pod_cpu_request: str = "1700m"
+    k8s_pod_cpu_limit: str = "1700m"
+    k8s_pod_memory_request: str = "2900Mi"
+    k8s_pod_memory_limit: str = "2900Mi"
 
     # ----- Telegram Bot -----
     telegram_bot_token: str = ""

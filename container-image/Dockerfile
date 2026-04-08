@@ -130,6 +130,13 @@ COPY --chown=node:node config/plugins-known-marketplaces.json /home/node/.claude
 COPY --chown=node:node config/plugins-marketplaces/ /home/node/.claude/plugins/marketplaces/
 COPY --chown=node:node config/plugins-data/ /home/node/.claude/plugins/data/
 
+# Tabulator.js (파일 탐색기 UI) — CDN 불가 환경 대비 로컬 번들
+RUN mkdir -p /opt/static && \
+    curl -fsSL "https://unpkg.com/tabulator-tables@6.3.0/dist/js/tabulator.min.js" \
+      -o /opt/static/tabulator.min.js && \
+    curl -fsSL "https://unpkg.com/tabulator-tables@6.3.0/dist/css/tabulator_midnight.min.css" \
+      -o /opt/static/tabulator_midnight.min.css
+
 # 파일 업로드/다운로드 서버
 COPY fileserver.py /usr/local/bin/fileserver.py
 

@@ -187,10 +187,10 @@ class K8sService:
         from app.models.infra_policy import INFRA_TEMPLATES
         infra = infra_policy or INFRA_TEMPLATES["standard"]
 
-        cpu_req = infra.get("cpu_request", "500m")
-        cpu_lim = infra.get("cpu_limit", "1800m")
-        mem_req = infra.get("memory_request", "1.5Gi")
-        mem_lim = infra.get("memory_limit", "3584Mi")
+        cpu_req = infra.get("cpu_request", "1700m")
+        cpu_lim = infra.get("cpu_limit", "1700m")
+        mem_req = infra.get("memory_request", "2900Mi")
+        mem_lim = infra.get("memory_limit", "2900Mi")
         node_selector_val = infra.get("node_selector")  # dict or None
         shared_writable = infra.get("shared_dir_writable", False)
 
@@ -279,6 +279,7 @@ class K8sService:
                     client.V1Container(
                         name="terminal",
                         image=self.settings.k8s_pod_image,
+                        image_pull_policy="Always",
                         ports=[client.V1ContainerPort(container_port=7681, name="ttyd")],
                         env=self._build_env_vars(
                             username, user_display_name, security_policy,
