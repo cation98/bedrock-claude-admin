@@ -188,9 +188,9 @@ class K8sService:
         infra = infra_policy or INFRA_TEMPLATES["standard"]
 
         cpu_req = infra.get("cpu_request", "500m")
-        cpu_lim = infra.get("cpu_limit", "1000m")
+        cpu_lim = infra.get("cpu_limit", "1800m")
         mem_req = infra.get("memory_request", "1.5Gi")
-        mem_lim = infra.get("memory_limit", "3Gi")
+        mem_lim = infra.get("memory_limit", "3584Mi")
         node_selector_val = infra.get("node_selector")  # dict or None
         shared_writable = infra.get("shared_dir_writable", False)
 

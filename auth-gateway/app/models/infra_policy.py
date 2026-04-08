@@ -22,9 +22,9 @@ INFRA_TEMPLATES = {
         "node_selector": {"role": "claude-dedicated"},
         "max_pods_per_node": 1,
         "cpu_request": "500m",
-        "cpu_limit": "1000m",
+        "cpu_limit": "1800m",
         "memory_request": "1.5Gi",
-        "memory_limit": "3Gi",
+        "memory_limit": "3584Mi",
         "shared_dir_writable": False,
     },
     "premium": {
