@@ -160,7 +160,7 @@ if [ -d /home/node/workspace/.claude-backup/projects ]; then
     cp -r /home/node/workspace/.claude-backup/projects/ /home/node/.claude/projects/ 2>/dev/null
     cp /home/node/workspace/.claude-backup/history.jsonl /home/node/.claude/history.jsonl 2>/dev/null
     # 세션 메타데이터 복원 — /resume 목록에 이전 세션 표시
-    cp -r /home/node/workspace/.claude-backup/sessions/ /home/node/.claude/sessions/ 2>/dev/null
+    cp -r /home/node/workspace/.claude-backup/sessions/ /home/node/.claude/sessions/ 2>/dev/null || true
     echo "  이전 대화 복원 완료"
 fi
 # .serena 프로젝트 메모리 복원
