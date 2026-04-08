@@ -325,6 +325,11 @@ class AppDeployService:
                         "/api/v1/apps/auth-check"
                     ),
                     "nginx.ingress.kubernetes.io/auth-response-headers": "X-Auth-Username",
+                    # auth-signin: 401 반환 시 로그인 페이지로 리다이렉트
+                    "nginx.ingress.kubernetes.io/auth-signin": (
+                        "https://claude.skons.net/webapp-login"
+                        "?return_url=$scheme://$host$request_uri"
+                    ),
 
                     # ── A02: Cryptographic Failures ──
                     # HTTPS 강제, HSTS 헤더
