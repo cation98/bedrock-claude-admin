@@ -2143,7 +2143,7 @@ function renameApp(oldName) {{
 }}
 
 function deleteProject(path) {{
-  if (!confirm('프로젝트를 삭제합니다: ' + path + '\n이 작업은 되돌릴 수 없습니다.')) return;
+  if (!confirm('프로젝트를 삭제합니다: ' + path + '\\n이 작업은 되돌릴 수 없습니다.')) return;
   localFetch('/api/apps/delete-project', {{
     method: 'POST',
     headers: {{'Content-Type': 'application/json'}},
