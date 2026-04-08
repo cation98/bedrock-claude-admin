@@ -25,6 +25,7 @@ from app.models.prompt_audit import PromptAuditSummary, PromptAuditFlag, PromptA
 from app.models.token_quota import TokenQuotaTemplate, TokenQuotaAssignment  # noqa: F401 — create_all이 테이블 생성하도록 import
 from app.models.proxy import AllowedDomain, ProxyAccessLog  # noqa: F401 — create_all이 테이블 생성하도록 import
 from app.models.bot import UserBot  # noqa: F401 — create_all이 user_bots 테이블 생성하도록 import
+from app.models.skill import SharedSkill, SkillInstall  # noqa: F401 — create_all이 skill_installs 테이블 생성하도록 import
 from app.routers import admin, apps, auth, bots, file_share, sessions, users, sms, skills, telegram, security, scheduling, infra_policy, surveys, app_proxy, portal
 
 logging.basicConfig(level=logging.INFO)
@@ -170,6 +171,71 @@ def _run_app_acl_grant_migration() -> None:
         conn.commit()
 
 
+def _run_skill_store_migration() -> None:
+    """shared_skills 테이블에 스킬 스토어 컬럼 추가 + skill_installs 테이블 생성.
+
+    create_all이 새 테이블(skill_installs)은 자동 생성하지만,
+    기존 테이블(shared_skills)에 새 컬럼은 추가하지 않으므로 수동 마이그레이션.
+    """
+    with engine.connect() as conn:
+        # shared_skills에 스토어용 컬럼 추가
+        store_columns = {
+            "owner_username": "VARCHAR(50)",
+            "skill_name": "VARCHAR(100)",
+            "display_name": "VARCHAR(200)",
+            "skill_type": "VARCHAR(20) DEFAULT 'slash_command'",
+            "skill_dir_name": "VARCHAR(100)",
+            "install_count": "INTEGER DEFAULT 0",
+            "is_active": "BOOLEAN DEFAULT TRUE",
+            "updated_at": "TIMESTAMPTZ",
+        }
+        for col_name, col_type in store_columns.items():
+            result = conn.execute(text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name='shared_skills' AND column_name=:col_name"
+            ), {"col_name": col_name})
+            if result.fetchone() is None:
+                conn.execute(text(
+                    f"ALTER TABLE shared_skills ADD COLUMN {col_name} {col_type}"
+                ))
+                logger.info(f"Migration: shared_skills.{col_name} 컬럼 추가 완료")
+
+        # description 컬럼을 TEXT로 확장 (기존 VARCHAR(500) → TEXT)
+        # 기존 컬럼이 varchar(500)이면 TEXT로 변경
+        result = conn.execute(text(
+            "SELECT data_type, character_maximum_length FROM information_schema.columns "
+            "WHERE table_name='shared_skills' AND column_name='description'"
+        ))
+        row = result.fetchone()
+        if row and row[0] == 'character varying' and row[1] and row[1] <= 500:
+            conn.execute(text(
+                "ALTER TABLE shared_skills ALTER COLUMN description TYPE TEXT"
+            ))
+            logger.info("Migration: shared_skills.description VARCHAR→TEXT 변경 완료")
+
+        # title, content를 nullable로 변경 (스토어 스킬은 이 컬럼을 사용하지 않을 수 있음)
+        for col in ("title", "content"):
+            try:
+                conn.execute(text(
+                    f"ALTER TABLE shared_skills ALTER COLUMN {col} DROP NOT NULL"
+                ))
+            except Exception:
+                pass  # 이미 nullable이면 무시
+
+        # owner_username 인덱스 추가
+        result = conn.execute(text(
+            "SELECT indexname FROM pg_indexes "
+            "WHERE tablename='shared_skills' AND indexname='ix_shared_skills_owner'"
+        ))
+        if result.fetchone() is None:
+            conn.execute(text(
+                "CREATE INDEX ix_shared_skills_owner ON shared_skills(owner_username)"
+            ))
+            logger.info("Migration: shared_skills owner_username 인덱스 추가")
+
+        conn.commit()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """앱 시작/종료 라이프사이클 — DB 초기화 + 백그라운드 스케줄러 시작."""
@@ -179,6 +245,7 @@ async def lifespan(app: FastAPI):
     _run_app_visibility_migration()
     _run_proxy_secret_migration()
     _run_app_acl_grant_migration()
+    _run_skill_store_migration()
     idle_task = asyncio.create_task(idle_checker_loop(settings))
     snapshot_task = asyncio.create_task(token_snapshot_loop(settings))
     audit_task = asyncio.create_task(prompt_audit_loop(settings))

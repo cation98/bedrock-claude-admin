@@ -5,7 +5,10 @@
 # 사용법:
 #   deploy <앱이름>                          기본 배포
 #   deploy <앱이름> --acl "user1,user2"      접근 허용 사용자 지정
-#   deploy <앱이름> --rollback <버전>        이전 버전으로 롤백
+#   deploy <앱이름> --versions               버전 목록 보기
+#   deploy <앱이름> --history                변경 기록 보기
+#   deploy <앱이름> --restore <버전>         특정 버전으로 복원
+#   deploy <앱이름> --rollback <버전>        이전 배포 버전으로 롤백
 #   deploy <앱이름> --undeploy               앱 삭제 (배포 해제)
 #
 # 앱 소스: ~/apps/<앱이름>/
@@ -43,12 +46,18 @@ usage() {
   사용법:
     deploy <앱이름>                          앱 배포
     deploy <앱이름> --acl "user1,user2"      접근 허용 사용자 지정
-    deploy <앱이름> --rollback <버전>        이전 버전으로 롤백
+    deploy <앱이름> --versions               버전 목록 보기
+    deploy <앱이름> --history                변경 기록 보기
+    deploy <앱이름> --restore <버전>         특정 버전으로 복원
+    deploy <앱이름> --rollback <버전>        이전 배포 버전으로 롤백
     deploy <앱이름> --undeploy               앱 삭제
 
   예시:
     deploy my-dashboard
     deploy my-dashboard --acl "N1102359,N1234567"
+    deploy my-dashboard --versions
+    deploy my-dashboard --history
+    deploy my-dashboard --restore v-20260401-1430
     deploy my-dashboard --rollback v-20260401-1430
     deploy my-dashboard --undeploy
 
@@ -65,7 +74,10 @@ EOF
 APP_NAME=""
 ACL_USERS=""
 ROLLBACK_VERSION=""
+RESTORE_VERSION=""
 DO_UNDEPLOY=false
+DO_VERSIONS=false
+DO_HISTORY=false
 
 if [ $# -lt 1 ]; then
     usage
@@ -92,11 +104,27 @@ while [ $# -gt 0 ]; do
             ROLLBACK_VERSION="$2"
             shift 2
             ;;
+        --versions|-v)
+            DO_VERSIONS=true
+            shift
+            ;;
+        --history)
+            DO_HISTORY=true
+            shift
+            ;;
+        --restore|-r)
+            if [ -z "${2:-}" ]; then
+                error "--restore 옵션에 버전이 필요합니다 (예: --restore v-20260401-1430)"
+                exit 1
+            fi
+            RESTORE_VERSION="$2"
+            shift 2
+            ;;
         --undeploy)
             DO_UNDEPLOY=true
             shift
             ;;
-        --help|-h)
+        --help)
             usage
             ;;
         *)
@@ -105,6 +133,102 @@ while [ $# -gt 0 ]; do
             ;;
     esac
 done
+
+# ===========================================================================
+# 앱 이름 유효성 검사 (조기 종료 서브커맨드에서도 적용)
+# ===========================================================================
+if ! echo "${APP_NAME}" | grep -qE '^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$'; then
+    error "앱 이름은 영문 소문자, 숫자, 하이픈(-)만 사용할 수 있습니다."
+    exit 1
+fi
+
+# ===========================================================================
+# 버전 목록 (--versions)
+# ===========================================================================
+if [ "${DO_VERSIONS}" = true ]; then
+    APP_DIR="${HOME}/apps/${APP_NAME}"
+    if [ ! -d "${APP_DIR}/.git" ]; then
+        error "'${APP_NAME}'에 버전 기록이 없습니다."
+        exit 1
+    fi
+    echo ""
+    echo "📋 ${APP_NAME} 버전 목록:"
+    echo "─────────────────────────"
+    CURRENT=$(readlink "${HOME}/deployed/${APP_NAME}/current" 2>/dev/null | xargs basename 2>/dev/null || echo "")
+    git -C "${APP_DIR}" tag -l 'v-*' --sort=-creatordate --format='%(refname:short) %(creatordate:short)' | while read TAG DATE; do
+        if [ "${TAG}" = "${CURRENT}" ]; then
+            echo "  ▶ ${TAG}  ${DATE}  (현재)"
+        else
+            echo "    ${TAG}  ${DATE}"
+        fi
+    done
+    echo ""
+    exit 0
+fi
+
+# ===========================================================================
+# 변경 기록 (--history)
+# ===========================================================================
+if [ "${DO_HISTORY}" = true ]; then
+    APP_DIR="${HOME}/apps/${APP_NAME}"
+    if [ ! -d "${APP_DIR}/.git" ]; then
+        error "'${APP_NAME}'에 변경 기록이 없습니다."
+        exit 1
+    fi
+    echo ""
+    echo "📜 ${APP_NAME} 변경 기록:"
+    echo "─────────────────────────"
+    git -C "${APP_DIR}" log --oneline --decorate -20
+    echo ""
+    exit 0
+fi
+
+# ===========================================================================
+# 버전 복원 (--restore)
+# ===========================================================================
+if [ -n "${RESTORE_VERSION}" ]; then
+    APP_DIR="${HOME}/apps/${APP_NAME}"
+
+    if [ ! -d "${APP_DIR}/.git" ]; then
+        error "'${APP_NAME}'에 버전 기록이 없습니다."
+        exit 1
+    fi
+
+    # 복원 버전 형식 검증 (v-YYYYMMDD-HHMM 형식만 허용)
+    if ! echo "${RESTORE_VERSION}" | grep -qE '^v-[0-9]{8}-[0-9]{4}(-[0-9]{2})?(-before-restore)?$'; then
+        error "버전 형식이 올바르지 않습니다. 예: v-20260401-1430"
+        info "사용 가능한 버전: deploy ${APP_NAME} --versions"
+        exit 1
+    fi
+
+    # 대상 버전 존재 확인
+    if ! git -C "${APP_DIR}" rev-parse "refs/tags/${RESTORE_VERSION}" >/dev/null 2>&1; then
+        error "버전 '${RESTORE_VERSION}'을 찾을 수 없습니다."
+        info "사용 가능한 버전: deploy ${APP_NAME} --versions"
+        exit 1
+    fi
+
+    # 현재 상태 자동 저장
+    echo ""
+    info "💾 현재 상태를 저장합니다..."
+    cd "${APP_DIR}"
+    if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
+        SAVE_TAG="v-$(date +%Y%m%d-%H%M)-before-restore"
+        git add . 2>/dev/null
+        git commit --quiet -m "auto-save before restore to ${RESTORE_VERSION}" 2>/dev/null || true
+        git tag "${SAVE_TAG}" 2>/dev/null || true
+        info "현재 상태가 ${SAVE_TAG}로 저장되었습니다."
+    fi
+
+    # 복원 실행
+    info "🔄 ${RESTORE_VERSION}으로 복원합니다..."
+    git checkout "${RESTORE_VERSION}" -- . 2>/dev/null
+
+    echo ""
+    success "복원 완료! 배포하려면: deploy ${APP_NAME}"
+    echo ""
+    exit 0
+fi
 
 # ---------------------------------------------------------------------------
 # 환경 검증
@@ -293,8 +417,42 @@ VERSION_TAG="v-${TIMESTAMP}"
 if [ ! -d .git ]; then
     info "Git 저장소 초기화 중..."
     git init --quiet
+    # .gitignore 자동 생성
+    if [ ! -f "${APP_DIR}/.gitignore" ]; then
+        cat > "${APP_DIR}/.gitignore" << 'GITIGNORE'
+node_modules/
+__pycache__/
+*.pyc
+.env
+.env.local
+uploads/
+*.sqlite
+*.db
+.DS_Store
+dist/
+build/
+.next/
+GITIGNORE
+        git add .gitignore
+    fi
     git add .
     git commit --quiet -m "initial: ${APP_NAME} 최초 배포"
+fi
+
+# index.lock 감지 및 처리
+if [ -f "${APP_DIR}/.git/index.lock" ]; then
+    LOCK_MOD=$(stat -c %Y "${APP_DIR}/.git/index.lock" 2>/dev/null \
+               || stat -f %m "${APP_DIR}/.git/index.lock" 2>/dev/null \
+               || echo 0)
+    LOCK_AGE=$(( $(date +%s) - LOCK_MOD ))
+    if [ "${LOCK_AGE}" -gt 300 ]; then
+        warn "⚠️  오래된 git lock 파일을 제거합니다 (${LOCK_AGE}초 경과)..."
+        rm -f "${APP_DIR}/.git/index.lock"
+    else
+        error "⚠️  Git 작업이 진행 중입니다. 잠시 후 다시 시도하세요."
+        error "  (5분 이상 지속되면 자동 해제됩니다)"
+        exit 1
+    fi
 fi
 
 # 변경사항 확인 및 커밋
@@ -354,6 +512,17 @@ ln -sfn "${VERSION_TAG}" "${DEPLOY_DIR}/current"
 mkdir -p "${DEPLOY_DIR}/data"
 
 info "스냅샷: ~/deployed/${APP_NAME}/${VERSION_TAG}/"
+
+# 오래된 스냅샷 자동 정리 (최대 10개 유지)
+MAX_SNAPSHOTS=10
+SNAPSHOT_COUNT=$(ls -1d "${DEPLOY_DIR}"/v-* 2>/dev/null | wc -l)
+if [ "${SNAPSHOT_COUNT}" -gt "${MAX_SNAPSHOTS}" ]; then
+    info "🧹 오래된 스냅샷 정리 (${SNAPSHOT_COUNT} → ${MAX_SNAPSHOTS})..."
+    ls -1dt "${DEPLOY_DIR}"/v-* 2>/dev/null | tail -n +$((MAX_SNAPSHOTS + 1)) | while IFS= read -r OLD_SNAP; do
+        info "  삭제: $(basename "${OLD_SNAP}")"
+        rm -rf "${OLD_SNAP}"
+    done
+fi
 
 # ---------------------------------------------------------------------------
 # 4) auth-gateway API 호출 (배포 등록)
@@ -423,9 +592,11 @@ except:
     [ -n "${APP_URL}" ] && info "  URL:    ${APP_URL}"
     [ -n "${ACL_USERS}" ] && info "  ACL:    ${ACL_USERS}"
     echo ""
+    info "  버전:   deploy ${APP_NAME} --versions"
+    info "  기록:   deploy ${APP_NAME} --history"
+    info "  복원:   deploy ${APP_NAME} --restore <버전>"
     info "  롤백:   deploy ${APP_NAME} --rollback <버전>"
     info "  삭제:   deploy ${APP_NAME} --undeploy"
-    info "  버전:   ls ~/deployed/${APP_NAME}/"
     echo ""
 else
     echo "============================================"

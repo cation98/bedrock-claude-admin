@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import get_current_user
-from app.models.skill import SharedSkill
+from app.models.skill import SharedSkill, SkillInstall
 from app.models.user import User
 from app.schemas.skill import SkillListResponse, SkillResponse, SkillSubmitRequest
 
@@ -175,3 +175,251 @@ async def get_approved_skill_contents(db: Session = Depends(get_db)):
         {"name": s.title.lower().replace(" ", "-"), "content": s.content}
         for s in skills
     ]
+
+
+# ==================== 스킬 스토어 API ====================
+
+
+@router.get("/store")
+async def list_store_skills(
+    q: str = "",
+    sort: str = "popular",
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """스킬 스토어 목록 (인기순/최신순, 검색)."""
+    query = db.query(SharedSkill).filter(SharedSkill.is_active == True)  # noqa: E712
+
+    if q:
+        query = query.filter(
+            SharedSkill.skill_name.ilike(f"%{q}%")
+            | SharedSkill.display_name.ilike(f"%{q}%")
+            | SharedSkill.description.ilike(f"%{q}%")
+        )
+
+    if sort == "popular":
+        query = query.order_by(SharedSkill.install_count.desc())
+    else:
+        query = query.order_by(SharedSkill.created_at.desc())
+
+    skills = query.limit(50).all()
+
+    # Check which ones the user has installed
+    username = current_user["sub"]
+    installed_ids = set(
+        r[0] for r in db.query(SkillInstall.skill_id)
+        .filter(SkillInstall.username == username, SkillInstall.uninstalled_at.is_(None))
+        .all()
+    )
+
+    # Batch-load owners to avoid N+1 queries
+    owner_usernames = list(set(s.owner_username for s in skills))
+    owners = db.query(User).filter(User.username.in_(owner_usernames)).all() if owner_usernames else []
+    owners_map = {u.username: u for u in owners}
+
+    results = []
+    for s in skills:
+        owner = owners_map.get(s.owner_username)
+        results.append({
+            "id": s.id,
+            "skill_name": s.skill_name,
+            "display_name": s.display_name or s.skill_name,
+            "description": s.description or "",
+            "skill_type": s.skill_type,
+            "owner_username": s.owner_username,
+            "owner_name": owner.name if owner else s.owner_username,
+            "install_count": s.install_count,
+            "is_installed": s.id in installed_ids,
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+        })
+
+    return {"skills": results}
+
+
+@router.get("/my")
+async def list_my_skills(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """내가 공유한 스킬 목록."""
+    username = current_user["sub"]
+    skills = (
+        db.query(SharedSkill)
+        .filter(SharedSkill.owner_username == username)
+        .order_by(SharedSkill.created_at.desc())
+        .all()
+    )
+    return {"skills": [{
+        "id": s.id,
+        "skill_name": s.skill_name,
+        "display_name": s.display_name,
+        "description": s.description,
+        "skill_type": s.skill_type,
+        "skill_dir_name": s.skill_dir_name,
+        "install_count": s.install_count,
+        "is_active": s.is_active,
+        "created_at": s.created_at.isoformat() if s.created_at else None,
+    } for s in skills]}
+
+
+@router.get("/installed")
+async def list_installed_skills(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """설치한 스킬 목록."""
+    username = current_user["sub"]
+    installs = (
+        db.query(SkillInstall, SharedSkill)
+        .join(SharedSkill, SkillInstall.skill_id == SharedSkill.id)
+        .filter(SkillInstall.username == username, SkillInstall.uninstalled_at.is_(None))
+        .order_by(SkillInstall.installed_at.desc())
+        .all()
+    )
+
+    # Batch-load owners to avoid N+1 queries
+    owner_usernames = list(set(skill.owner_username for _, skill in installs))
+    owners = db.query(User).filter(User.username.in_(owner_usernames)).all() if owner_usernames else []
+    owners_map = {u.username: u for u in owners}
+
+    results = []
+    for install, skill in installs:
+        owner = owners_map.get(skill.owner_username)
+        results.append({
+            "install_id": install.id,
+            "skill_id": skill.id,
+            "skill_name": skill.skill_name,
+            "display_name": skill.display_name or skill.skill_name,
+            "description": skill.description,
+            "owner_username": skill.owner_username,
+            "owner_name": owner.name if owner else skill.owner_username,
+            "installed_at": install.installed_at.isoformat() if install.installed_at else None,
+        })
+
+    return {"skills": results}
+
+
+@router.post("/publish")
+async def publish_skill(
+    request: dict,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """스킬을 스토어에 공유."""
+    username = current_user["sub"]
+
+    # Input validation
+    skill_name = request.get("skill_name", "").strip()
+    if not skill_name or len(skill_name) > 100:
+        raise HTTPException(status_code=400, detail="스킬 이름은 1-100자여야 합니다")
+
+    skill_type = request.get("skill_type", "slash_command")
+    if skill_type not in ("slash_command", "workflow"):
+        raise HTTPException(status_code=400, detail="skill_type은 slash_command 또는 workflow여야 합니다")
+
+    dir_name = request.get("dir_name", "").strip()
+    if not dir_name or len(dir_name) > 100:
+        raise HTTPException(status_code=400, detail="dir_name은 1-100자여야 합니다")
+
+    # Check if already published
+    existing = (
+        db.query(SharedSkill)
+        .filter(SharedSkill.owner_username == username, SharedSkill.skill_dir_name == request.get("dir_name"))
+        .first()
+    )
+    if existing:
+        # Update
+        existing.skill_name = request.get("skill_name", existing.skill_name)
+        existing.display_name = request.get("display_name", existing.display_name)
+        existing.description = request.get("description", existing.description)
+        existing.skill_type = request.get("skill_type", existing.skill_type)
+        existing.is_active = True
+        db.commit()
+        return {"id": existing.id, "updated": True}
+
+    skill = SharedSkill(
+        owner_username=username,
+        skill_name=request.get("skill_name", ""),
+        display_name=request.get("display_name", ""),
+        description=request.get("description", ""),
+        skill_type=request.get("skill_type", "slash_command"),
+        skill_dir_name=request.get("dir_name", ""),
+    )
+    db.add(skill)
+    db.commit()
+    db.refresh(skill)
+    return {"id": skill.id, "published": True}
+
+
+@router.post("/{skill_id}/install")
+async def install_skill(
+    skill_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """스킬 설치."""
+    username = current_user["sub"]
+
+    skill = db.query(SharedSkill).filter(SharedSkill.id == skill_id, SharedSkill.is_active == True).first()  # noqa: E712
+    if not skill:
+        raise HTTPException(status_code=404, detail="스킬을 찾을 수 없습니다")
+
+    # Check if already installed
+    existing = (
+        db.query(SkillInstall)
+        .filter(SkillInstall.skill_id == skill_id, SkillInstall.username == username, SkillInstall.uninstalled_at.is_(None))
+        .first()
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="이미 설치된 스킬입니다")
+
+    install = SkillInstall(skill_id=skill_id, username=username)
+    db.add(install)
+    skill.install_count = (skill.install_count or 0) + 1
+    db.commit()
+
+    return {"installed": True, "skill_name": skill.skill_name, "dir_name": skill.skill_dir_name}
+
+
+@router.post("/{skill_id}/uninstall")
+async def uninstall_skill(
+    skill_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """스킬 제거."""
+    username = current_user["sub"]
+
+    install = (
+        db.query(SkillInstall)
+        .filter(SkillInstall.skill_id == skill_id, SkillInstall.username == username, SkillInstall.uninstalled_at.is_(None))
+        .first()
+    )
+    if not install:
+        raise HTTPException(status_code=404, detail="설치된 스킬을 찾을 수 없습니다")
+
+    install.uninstalled_at = datetime.now(timezone.utc)
+    skill = db.query(SharedSkill).filter(SharedSkill.id == skill_id).first()
+    if skill and skill.install_count > 0:
+        skill.install_count -= 1
+    db.commit()
+
+    return {"uninstalled": True, "skill_id": skill_id}
+
+
+@router.delete("/{skill_id}/unpublish")
+async def unpublish_skill(
+    skill_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """스킬 공유 해제."""
+    username = current_user["sub"]
+
+    skill = db.query(SharedSkill).filter(SharedSkill.id == skill_id, SharedSkill.owner_username == username).first()
+    if not skill:
+        raise HTTPException(status_code=404, detail="스킬을 찾을 수 없습니다")
+
+    skill.is_active = False
+    db.commit()
+    return {"unpublished": True, "skill_name": skill.skill_name}

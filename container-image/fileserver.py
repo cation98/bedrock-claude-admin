@@ -15,6 +15,10 @@
 import os
 import sys
 import html
+import json
+import re
+import shutil
+import subprocess
 import argparse
 import urllib.parse
 import cgi
@@ -48,7 +52,6 @@ class FileServerHandler(SimpleHTTPRequestHandler):
             self.send_error(404, "File not found")
             return
 
-        import json
         try:
             filepath.unlink()
             self.send_response(200)
@@ -59,8 +62,30 @@ class FileServerHandler(SimpleHTTPRequestHandler):
             self.send_error(500, str(e))
 
     def do_POST(self):
-        """파일 업로드 처리 (POST /upload)."""
+        """파일 업로드 및 웹앱 관리 API (POST)."""
         parsed = urllib.parse.urlparse(self.path)
+
+        # --- Webapp management API (POST) ---
+        if parsed.path == '/api/apps/start':
+            self._handle_apps_start()
+            return
+        if parsed.path == '/api/apps/stop':
+            self._handle_apps_stop()
+            return
+        if parsed.path == '/api/apps/stop-all':
+            self._handle_apps_stop_all()
+            return
+        if parsed.path == '/api/apps/rename':
+            self._handle_apps_rename()
+            return
+        if parsed.path == '/api/apps/delete-project':
+            self._handle_apps_delete_project()
+            return
+        if parsed.path.startswith('/api/apps/versions/') and parsed.path.endswith('/label'):
+            self._handle_apps_version_label(parsed)
+            return
+        # --- End webapp management API ---
+
         if parsed.path != "/upload":
             self.send_error(404, "Not Found")
             return
@@ -121,7 +146,6 @@ class FileServerHandler(SimpleHTTPRequestHandler):
                 # shared-data 디렉토리에 복사
                 shared_dir = os.path.join(self.directory, 'shared-data')
                 os.makedirs(shared_dir, exist_ok=True)
-                import shutil
                 shutil.copy2(sqlite_result, os.path.join(shared_dir, os.path.basename(sqlite_result)))
                 converted.append(os.path.basename(sqlite_result))
                 # 스키마 자동 생성 — Claude가 DB 구조를 인식할 수 있도록
@@ -133,7 +157,6 @@ class FileServerHandler(SimpleHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
-        import json
         response = {
             "uploaded": uploaded,
             "count": len(uploaded),
@@ -152,6 +175,19 @@ class FileServerHandler(SimpleHTTPRequestHandler):
         if parsed.path.startswith("/api/browse"):
             self._send_file_listing_json(parsed)
             return
+
+        # --- Webapp management API (GET) ---
+        if parsed.path == '/api/apps/status':
+            self._handle_apps_status()
+            return
+        if parsed.path.startswith('/api/apps/versions/'):
+            self._handle_apps_versions(parsed)
+            return
+        if parsed.path == '/api/skills/local':
+            self._handle_skills_local()
+            return
+        # --- End webapp management API ---
+
         path = self.translate_path(self.path)
         if os.path.isdir(path):
             self._send_directory_page(path)
@@ -160,7 +196,6 @@ class FileServerHandler(SimpleHTTPRequestHandler):
 
     def _send_file_listing_json(self, parsed):
         """파일 브라우저용 JSON API — /api/browse?path=uploads"""
-        import json as _json
         params = urllib.parse.parse_qs(parsed.query)
         rel_path = params.get("path", [""])[0]
 
@@ -192,13 +227,335 @@ class FileServerHandler(SimpleHTTPRequestHandler):
         self._send_json(200, {"path": rel_path, "entries": entries})
 
     def _send_json(self, status, data):
-        import json as _json
-        body = _json.dumps(data, ensure_ascii=False).encode("utf-8")
+        body = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _read_body(self):
+        """Read request body."""
+        content_length = int(self.headers.get('Content-Length', 0))
+        return self.rfile.read(content_length).decode('utf-8')
+
+    # ── Webapp Management API Handlers ──────────────────────────────
+
+    def _handle_apps_status(self):
+        """GET /api/apps/status — Combined running apps + registered apps + projects."""
+        # 1. Read webapp registry
+        registry = {}
+        reg_path = os.path.join(self.directory, '.webapp-registry.json')
+        if os.path.exists(reg_path):
+            with open(reg_path) as f:
+                registry = json.load(f)
+
+        # 2. Scan listening ports 3000-3100
+        running = []
+        try:
+            result = subprocess.run(['ss', '-tlnp'], capture_output=True, text=True, timeout=5)
+            for line in result.stdout.split('\n'):
+                m = re.search(r':(\d+)\s', line)
+                if m:
+                    port = int(m.group(1))
+                    if 3000 <= port <= 3100:
+                        pid_match = re.search(r'pid=(\d+)', line)
+                        pid = int(pid_match.group(1)) if pid_match else None
+                        cwd = None
+                        cmd = None
+                        if pid:
+                            try:
+                                cwd = os.readlink(f'/proc/{pid}/cwd')
+                                with open(f'/proc/{pid}/cmdline') as f:
+                                    cmd = f.read().split('\x00')[0]
+                            except Exception:
+                                pass
+                        running.append({"port": port, "pid": pid, "command": cmd, "cwd": cwd})
+        except Exception:
+            pass
+
+        # 3. Scan workspace projects
+        projects = []
+        workspace = self.directory
+        for d in os.listdir(workspace):
+            path = os.path.join(workspace, d)
+            if not os.path.isdir(path) or d.startswith('.'):
+                continue
+            proj_type = None
+            if os.path.isfile(os.path.join(path, 'package.json')):
+                proj_type = 'node'
+            elif os.path.isfile(os.path.join(path, 'requirements.txt')):
+                proj_type = 'python'
+            elif os.path.isfile(os.path.join(path, 'Dockerfile')):
+                proj_type = 'docker'
+            if proj_type:
+                projects.append({"name": d, "path": path, "type": proj_type})
+
+        # 4. Merge: registry + running + projects (auto-register detected projects)
+        for proj in projects:
+            if proj['name'] not in registry:
+                registry[proj['name']] = {
+                    "port": None, "path": proj['path'], "type": proj['type'],
+                    "auto_detected": True
+                }
+        with open(reg_path, 'w') as f:
+            json.dump(registry, f, indent=2, default=str)
+
+        # Build response
+        apps = []
+        for name, info in registry.items():
+            port = info.get('port')
+            is_running = any(r['port'] == port for r in running) if port else False
+            app_entry = {
+                "name": name, "path": info.get('path', ''),
+                "type": info.get('type', 'unknown'), "port": port,
+                "running": is_running, "auto_detected": info.get('auto_detected', False)
+            }
+            apps.append(app_entry)
+
+        self._send_json(200, {"apps": apps, "running_ports": running, "projects": projects})
+
+    def _handle_apps_versions(self, parsed):
+        """GET /api/apps/versions/{app_name} — Git tag based version list."""
+        parts = parsed.path.split('/')
+        app_name = parts[4] if len(parts) > 4 else ''
+
+        reg_path = os.path.join(self.directory, '.webapp-registry.json')
+        registry = {}
+        if os.path.exists(reg_path):
+            with open(reg_path) as f:
+                registry = json.load(f)
+        app_info = registry.get(app_name, {})
+        app_path = app_info.get('path', os.path.join(self.directory, app_name))
+
+        versions = []
+        if os.path.isdir(os.path.join(app_path, '.git')):
+            try:
+                result = subprocess.run(
+                    ['git', '-C', app_path, 'tag', '-l', 'v-*', '--sort=-creatordate',
+                     '--format=%(refname:short)|%(creatordate:iso)'],
+                    capture_output=True, text=True, timeout=10
+                )
+                for line in result.stdout.strip().split('\n'):
+                    if '|' in line:
+                        tag, date = line.split('|', 1)
+                        versions.append({"version": tag, "date": date.strip()})
+            except Exception:
+                pass
+
+        # Load labels from .webapp-versions.json
+        labels_path = os.path.join(self.directory, '.webapp-versions.json')
+        labels = {}
+        if os.path.exists(labels_path):
+            with open(labels_path) as f:
+                labels = json.load(f)
+        app_labels = labels.get(app_name, {})
+        for v in versions:
+            v['label'] = app_labels.get(v['version'], '')
+
+        if versions:
+            versions[0]['is_current'] = True
+
+        self._send_json(200, {"versions": versions})
+
+    def _handle_skills_local(self):
+        """GET /api/skills/local — Scan .claude/skills/ directory."""
+        skills_dir = os.path.expanduser('~/.claude/skills')
+        skills = []
+        if os.path.isdir(skills_dir):
+            for d in os.listdir(skills_dir):
+                skill_path = os.path.join(skills_dir, d)
+                skill_md = os.path.join(skill_path, 'SKILL.md')
+                if os.path.isdir(skill_path) and os.path.exists(skill_md):
+                    with open(skill_md) as f:
+                        content = f.read(500)
+                    name = d
+                    description = ''
+                    lines = content.split('\n')
+                    for line in lines:
+                        if line.startswith('description:'):
+                            description = line.split(':', 1)[1].strip()
+                        if line.startswith('name:'):
+                            name = line.split(':', 1)[1].strip()
+                    skills.append({"dir_name": d, "name": name, "description": description, "path": skill_path})
+        self._send_json(200, {"skills": skills})
+
+    def _handle_apps_start(self):
+        """POST /api/apps/start — Start a dev server."""
+        body = self._read_body()
+        data = json.loads(body)
+        app_name = data.get('name') or os.path.basename(data.get('path', ''))
+        if not app_name:
+            self._send_json(400, {"error": "앱 이름 또는 경로가 필요합니다"})
+            return
+        app_path = data.get('path', os.path.join(self.directory, app_name))
+        app_type = data.get('type', 'node')
+
+        # Safety: only allow execution within workspace
+        real_app_path = os.path.realpath(app_path)
+        real_workspace = os.path.realpath(self.directory)
+        if not real_app_path.startswith(real_workspace + os.sep):
+            self._send_json(403, {"error": "workspace 외부 경로에서는 실행할 수 없습니다"})
+            return
+
+        # Find used ports
+        used_ports = set()
+        try:
+            result = subprocess.run(['ss', '-tlnp'], capture_output=True, text=True, timeout=5)
+            for line in result.stdout.split('\n'):
+                m = re.search(r':(\d+)\s', line)
+                if m:
+                    p = int(m.group(1))
+                    if 3000 <= p <= 3100:
+                        used_ports.add(p)
+        except Exception:
+            pass
+
+        # Check registry for preferred port
+        port = None
+        reg_path = os.path.join(self.directory, '.webapp-registry.json')
+        registry = {}
+        if os.path.exists(reg_path):
+            with open(reg_path) as f:
+                registry = json.load(f)
+        if app_name in registry and registry[app_name].get('port') and registry[app_name]['port'] not in used_ports:
+            port = registry[app_name]['port']
+        else:
+            for p in range(3000, 3101):
+                if p not in used_ports:
+                    port = p
+                    break
+
+        if port is None:
+            self._send_json(503, {"error": "사용 가능한 포트가 없습니다 (3000-3100 모두 사용 중)"})
+            return
+
+        # Start process
+        env = os.environ.copy()
+        env['PORT'] = str(port)
+        if app_type == 'node':
+            cmd = ['npm', 'start']
+            pkg_json = os.path.join(app_path, 'package.json')
+            if os.path.exists(pkg_json):
+                with open(pkg_json) as f:
+                    pkg = json.load(f)
+                if 'dev' in pkg.get('scripts', {}):
+                    cmd = ['npm', 'run', 'dev']
+        elif app_type == 'python':
+            cmd = ['python3', '-m', 'uvicorn', 'app:app', '--host', '0.0.0.0', '--port', str(port)]
+        else:
+            self._send_json(400, {"error": f"지원하지 않는 앱 유형: {app_type}"})
+            return
+
+        subprocess.Popen(cmd, cwd=app_path, env=env,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        # Update registry
+        registry[app_name] = {
+            "port": port, "path": app_path, "type": app_type,
+            "auto_detected": registry.get(app_name, {}).get('auto_detected', True)
+        }
+        with open(reg_path, 'w') as f:
+            json.dump(registry, f, indent=2, default=str)
+
+        self._send_json(200, {"started": True, "name": app_name, "port": port})
+
+    def _handle_apps_stop(self):
+        """POST /api/apps/stop — Stop a specific app by port."""
+        body = self._read_body()
+        data = json.loads(body)
+        port = data.get('port')
+        if not isinstance(port, int) or not (3000 <= port <= 3100):
+            self._send_json(400, {"error": "포트는 3000-3100 범위만 허용됩니다"})
+            return
+        if port:
+            subprocess.run(['fuser', '-k', f'{port}/tcp'], capture_output=True, timeout=10)
+        self._send_json(200, {"stopped": True, "port": port})
+
+    def _handle_apps_stop_all(self):
+        """POST /api/apps/stop-all — Stop all apps on ports 3000-3100."""
+        stopped = []
+        for port in range(3000, 3101):
+            result = subprocess.run(['fuser', '-k', f'{port}/tcp'], capture_output=True, timeout=5)
+            if result.returncode == 0:
+                stopped.append(port)
+        self._send_json(200, {"stopped": stopped})
+
+    def _handle_apps_rename(self):
+        """POST /api/apps/rename — Rename app in registry."""
+        body = self._read_body()
+        data = json.loads(body)
+        old_name = data['old_name']
+        new_name = data['new_name']
+        reg_path = os.path.join(self.directory, '.webapp-registry.json')
+        registry = {}
+        if os.path.exists(reg_path):
+            with open(reg_path) as f:
+                registry = json.load(f)
+        if old_name in registry:
+            registry[new_name] = registry.pop(old_name)
+            with open(reg_path, 'w') as f:
+                json.dump(registry, f, indent=2, default=str)
+        self._send_json(200, {"renamed": True, "old": old_name, "new": new_name})
+
+    def _handle_apps_delete_project(self):
+        """POST /api/apps/delete-project — Delete project directory."""
+        body = self._read_body()
+        data = json.loads(body)
+        app_name = data['name']
+        app_path = data.get('path', os.path.join(self.directory, app_name))
+
+        # Safety: only allow deletion within workspace
+        real_app_path = os.path.realpath(app_path)
+        real_workspace = os.path.realpath(self.directory)
+        if not real_app_path.startswith(real_workspace + os.sep):
+            self._send_json(403, {"error": "workspace 외부 경로는 삭제할 수 없습니다"})
+            return
+
+        # Stop if running
+        reg_path = os.path.join(self.directory, '.webapp-registry.json')
+        registry = {}
+        if os.path.exists(reg_path):
+            with open(reg_path) as f:
+                registry = json.load(f)
+        if app_name in registry and registry[app_name].get('port'):
+            subprocess.run(['fuser', '-k', f'{registry[app_name]["port"]}/tcp'],
+                           capture_output=True, timeout=5)
+
+        # Delete directory
+        if os.path.isdir(app_path):
+            shutil.rmtree(app_path)
+
+        # Remove from registry
+        registry.pop(app_name, None)
+        with open(reg_path, 'w') as f:
+            json.dump(registry, f, indent=2, default=str)
+
+        self._send_json(200, {"deleted": True, "name": app_name})
+
+    def _handle_apps_version_label(self, parsed):
+        """POST /api/apps/versions/{app}/label — Update version label."""
+        parts = parsed.path.split('/')
+        app_name = parts[4]
+        body = self._read_body()
+        data = json.loads(body)
+        version = data['version']
+        label = data['label']
+
+        labels_path = os.path.join(self.directory, '.webapp-versions.json')
+        labels = {}
+        if os.path.exists(labels_path):
+            with open(labels_path) as f:
+                labels = json.load(f)
+        if app_name not in labels:
+            labels[app_name] = {}
+        labels[app_name][version] = label
+        with open(labels_path, 'w') as f:
+            json.dump(labels, f, indent=2, ensure_ascii=False)
+
+        self._send_json(200, {"updated": True})
+
+    # ── End Webapp Management API Handlers ──────────────────────────
 
     def _send_portal_page(self):
         """터미널 + 파일 관리 포탈 페이지."""
@@ -293,7 +650,6 @@ class FileServerHandler(SimpleHTTPRequestHandler):
         sqlite_path = os.path.splitext(filepath)[0] + '.sqlite'
 
         try:
-            import subprocess
             # Python 스크립트로 변환 실행 (별도 프로세스, 메인 서버 블로킹 방지)
             script = '''
 import pandas as pd
@@ -335,7 +691,6 @@ print('OK')
         Claude는 이 파일을 읽고 적절한 SQL 쿼리를 작성할 수 있다.
         """
         try:
-            import subprocess
             script = '''
 import sqlite3, sys, os
 from datetime import datetime
@@ -522,13 +877,39 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
   .hub-tab-content.active {{ display: block; }}
 
   .footer {{ text-align: center; margin-top: 32px; color: #484f58; font-size: 0.75rem; }}
+
+  .btn-stop-all {{ padding:6px 14px; background:#da3633; border:none; border-radius:6px; color:#fff; font-size:0.78rem; cursor:pointer; margin-top:8px; }}
+  .resource-warning {{ margin-top:8px; padding:8px 12px; background:#3d1f1f; border:1px solid #da3633; border-radius:8px; font-size:0.75rem; color:#f85149; line-height:1.4; }}
+  .badge-yellow {{ background: #3d2e00; color: #d29922; }}
+  .status-badge {{ display:inline-block; padding:2px 8px; border-radius:10px; font-size:0.7rem; font-weight:600; }}
+  .status-deployed {{ background:#1a3a2a; color:#3fb950; }}
+  .status-running {{ background:#1f3a5f; color:#58a6ff; }}
+  .status-stopped {{ background:#21262d; color:#8b949e; }}
+  .status-deleted {{ background:#3d1f1f; color:#f85149; opacity:0.6; }}
+  /* Scrollbar */
+  .app-list.scrollable {{ max-height: 400px; overflow-y: auto; }}
+  .app-list.scrollable::-webkit-scrollbar {{ width: 6px; }}
+  .app-list.scrollable::-webkit-scrollbar-track {{ background: #30363d; border-radius: 3px; }}
+  .app-list.scrollable::-webkit-scrollbar-thumb {{ background: #484f58; border-radius: 3px; }}
+  .app-list.scrollable::-webkit-scrollbar-thumb:hover {{ background: #6e7681; }}
+  /* Share management */
+  .share-check {{ margin-right:10px; accent-color:#58a6ff; }}
+  .share-tag {{ display:inline-block; padding:1px 6px; border-radius:4px; font-size:0.68rem; font-weight:600; margin-right:6px; }}
+  .share-tag-app {{ background:#1f3a5f; color:#58a6ff; }}
+  .share-tag-data {{ background:#1a3a2a; color:#3fb950; }}
+  /* Skill store */
+  .skill-item {{ display:flex; align-items:center; justify-content:space-between; padding:12px; border:1px solid #21262d; border-radius:8px; margin-bottom:8px; }}
+  .skill-meta {{ font-size:0.75rem; color:#8b949e; margin-top:2px; }}
+  .skill-rank {{ font-size:1.2rem; margin-right:12px; min-width:28px; text-align:center; }}
+  .store-header {{ display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; }}
+  .store-search {{ padding:6px 10px; background:#0d1117; border:1px solid #30363d; border-radius:6px; color:#e6edf3; font-size:0.82rem; outline:none; width:200px; }}
 </style>
 </head>
 <body>
 
 <div class="container">
   <div class="header">
-    <h1>Claude Code <span class="accent">Terminal</span></h1>
+    <h1>Otto AI <span class="accent">터미널</span></h1>
     <p>{user_name} ({user_id}) &middot; {pod_name}</p>
     <a href="/" class="logout-btn" style="border-color:#da3633;color:#da3633;" id="logoutBtn">로그아웃 &amp; 종료</a>
   </div>
@@ -574,28 +955,31 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
       <p>파일 업로드 (드래그&amp;드롭)<br>결과물 다운로드</p>
       <span class="badge badge-green">새 탭에서 열기</span>
     </a>
-    <a class="card" href="/app/{pod_name}/" target="_blank">
+    <div class="card" style="cursor:pointer" onclick="document.getElementById('myAppsSection').scrollIntoView({{behavior:'smooth'}})">
       <div class="icon">&#127760;</div>
       <h2>웹앱</h2>
-      <p>터미널에서 만든 대시보드<br>웹앱 접속 (포트 3000)</p>
-      <span class="badge badge-green">새 탭에서 열기</span>
-    </a>
+      <p id="webappCardDesc">실행 중인 앱 없음</p>
+      <span class="badge badge-green" id="webappCardBadge">앱 관리</span>
+      <button class="btn-stop-all" id="stopAllBtn" style="display:none" onclick="event.stopPropagation();stopAllApps()">모두 실행중지</button>
+      <div class="resource-warning" id="resourceWarning" style="display:none">⚠️ 실행 중인 앱이 많으면 AI 에이전트 성능이 저하됩니다. 지금은 개발목적이니, 최소한의 앱만 구동하기를 권장드립니다.</div>
+    </div>
   </div>
 
   <!-- 탭 바 -->
   <div class="hub-tabs">
     <button class="hub-tab active" onclick="switchHubTab('manage')">앱/데이터 관리</button>
+    <button class="hub-tab" onclick="switchHubTab('skills')">스킬 관리</button>
     <button class="hub-tab" onclick="switchHubTab('guide')">명령어 가이드</button>
   </div>
 
   <!-- 탭 1: 앱/데이터 관리 -->
   <div class="hub-tab-content active" id="tab-manage">
 
-  <!-- 나의 배포 앱 -->
+  <!-- 내 웹앱 (통합 뷰) -->
   <div class="app-section" id="myAppsSection">
-    <h3>나의 배포 앱 <span class="count" id="myAppsCount">(0)</span></h3>
-    <ul class="app-list" id="myAppsList">
-      <li class="empty-msg">배포된 앱이 없습니다. 터미널에서 <code>deploy my-app</code>으로 배포하세요.</li>
+    <h3>내 웹앱 <span class="count" id="myAppsCount">(0)</span></h3>
+    <ul class="app-list scrollable" id="myAppsList">
+      <li class="empty-msg">앱이 없습니다. 터미널에서 <code>deploy my-app</code>으로 배포하거나, 프로젝트를 생성하세요.</li>
     </ul>
   </div>
 
@@ -649,17 +1033,69 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
     </ul>
   </div>
 
+  <!-- 내 공유 관리 -->
+  <div class="app-section" id="mySharesSection">
+    <h3 style="display:flex;justify-content:space-between;align-items:center;">
+      <span>내 공유 관리 <span class="count" id="mySharesCount">(0)</span></span>
+      <button class="btn-sm danger" id="bulkRevokeBtn" style="display:none;padding:5px 12px;font-size:0.78rem;" onclick="bulkRevokeShares()">선택 항목 공유 해제</button>
+    </h3>
+    <div style="padding:4px 12px;margin-bottom:8px;">
+      <label style="font-size:0.78rem;color:#8b949e;cursor:pointer;">
+        <input type="checkbox" class="share-check" id="shareSelectAll" onchange="toggleShareSelectAll(this.checked)"> 전체 선택
+      </label>
+    </div>
+    <ul class="app-list scrollable" id="mySharesList">
+      <li class="empty-msg">공유 항목이 없습니다.</li>
+    </ul>
+  </div>
+
   <div class="guide" style="margin-top:16px;">
     <div style="font-size:0.82rem;color:#8b949e;line-height:1.8;">
-      <p><strong style="color:#e6edf3;">데이터 공유</strong>: 10MB \ucd08\uacfc Excel/CSV \u2192 SQLite \uc790\ub3d9 \ubcc0\ud658 \u2192 \uc704 "\ub0b4 \uacf5\uc720 \ub370\uc774\ud130"\uc5d0\uc11c \uac1c\uc778/\uc870\uc9c1 \uc9c0\uc815</p>
-      <p><strong style="color:#e6edf3;">\uc6f9\uc571 \uacf5\uc720</strong>: <code style="background:#21262d;padding:2px 6px;border-radius:4px;font-size:0.78rem;color:#79c0ff;">deploy my-app --acl "N1001063"</code> \ub610\ub294 \uc704 "\ub098\uc758 \ubc30\ud3ec \uc571"\uc5d0\uc11c \uc811\uadfc \uad00\ub9ac</p>
-      <p style="margin-top:4px;color:#58a6ff;">\uacf5\uc720 \ubcc0\uacbd\uc740 60\ucd08 \uc774\ub0b4 \uc790\ub3d9 \ubc18\uc601\ub429\ub2c8\ub2e4.</p>
+      <p><strong style="color:#e6edf3;">데이터 공유</strong>: 10MB 초과 Excel/CSV → SQLite 자동 변환 → 위 "내 공유 데이터"에서 개인/조직 지정</p>
+      <p><strong style="color:#e6edf3;">웹앱 공유</strong>: <code style="background:#21262d;padding:2px 6px;border-radius:4px;font-size:0.78rem;color:#79c0ff;">deploy my-app --acl "N1001063"</code> 또는 위 "내 웹앱"에서 접근 관리</p>
+      <p style="margin-top:4px;color:#58a6ff;">공유 변경은 60초 이내 자동 반영됩니다.</p>
     </div>
   </div>
 
   </div><!-- /tab-manage -->
 
-  <!-- 탭 2: 명령어 가이드 -->
+  <!-- 탭 2: 스킬 관리 -->
+  <div class="hub-tab-content" id="tab-skills">
+
+  <!-- 내 스킬 -->
+  <div class="app-section">
+    <h3>내 스킬 <span class="count" id="mySkillsCount">(0)</span></h3>
+    <ul class="app-list" id="mySkillsList">
+      <li class="empty-msg">등록된 스킬이 없습니다.</li>
+    </ul>
+  </div>
+
+  <!-- 스킬 스토어 -->
+  <div class="app-section">
+    <h3>스킬 스토어</h3>
+    <div class="store-header">
+      <div>
+        <button class="btn-sm" style="border-color:#58a6ff;color:#58a6ff;" onclick="loadSkillStore('popular')">인기순</button>
+        <button class="btn-sm" style="margin-left:4px;" onclick="loadSkillStore('recent')">최신순</button>
+      </div>
+      <input type="text" class="store-search" id="skillStoreSearch" placeholder="스킬 검색..." onkeypress="if(event.key==='Enter')loadSkillStore('search')">
+    </div>
+    <ul class="app-list scrollable" id="skillStoreList">
+      <li class="empty-msg">스킬 스토어를 불러오는 중...</li>
+    </ul>
+  </div>
+
+  <!-- 설치된 스킬 -->
+  <div class="app-section">
+    <h3>설치된 스킬 <span class="count" id="installedSkillsCount">(0)</span></h3>
+    <ul class="app-list" id="installedSkillsList">
+      <li class="empty-msg">설치된 스킬이 없습니다.</li>
+    </ul>
+  </div>
+
+  </div><!-- /tab-skills -->
+
+  <!-- 탭 3: 명령어 가이드 -->
   <div class="hub-tab-content" id="tab-guide">
 
   <div class="guide">
@@ -886,6 +1322,12 @@ function apiFetch(path, opts) {{
   opts = opts || {{}};
   opts.headers = Object.assign({{}}, authHeaders, opts.headers || {{}});
   return fetch('/api/v1' + path, opts).then(function(r) {{ return r.json(); }});
+}}
+
+function localFetch(path, opts) {{
+  opts = opts || {{}};
+  opts.headers = Object.assign({{}}, authHeaders, opts.headers || {{}});
+  return fetch(path, opts).then(function(r) {{ return r.json(); }});
 }}
 
 function esc(s) {{ var d = document.createElement('div'); d.textContent = s || ''; return d.textContent; }}
@@ -1525,31 +1967,457 @@ function registerDataset() {{
 }}
 
 // ── 탭 전환 ──
-function switchHubTab(tabName) {{
-  document.querySelectorAll('.hub-tab').forEach(function(t) {{ t.classList.remove('active'); }});
-  document.querySelectorAll('.hub-tab-content').forEach(function(c) {{ c.classList.remove('active'); }});
-  document.getElementById('tab-' + tabName).classList.add('active');
-  // 해당 버튼 활성화
-  document.querySelectorAll('.hub-tab').forEach(function(t) {{
-    if (t.textContent.indexOf(tabName === 'manage' ? '\uc571' : '\uba85\ub839') >= 0) t.classList.add('active');
+function switchHubTab(tab) {{
+  ['manage','skills','guide'].forEach(function(t) {{
+    var el = document.getElementById('tab-' + t);
+    var btn = document.querySelector('.hub-tab[onclick*="' + t + '"]');
+    if (t === tab) {{
+      if (el) el.classList.add('active');
+      if (btn) btn.classList.add('active');
+    }} else {{
+      if (el) el.classList.remove('active');
+      if (btn) btn.classList.remove('active');
+    }}
+  }});
+  // Load skill data when switching to skills tab
+  if (tab === 'skills') {{
+    loadMySkills();
+    loadSkillStore('popular');
+    loadInstalledSkills();
+  }}
+}}
+
+// ── 앱 상태 통합 로드 ──
+function loadAppStatus() {{
+  localFetch('/api/apps/status').then(function(data) {{
+    var running = data.running || [];
+    var projects = data.projects || [];
+    var desc = document.getElementById('webappCardDesc');
+    var badge = document.getElementById('webappCardBadge');
+    var stopBtn = document.getElementById('stopAllBtn');
+    var warning = document.getElementById('resourceWarning');
+    var count = running.length;
+    if (count > 0) {{
+      desc.textContent = count + '개 앱 실행 중';
+      badge.textContent = count + '개 실행중';
+      badge.className = 'badge badge-blue';
+      stopBtn.style.display = 'inline-block';
+    }} else {{
+      desc.textContent = '실행 중인 앱 없음';
+      badge.textContent = '앱 관리';
+      badge.className = 'badge badge-green';
+      stopBtn.style.display = 'none';
+    }}
+    if (count >= 3) {{
+      warning.style.display = 'block';
+    }} else {{
+      warning.style.display = 'none';
+    }}
+  }}).catch(function() {{}});
+}}
+
+function buildUnifiedAppItem(app) {{
+  var li = document.createElement('li'); li.className = 'app-item';
+  var info = document.createElement('div'); info.className = 'app-info';
+  var nameRow = document.createElement('div'); nameRow.style.display = 'flex'; nameRow.style.alignItems = 'center'; nameRow.style.gap = '8px';
+  var nameEl = document.createElement('span'); nameEl.className = 'app-name'; nameEl.style.cursor = 'default';
+  nameEl.textContent = app.name || app.app_name || '';
+  nameRow.appendChild(nameEl);
+  // Edit button
+  var editBtn = document.createElement('span');
+  editBtn.textContent = '\u270f\ufe0f';
+  editBtn.style.cssText = 'cursor:pointer;font-size:0.75rem;';
+  editBtn.title = '이름 변경';
+  editBtn.onclick = function() {{ renameApp(app.name || app.app_name); }};
+  nameRow.appendChild(editBtn);
+  // Status badge
+  var badge = document.createElement('span'); badge.className = 'status-badge';
+  var status = app.status || 'stopped';
+  if (status === 'deployed') {{ badge.className += ' status-deployed'; badge.textContent = '배포됨'; }}
+  else if (status === 'running') {{ badge.className += ' status-running'; badge.textContent = '실행중'; }}
+  else if (status === 'deleted') {{ badge.className += ' status-deleted'; badge.textContent = '삭제됨'; }}
+  else {{ badge.className += ' status-stopped'; badge.textContent = '미실행'; }}
+  nameRow.appendChild(badge);
+  info.appendChild(nameRow);
+  var meta = document.createElement('div'); meta.className = 'app-meta';
+  var parts = [];
+  if (app.version) parts.push(app.version);
+  if (app.port) parts.push('포트 ' + app.port);
+  if (app.path) parts.push(app.path);
+  meta.textContent = parts.join(' \u00b7 ');
+  info.appendChild(meta);
+  li.appendChild(info);
+  // Action buttons per state
+  var actions = document.createElement('div'); actions.className = 'app-actions';
+  if (status === 'deployed') {{
+    var openBtn = document.createElement('a'); openBtn.className = 'btn-sm';
+    openBtn.href = app.app_url || '#'; openBtn.target = '_blank'; openBtn.textContent = '열기';
+    openBtn.style.borderColor = '#58a6ff'; openBtn.style.color = '#58a6ff'; openBtn.style.textDecoration = 'none';
+    actions.appendChild(openBtn);
+    var aclBtn = document.createElement('button'); aclBtn.className = 'btn-sm';
+    aclBtn.textContent = '접근 관리';
+    aclBtn.onclick = function() {{ openAclModal(app.app_name); }};
+    actions.appendChild(aclBtn);
+    var delBtn = document.createElement('button'); delBtn.className = 'btn-sm danger';
+    delBtn.textContent = '삭제';
+    delBtn.onclick = function() {{ undeployApp(app.app_name); }};
+    actions.appendChild(delBtn);
+  }} else if (status === 'running') {{
+    var openBtn = document.createElement('a'); openBtn.className = 'btn-sm';
+    openBtn.href = app.app_url || '#'; openBtn.target = '_blank'; openBtn.textContent = '열기';
+    openBtn.style.borderColor = '#58a6ff'; openBtn.style.color = '#58a6ff'; openBtn.style.textDecoration = 'none';
+    actions.appendChild(openBtn);
+    var stopBtn = document.createElement('button'); stopBtn.className = 'btn-sm danger';
+    stopBtn.textContent = '중지';
+    stopBtn.onclick = function() {{ stopApp(app.port); }};
+    actions.appendChild(stopBtn);
+  }} else if (status === 'stopped') {{
+    var startBtn = document.createElement('button'); startBtn.className = 'btn-sm';
+    startBtn.style.borderColor = '#238636'; startBtn.style.color = '#3fb950';
+    startBtn.textContent = '실행';
+    startBtn.onclick = function() {{ startApp(app.path, app.type); }};
+    actions.appendChild(startBtn);
+    var delProjBtn = document.createElement('button'); delProjBtn.className = 'btn-sm danger';
+    delProjBtn.textContent = '삭제';
+    delProjBtn.onclick = function() {{ deleteProject(app.path); }};
+    actions.appendChild(delProjBtn);
+  }} else if (status === 'deleted') {{
+    var verBtn = document.createElement('button'); verBtn.className = 'btn-sm';
+    verBtn.textContent = '버전 이력';
+    verBtn.onclick = function() {{ openVersionModal(app.app_name); }};
+    actions.appendChild(verBtn);
+  }}
+  li.appendChild(actions);
+  return li;
+}}
+
+function stopAllApps() {{
+  if (!confirm('실행 중인 모든 앱을 중지합니다.')) return;
+  localFetch('/api/apps/stop-all', {{ method: 'POST' }}).then(function() {{
+    loadMyApps();
+    loadAppStatus();
+    var t = document.getElementById('hubToast');
+    t.textContent = '모든 앱이 중지되었습니다.';
+    t.style.display = 'block';
+    setTimeout(function() {{ t.style.display = 'none'; }}, 2000);
+  }}).catch(function() {{}});
+}}
+
+function startApp(path, type) {{
+  localFetch('/api/apps/start', {{
+    method: 'POST',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify({{path: path, type: type || 'node'}})
+  }}).then(function() {{
+    loadMyApps();
+    loadAppStatus();
+  }}).catch(function() {{}});
+}}
+
+function stopApp(port) {{
+  if (!confirm('포트 ' + port + ' 앱을 중지합니다.')) return;
+  localFetch('/api/apps/stop', {{
+    method: 'POST',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify({{port: port}})
+  }}).then(function() {{
+    loadMyApps();
+    loadAppStatus();
+  }}).catch(function() {{}});
+}}
+
+function renameApp(oldName) {{
+  var newName = prompt('새 이름을 입력하세요:', oldName);
+  if (!newName || newName === oldName) return;
+  localFetch('/api/apps/rename', {{
+    method: 'POST',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify({{old_name: oldName, new_name: newName}})
+  }}).then(function() {{
+    loadMyApps();
+    var t = document.getElementById('hubToast');
+    t.textContent = '이름이 변경되었습니다: ' + newName;
+    t.style.display = 'block';
+    setTimeout(function() {{ t.style.display = 'none'; }}, 2000);
+  }}).catch(function() {{}});
+}}
+
+function deleteProject(path) {{
+  if (!confirm('프로젝트를 삭제합니다: ' + path + '\n이 작업은 되돌릴 수 없습니다.')) return;
+  localFetch('/api/apps/delete-project', {{
+    method: 'POST',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify({{path: path}})
+  }}).then(function() {{
+    loadMyApps();
+  }}).catch(function() {{}});
+}}
+
+// ── 버전 이력 모달 ──
+function openVersionModal(appName) {{
+  localFetch('/api/apps/versions/' + encodeURIComponent(appName)).then(function(data) {{
+    var versions = data.versions || [];
+    var msg = appName + ' 버전 이력:\n\n';
+    if (versions.length === 0) {{
+      msg += '버전 이력이 없습니다.';
+    }} else {{
+      versions.forEach(function(v, i) {{
+        msg += (i + 1) + '. ' + v.version + ' (' + v.date + ')';
+        if (v.is_current) msg += ' [현재]';
+        msg += '\n';
+      }});
+      msg += '\n복원할 버전 번호를 입력하세요 (취소: 빈 값):';
+    }}
+    var choice = prompt(msg);
+    if (choice && versions[parseInt(choice) - 1]) {{
+      restoreVersion(appName, versions[parseInt(choice) - 1].version);
+    }}
+  }}).catch(function() {{}});
+}}
+
+function restoreVersion(appName, version) {{
+  if (!confirm(appName + '을 ' + version + ' 버전으로 복원합니다.')) return;
+  apiFetch('/apps/' + encodeURIComponent(appName) + '/restore', {{
+    method: 'POST',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify({{version: version}})
+  }}).then(function() {{
+    loadMyApps();
+    var t = document.getElementById('hubToast');
+    t.textContent = appName + ' → ' + version + ' 복원 완료';
+    t.style.display = 'block';
+    setTimeout(function() {{ t.style.display = 'none'; }}, 2000);
+  }}).catch(function() {{}});
+}}
+
+// ── 내 공유 관리 ──
+function loadMyShares() {{
+  apiFetch('/apps/my-shares').then(function(data) {{
+    var shares = data.shares || [];
+    var list = document.getElementById('mySharesList');
+    var count = document.getElementById('mySharesCount');
+    var revokeBtn = document.getElementById('bulkRevokeBtn');
+    count.textContent = '(' + shares.length + ')';
+    list.replaceChildren();
+    if (shares.length === 0) {{
+      var empty = document.createElement('li'); empty.className = 'empty-msg';
+      empty.textContent = '공유 항목이 없습니다.';
+      list.appendChild(empty);
+      revokeBtn.style.display = 'none';
+      return;
+    }}
+    revokeBtn.style.display = 'inline-block';
+    shares.forEach(function(s) {{
+      var li = document.createElement('li'); li.className = 'app-item';
+      li.style.gap = '8px';
+      var check = document.createElement('input'); check.type = 'checkbox';
+      check.className = 'share-check'; check.value = s.id;
+      check.onchange = function() {{ updateShareSelectAll(); }};
+      li.appendChild(check);
+      var info = document.createElement('div'); info.className = 'app-info'; info.style.flex = '1';
+      var tag = document.createElement('span'); tag.className = 'share-tag';
+      if (s.resource_type === 'app') {{
+        tag.classList.add('share-tag-app'); tag.textContent = '앱';
+      }} else {{
+        tag.classList.add('share-tag-data'); tag.textContent = '데이터';
+      }}
+      var nameSpan = document.createElement('span');
+      nameSpan.textContent = ' ' + (s.resource_name || '') + ' → ' + (s.share_target || '');
+      var meta = document.createElement('div'); meta.className = 'app-meta';
+      meta.textContent = s.grant_type || '';
+      info.appendChild(tag); info.appendChild(nameSpan); info.appendChild(meta);
+      li.appendChild(info);
+      list.appendChild(li);
+    }});
+  }}).catch(function() {{}});
+}}
+
+function toggleShareSelectAll(checked) {{
+  document.querySelectorAll('#mySharesList .share-check').forEach(function(c) {{
+    c.checked = checked;
   }});
 }}
-// 탭 버튼 클릭 이벤트 (onclick 대신 안전한 방식)
-document.querySelectorAll('.hub-tab').forEach(function(btn, idx) {{
-  btn.addEventListener('click', function() {{
-    document.querySelectorAll('.hub-tab').forEach(function(t) {{ t.classList.remove('active'); }});
-    document.querySelectorAll('.hub-tab-content').forEach(function(c) {{ c.classList.remove('active'); }});
-    btn.classList.add('active');
-    var tabs = document.querySelectorAll('.hub-tab-content');
-    if (tabs[idx]) tabs[idx].classList.add('active');
+
+function updateShareSelectAll() {{
+  var checks = document.querySelectorAll('#mySharesList .share-check');
+  var allChecked = true;
+  checks.forEach(function(c) {{ if (!c.checked) allChecked = false; }});
+  document.getElementById('shareSelectAll').checked = allChecked;
+}}
+
+function bulkRevokeShares() {{
+  var ids = [];
+  document.querySelectorAll('#mySharesList .share-check:checked').forEach(function(c) {{
+    ids.push(c.value);
   }});
-}});
+  if (ids.length === 0) {{ alert('해제할 항목을 선택하세요.'); return; }}
+  if (!confirm(ids.length + '개 공유를 해제합니다.')) return;
+  apiFetch('/apps/bulk-revoke-shares', {{
+    method: 'POST',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify({{share_ids: ids}})
+  }}).then(function() {{
+    loadMyShares();
+    loadMyApps();
+    loadMyDatasets();
+    var t = document.getElementById('hubToast');
+    t.textContent = ids.length + '개 공유가 해제되었습니다.';
+    t.style.display = 'block';
+    setTimeout(function() {{ t.style.display = 'none'; }}, 2000);
+  }}).catch(function() {{}});
+}}
+
+// ── 스킬 관리 ──
+function loadMySkills() {{
+  apiFetch('/skills/my').then(function(data) {{
+    var skills = data.skills || [];
+    var list = document.getElementById('mySkillsList');
+    var count = document.getElementById('mySkillsCount');
+    count.textContent = '(' + skills.length + ')';
+    list.replaceChildren();
+    if (skills.length === 0) {{
+      var empty = document.createElement('li'); empty.className = 'empty-msg';
+      empty.textContent = '등록된 스킬이 없습니다.';
+      list.appendChild(empty); return;
+    }}
+    skills.forEach(function(s) {{
+      var li = document.createElement('li'); li.className = 'skill-item';
+      var info = document.createElement('div');
+      var name = document.createElement('strong'); name.textContent = s.name || '';
+      var meta = document.createElement('div'); meta.className = 'skill-meta';
+      meta.textContent = (s.description || '') + (s.installs ? ' \u00b7 ' + s.installs + '회 설치' : '');
+      info.appendChild(name); info.appendChild(meta);
+      li.appendChild(info);
+      var shareBtn = document.createElement('button'); shareBtn.className = 'btn-sm';
+      shareBtn.style.borderColor = '#238636'; shareBtn.style.color = '#3fb950';
+      shareBtn.textContent = '공유하기';
+      shareBtn.onclick = function() {{ publishSkill(s.name); }};
+      li.appendChild(shareBtn);
+      list.appendChild(li);
+    }});
+  }}).catch(function() {{}});
+}}
+
+function loadSkillStore(sortBy) {{
+  var query = '';
+  if (sortBy === 'search') {{
+    query = '?q=' + encodeURIComponent(document.getElementById('skillStoreSearch').value.trim());
+  }} else {{
+    query = '?sort=' + sortBy;
+  }}
+  apiFetch('/skills/store' + query).then(function(data) {{
+    var skills = data.skills || [];
+    var list = document.getElementById('skillStoreList');
+    list.replaceChildren();
+    if (skills.length === 0) {{
+      var empty = document.createElement('li'); empty.className = 'empty-msg';
+      empty.textContent = '스킬이 없습니다.';
+      list.appendChild(empty); return;
+    }}
+    skills.forEach(function(s, idx) {{
+      var li = document.createElement('li'); li.className = 'skill-item';
+      var rank = document.createElement('span'); rank.className = 'skill-rank';
+      rank.textContent = sortBy === 'popular' ? (idx + 1) : '';
+      li.appendChild(rank);
+      var info = document.createElement('div'); info.style.flex = '1';
+      var name = document.createElement('strong'); name.textContent = s.name || '';
+      var meta = document.createElement('div'); meta.className = 'skill-meta';
+      meta.textContent = (s.author || '') + ' \u00b7 ' + (s.installs || 0) + '회 설치';
+      if (s.description) {{
+        var desc = document.createElement('div'); desc.className = 'skill-meta';
+        desc.textContent = s.description;
+        info.appendChild(name); info.appendChild(desc); info.appendChild(meta);
+      }} else {{
+        info.appendChild(name); info.appendChild(meta);
+      }}
+      li.appendChild(info);
+      var installBtn = document.createElement('button'); installBtn.className = 'btn-sm';
+      installBtn.style.borderColor = '#238636'; installBtn.style.color = '#3fb950';
+      installBtn.textContent = '설치';
+      installBtn.onclick = function() {{ installSkill(s.id); }};
+      li.appendChild(installBtn);
+      list.appendChild(li);
+    }});
+  }}).catch(function() {{}});
+}}
+
+function loadInstalledSkills() {{
+  apiFetch('/skills/installed').then(function(data) {{
+    var skills = data.skills || [];
+    var list = document.getElementById('installedSkillsList');
+    var count = document.getElementById('installedSkillsCount');
+    count.textContent = '(' + skills.length + ')';
+    list.replaceChildren();
+    if (skills.length === 0) {{
+      var empty = document.createElement('li'); empty.className = 'empty-msg';
+      empty.textContent = '설치된 스킬이 없습니다.';
+      list.appendChild(empty); return;
+    }}
+    skills.forEach(function(s) {{
+      var li = document.createElement('li'); li.className = 'skill-item';
+      var info = document.createElement('div'); info.style.flex = '1';
+      var name = document.createElement('strong'); name.textContent = s.name || '';
+      var meta = document.createElement('div'); meta.className = 'skill-meta';
+      meta.textContent = (s.author || '') + ' \u00b7 ' + (s.version || '');
+      info.appendChild(name); info.appendChild(meta);
+      li.appendChild(info);
+      var removeBtn = document.createElement('button'); removeBtn.className = 'btn-sm danger';
+      removeBtn.textContent = '제거';
+      removeBtn.onclick = function() {{ uninstallSkill(s.id); }};
+      li.appendChild(removeBtn);
+      list.appendChild(li);
+    }});
+  }}).catch(function() {{}});
+}}
+
+function installSkill(id) {{
+  apiFetch('/skills/install', {{
+    method: 'POST',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify({{skill_id: id}})
+  }}).then(function() {{
+    loadInstalledSkills();
+    loadSkillStore('popular');
+    var t = document.getElementById('hubToast');
+    t.textContent = '스킬이 설치되었습니다.';
+    t.style.display = 'block';
+    setTimeout(function() {{ t.style.display = 'none'; }}, 2000);
+  }}).catch(function() {{}});
+}}
+
+function uninstallSkill(id) {{
+  if (!confirm('스킬을 제거합니다.')) return;
+  apiFetch('/skills/' + id, {{ method: 'DELETE' }}).then(function() {{
+    loadInstalledSkills();
+    var t = document.getElementById('hubToast');
+    t.textContent = '스킬이 제거되었습니다.';
+    t.style.display = 'block';
+    setTimeout(function() {{ t.style.display = 'none'; }}, 2000);
+  }}).catch(function() {{}});
+}}
+
+function publishSkill(name) {{
+  if (!confirm(name + ' 스킬을 스토어에 공유합니다.')) return;
+  apiFetch('/skills/publish', {{
+    method: 'POST',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify({{name: name}})
+  }}).then(function() {{
+    loadMySkills();
+    var t = document.getElementById('hubToast');
+    t.textContent = name + ' 스킬이 공유되었습니다.';
+    t.style.display = 'block';
+    setTimeout(function() {{ t.style.display = 'none'; }}, 2000);
+  }}).catch(function() {{}});
+}}
 
 // 초기 로드
 loadMyApps();
 loadSharedApps();
 loadMyDatasets();
 loadSharedDatasets();
+loadAppStatus();
+loadMyShares();
 
 // 페이지 로드 시 기존 터미널 탭 확인
 (function() {{
