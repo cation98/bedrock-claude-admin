@@ -287,7 +287,13 @@ class FileServerHandler(SimpleHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(file_size))
-            self.send_header("Content-Disposition", f'attachment; filename="{file_name}"')
+            # RFC 5987: 한글 등 non-ASCII 파일명은 filename*=UTF-8'' 형식 사용
+            try:
+                file_name.encode("latin-1")
+                self.send_header("Content-Disposition", f'attachment; filename="{file_name}"')
+            except UnicodeEncodeError:
+                encoded_name = urllib.parse.quote(file_name)
+                self.send_header("Content-Disposition", f"attachment; filename*=UTF-8''{encoded_name}")
             self.end_headers()
 
             with open(real_target, "rb") as f:
