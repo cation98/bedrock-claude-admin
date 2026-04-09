@@ -144,7 +144,7 @@ async def office_viewer(
                "slide" if ext in {".pptx", ".ppt", ".odp"} else "word"
 
     file_url = f"https://claude.skons.net/api/v1/viewers/file/{username}/{file_path}"
-    onlyoffice_url = "http://onlyoffice.claude-sessions.svc.cluster.local"
+    onlyoffice_url = "https://claude.skons.net/onlyoffice"
 
     html = f"""<!DOCTYPE html>
 <html><head>
