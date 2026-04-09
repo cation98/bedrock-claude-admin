@@ -628,6 +628,9 @@ class K8sService:
                         "/api/v1/files/files-auth-check"
                     ),
                     "nginx.ingress.kubernetes.io/auth-response-headers": "X-Auth-Username",
+                    "nginx.ingress.kubernetes.io/auth-signin": (
+                        "https://claude.skons.net/api/v1/files/files-unauthorized"
+                    ),
                 },
             ),
             spec=client.V1IngressSpec(

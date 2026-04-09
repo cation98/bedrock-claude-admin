@@ -21,9 +21,11 @@ Endpoints:
 
 import logging
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import FileResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -48,6 +50,7 @@ router = APIRouter(prefix="/api/v1/files", tags=["file-share"])
 logger = logging.getLogger(__name__)
 
 VALID_SHARE_TYPES = ("user", "team")
+_FILES_UNAUTH_HTML = Path(__file__).resolve().parent.parent / "static" / "files-unauthorized.html"
 
 
 # ---------- 소유권 검증 헬퍼 ----------
@@ -657,6 +660,15 @@ def _get_shared_mounts_for_user(db: Session, username: str) -> list[dict]:
             })
 
     return results
+
+
+# ── /files/ Ingress: 401/403 커스텀 에러 페이지 ──
+
+
+@router.get("/files-unauthorized", include_in_schema=False)
+async def files_unauthorized_page():
+    """Ingress custom error page: 401/403 접근 거부 HTML."""
+    return FileResponse(_FILES_UNAUTH_HTML, media_type="text/html")
 
 
 # ── /files/ Ingress auth-url: 본인 Pod + admin만 접근 허용 ──

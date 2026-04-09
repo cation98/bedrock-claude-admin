@@ -843,36 +843,47 @@ class FileServerHandler(SimpleHTTPRequestHandler):
         self._send_json(200, {"renamed": True, "old": old_name, "new": new_name})
 
     def _handle_apps_delete_project(self):
-        """POST /api/apps/delete-project — Delete project directory."""
+        """POST /api/apps/delete-project — Delete app directory and registry entry."""
         body = self._read_body()
         data = json.loads(body)
-        app_name = data['name']
+        app_name = data.get('name') or os.path.basename(data.get('path', ''))
         app_path = data.get('path', os.path.join(self.directory, app_name))
 
-        # Safety: only allow deletion within workspace
+        # Safety check
         real_app_path = os.path.realpath(app_path)
         real_workspace = os.path.realpath(self.directory)
         if not real_app_path.startswith(real_workspace + os.sep):
             self._send_json(403, {"error": "workspace 외부 경로는 삭제할 수 없습니다"})
             return
 
-        # Stop if running
         reg_path = os.path.join(self.directory, '.webapp-registry.json')
         registry = {}
         if os.path.exists(reg_path):
             with open(reg_path) as f:
                 registry = json.load(f)
+
+        # Stop running app (ignore errors)
         if app_name in registry and registry[app_name].get('port'):
-            self._kill_port(registry[app_name]['port'])
+            try:
+                self._kill_port(registry[app_name]['port'])
+            except Exception:
+                pass
 
         # Delete directory
-        if os.path.isdir(app_path):
-            shutil.rmtree(app_path)
+        try:
+            if os.path.isdir(app_path):
+                shutil.rmtree(app_path)
+        except Exception as e:
+            self._send_json(500, {"error": f"디렉토리 삭제 실패: {str(e)}"})
+            return
 
         # Remove from registry
         registry.pop(app_name, None)
-        with open(reg_path, 'w') as f:
-            json.dump(registry, f, indent=2, default=str)
+        try:
+            with open(reg_path, 'w') as f:
+                json.dump(registry, f, indent=2, default=str)
+        except Exception:
+            pass
 
         self._send_json(200, {"deleted": True, "name": app_name})
 

@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>접근 권한 없음 — Claude Code Platform</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #0d1117;
+            color: #e6edf3;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
+        }
+
+        .container {
+            text-align: center;
+            max-width: 480px;
+            width: 100%;
+        }
+
+        /* Shield icon — CSS-only */
+        .illustration {
+            position: relative;
+            width: 80px;
+            height: 96px;
+            margin: 0 auto 2rem;
+        }
+        .shield {
+            width: 80px;
+            height: 96px;
+            background: #161b22;
+            border: 2px solid #30363d;
+            border-radius: 4px 4px 40px 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+        .shield::after {
+            content: '';
+            width: 3px;
+            height: 32px;
+            background: #f85149;
+            border-radius: 2px;
+            position: absolute;
+            top: 22px;
+        }
+        .shield::before {
+            content: '';
+            width: 10px;
+            height: 10px;
+            background: #f85149;
+            border-radius: 50%;
+            position: absolute;
+            top: 58px;
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #f0f6fc;
+            margin-bottom: 0.75rem;
+        }
+
+        .description {
+            font-size: 1rem;
+            color: #8b949e;
+            line-height: 1.6;
+            margin-bottom: 2rem;
+        }
+
+        .info-card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 1.25rem 1.5rem;
+            margin-bottom: 2rem;
+            text-align: left;
+        }
+        .info-card .row {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+            padding: 0.5rem 0;
+        }
+        .info-card .row + .row {
+            border-top: 1px solid #21262d;
+        }
+        .info-card .icon {
+            flex-shrink: 0;
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1rem;
+            margin-top: 1px;
+        }
+        .info-card .text {
+            font-size: 0.9rem;
+            color: #8b949e;
+            line-height: 1.5;
+        }
+        .info-card .text strong {
+            color: #e6edf3;
+        }
+
+        .back-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.7rem 1.5rem;
+            background: #21262d;
+            color: #e6edf3;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s, border-color 0.2s;
+            text-decoration: none;
+        }
+        .back-btn:hover {
+            background: #30363d;
+            border-color: #484f58;
+        }
+        .back-btn svg {
+            width: 16px;
+            height: 16px;
+        }
+
+        .footer {
+            margin-top: 3rem;
+            font-size: 0.8rem;
+            color: #484f58;
+        }
+
+        /* Responsive */
+        @media (max-width: 480px) {
+            body { padding: 1rem; }
+            h1 { font-size: 1.25rem; }
+            .description { font-size: 0.9rem; }
+            .info-card { padding: 1rem; }
+            .illustration { width: 64px; height: 78px; }
+            .shield { width: 64px; height: 78px; }
+            .shield::after { height: 26px; top: 17px; }
+            .shield::before { width: 8px; height: 8px; top: 47px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="illustration">
+            <div class="shield"></div>
+        </div>
+
+        <h1>접근 권한 없음</h1>
+        <p class="description">
+            공유되지 않은 페이지입니다.<br>
+            이 페이지에 접근할 권한이 없습니다.
+        </p>
+
+        <div class="info-card">
+            <div class="row">
+                <div class="icon">🔒</div>
+                <div class="text">
+                    <strong>접근 제한</strong><br>
+                    이 파일 또는 웹앱은 소유자가 명시적으로 공유한 사용자만 접근할 수 있습니다.
+                </div>
+            </div>
+            <div class="row">
+                <div class="icon">📨</div>
+                <div class="text">
+                    <strong>공유 요청</strong><br>
+                    접근이 필요하면 파일 소유자에게 공유를 요청하세요.
+                </div>
+            </div>
+        </div>
+
+        <a class="back-btn" href="javascript:void(0)" onclick="history.length > 1 ? history.back() : location.href='/'">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="19" y1="12" x2="5" y2="12"></line>
+                <polyline points="12 19 5 12 12 5"></polyline>
+            </svg>
+            돌아가기
+        </a>
+
+        <div class="footer">Powered by Claude Code Platform</div>
+    </div>
+</body>
+</html>
