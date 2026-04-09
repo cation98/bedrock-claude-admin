@@ -59,6 +59,7 @@ class AppDeployService:
             k8s_config.load_kube_config()
 
         self.v1 = client.CoreV1Api()
+        self.apps_v1 = client.AppsV1Api()
         self.networking = NetworkingV1Api()
 
     # ------------------------------------------------------------------ #
@@ -151,21 +152,29 @@ class AppDeployService:
         # EFS subPath: users/{username}/deployed/{app_name}/
         base_sub_path = f"users/{username.lower()}/deployed/{app_name.lower()}"
 
-        pod_manifest = client.V1Pod(
+        labels = {
+            "app": "claude-webapp",
+            "owner": username.lower(),
+            "app-name": app_name.lower(),
+        }
+
+        deployment = client.V1Deployment(
             metadata=client.V1ObjectMeta(
                 name=pod_name,
                 namespace=APP_NAMESPACE,
-                labels={
-                    "app": "claude-webapp",
-                    "owner": username.lower(),
-                    "app-name": app_name.lower(),
-                },
-                annotations={
-                    # 오토스케일러가 운영 중인 앱 Pod를 강제 퇴거하지 못하도록 방지
-                    "cluster-autoscaler.kubernetes.io/safe-to-evict": "false",
-                },
+                labels=labels,
             ),
-            spec=client.V1PodSpec(
+            spec=client.V1DeploymentSpec(
+                replicas=1,
+                selector=client.V1LabelSelector(match_labels=labels),
+                template=client.V1PodTemplateSpec(
+                    metadata=client.V1ObjectMeta(
+                        labels=labels,
+                        annotations={
+                            "cluster-autoscaler.kubernetes.io/safe-to-evict": "false",
+                        },
+                    ),
+                    spec=client.V1PodSpec(
                 # Pod-level 보안 컨텍스트: 비-root 실행 강제
                 security_context=client.V1PodSecurityContext(
                     run_as_non_root=True,
@@ -262,19 +271,21 @@ class AppDeployService:
                             size_limit="256Mi",
                         ),
                     ),
-                ],
+                    ],
+                ),
             ),
+        ),
         )
 
         try:
-            self.v1.create_namespaced_pod(namespace=APP_NAMESPACE, body=pod_manifest)
-            logger.info(f"App Pod {pod_name} created for {username}/{app_name}")
+            self.apps_v1.create_namespaced_deployment(namespace=APP_NAMESPACE, body=deployment)
+            logger.info(f"App Deployment {pod_name} created for {username}/{app_name}")
         except ApiException as e:
             if e.status == 409:
-                logger.info(f"App Pod {pod_name} already exists")
+                logger.info(f"App Deployment {pod_name} already exists")
                 return
-            logger.error(f"Failed to create App Pod {pod_name}: {e}")
-            raise AppDeployError(f"App Pod 생성 실패: {e.reason}")
+            logger.error(f"Failed to create App Deployment {pod_name}: {e}")
+            raise AppDeployError(f"App Deployment 생성 실패: {e.reason}")
 
     def _create_app_service(self, pod_name: str, username: str, app_name: str, app_port: int = 3000) -> None:
         """App Pod를 위한 K8s Service 생성."""
@@ -396,17 +407,17 @@ class AppDeployService:
     # ------------------------------------------------------------------ #
 
     def _delete_app_resources(self, pod_name: str) -> None:
-        """App Pod + Service + Ingress 일괄 삭제."""
-        # Pod 삭제
+        """App Deployment + Service + Ingress 일괄 삭제."""
+        # Deployment 삭제 (관리하는 ReplicaSet + Pod도 자동 삭제)
         try:
-            self.v1.delete_namespaced_pod(
-                name=pod_name, namespace=APP_NAMESPACE, grace_period_seconds=10,
+            self.apps_v1.delete_namespaced_deployment(
+                name=pod_name, namespace=APP_NAMESPACE,
             )
-            logger.info(f"App Pod {pod_name} deleted")
+            logger.info(f"App Deployment {pod_name} deleted")
         except ApiException as e:
             if e.status != 404:
-                logger.error(f"Failed to delete App Pod {pod_name}: {e}")
-                raise AppDeployError(f"App Pod 삭제 실패: {e.reason}")
+                logger.error(f"Failed to delete App Deployment {pod_name}: {e}")
+                raise AppDeployError(f"App Deployment 삭제 실패: {e.reason}")
 
         # Service 삭제
         try:
