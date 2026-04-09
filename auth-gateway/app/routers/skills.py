@@ -7,6 +7,7 @@ Endpoints:
   POST   /api/v1/skills/submit         — 스킬 제출 (인증 사용자)
   GET    /api/v1/skills/               — 승인된 스킬 목록 (인증 사용자)
   GET    /api/v1/skills/pending        — 검토 대기 목록 (관리자)
+  GET    /api/v1/skills/recommended    — 사용자 맞춤 스킬 추천 (인증 사용자)
   PATCH  /api/v1/skills/{id}/approve   — 스킬 승인 (관리자)
   DELETE /api/v1/skills/{id}           — 스킬 삭제/거절 (관리자)
   GET    /api/v1/skills/approved-contents — 승인된 스킬 내용 (Pod init용, 인증 불필요)
@@ -16,6 +17,7 @@ import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -36,6 +38,18 @@ def _require_admin(current_user: dict = Depends(get_current_user)) -> dict:
     if current_user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     return current_user
+
+
+def _skill_to_dict(s: SharedSkill) -> dict:
+    """SharedSkill 모델을 추천 응답용 dict로 변환."""
+    return {
+        "id": s.id,
+        "name": s.display_name or s.skill_name,
+        "description": s.description,
+        "author": s.owner_username,
+        "installs": s.install_count,
+        "skill_type": s.skill_type,
+    }
 
 
 # ==================== 사용자 API ====================
@@ -277,6 +291,92 @@ async def publish_skill(
     db.commit()
     db.refresh(skill)
     return {"id": skill.id, "published": True}
+
+
+@router.get("/recommended")
+async def get_recommended_skills(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """사용자 맞춤 스킬 추천 (설치 이력 기반 collaborative filtering).
+
+    1. 이 사용자가 설치한 스킬 목록 조회
+    2. 같은 스킬을 설치한 다른 사용자 찾기
+    3. 그 사용자들이 설치했지만 나는 안 한 스킬 -> 추천
+    4. install_count 높은 순으로 정렬
+    """
+    username = current_user["sub"]
+
+    # 내가 설치한 스킬 ID
+    my_installs = db.query(SkillInstall.skill_id).filter(
+        SkillInstall.username == username,
+        SkillInstall.uninstalled_at.is_(None),
+    ).all()
+    my_skill_ids = {r[0] for r in my_installs}
+
+    if not my_skill_ids:
+        # 설치 이력 없으면 인기순 top 5
+        popular = (
+            db.query(SharedSkill)
+            .filter(SharedSkill.is_active == True)  # noqa: E712
+            .order_by(SharedSkill.install_count.desc())
+            .limit(5)
+            .all()
+        )
+        return {"skills": [_skill_to_dict(s) for s in popular], "reason": "popular"}
+
+    # 같은 스킬 설치한 다른 사용자
+    similar_users = db.query(SkillInstall.username).filter(
+        SkillInstall.skill_id.in_(my_skill_ids),
+        SkillInstall.username != username,
+        SkillInstall.uninstalled_at.is_(None),
+    ).distinct().all()
+    similar_usernames = {r[0] for r in similar_users}
+
+    if not similar_usernames:
+        # 유사 사용자 없으면 내가 설치하지 않은 인기순 top 5
+        popular = (
+            db.query(SharedSkill)
+            .filter(
+                SharedSkill.is_active == True,  # noqa: E712
+                ~SharedSkill.id.in_(my_skill_ids),
+            )
+            .order_by(SharedSkill.install_count.desc())
+            .limit(5)
+            .all()
+        )
+        return {"skills": [_skill_to_dict(s) for s in popular], "reason": "popular"}
+
+    # 그들이 설치한 스킬 중 내가 안 한 것 (공동 설치 횟수 기준 정렬)
+    recommended_ids = (
+        db.query(
+            SkillInstall.skill_id,
+            func.count(SkillInstall.id).label("cnt"),
+        )
+        .filter(
+            SkillInstall.username.in_(similar_usernames),
+            ~SkillInstall.skill_id.in_(my_skill_ids),
+            SkillInstall.uninstalled_at.is_(None),
+        )
+        .group_by(SkillInstall.skill_id)
+        .order_by(func.count(SkillInstall.id).desc())
+        .limit(5)
+        .all()
+    )
+
+    skill_ids = [r[0] for r in recommended_ids]
+    if skill_ids:
+        skills = (
+            db.query(SharedSkill)
+            .filter(SharedSkill.id.in_(skill_ids), SharedSkill.is_active == True)  # noqa: E712
+            .all()
+        )
+        # 공동 설치 횟수 순서 유지
+        skill_map = {s.id: s for s in skills}
+        ordered = [skill_map[sid] for sid in skill_ids if sid in skill_map]
+        return {"skills": [_skill_to_dict(s) for s in ordered], "reason": "collaborative"}
+
+    return {"skills": [], "reason": "none"}
 
 
 @router.patch("/{skill_id}/approve", response_model=SkillResponse)
