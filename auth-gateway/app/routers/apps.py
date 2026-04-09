@@ -181,13 +181,18 @@ async def auth_check(
             detail="유효하지 않은 토큰입니다",
         )
 
-    # 2. X-Original-URI에서 앱 slug/이름 파싱
-    # 형식: /apps/{slug}/{app_name}/...
+    # 2. X-Original-URI 또는 X-Original-URL에서 앱 slug/이름 파싱
+    # nginx-ingress는 X-Original-URL(전체 URL) 또는 X-Original-URI(경로만) 전송
     original_uri = request.headers.get("X-Original-URI", "")
+    if not original_uri:
+        original_url = request.headers.get("X-Original-URL", "")
+        if original_url:
+            from urllib.parse import urlparse
+            original_uri = urlparse(original_url).path
     if not original_uri:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="X-Original-URI 헤더가 없습니다",
+            detail="X-Original-URI/URL 헤더가 없습니다",
         )
 
     # URI 경로 파싱: /apps/{slug}/{app-name} 또는 /apps/{slug}/{app-name}/...

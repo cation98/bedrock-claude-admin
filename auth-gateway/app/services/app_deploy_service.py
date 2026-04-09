@@ -321,7 +321,7 @@ class AppDeployService:
                     # ── A01: Broken Access Control ──
                     # auth-url: 매 요청 시 auth-gateway에 ACL 검증 위임
                     "nginx.ingress.kubernetes.io/auth-url": (
-                        "http://auth-gateway.platform.svc.cluster.local:8000"
+                        "http://auth-gateway.platform.svc.cluster.local"
                         "/api/v1/apps/auth-check"
                     ),
                     "nginx.ingress.kubernetes.io/auth-response-headers": "X-Auth-Username",
@@ -333,8 +333,7 @@ class AppDeployService:
 
                     # ── A02: Cryptographic Failures ──
                     # HTTPS 강제, HSTS 헤더
-                    "nginx.ingress.kubernetes.io/force-ssl-redirect": "true",
-                    "nginx.ingress.kubernetes.io/ssl-redirect": "true",
+                    # ALB가 TLS 종료하므로 force-ssl-redirect 사용하지 않음 (무한 루프 방지)
 
                     # ── A03/A07: Security headers ──
                     # NOTE: configuration-snippet / server-snippet are blocked by
