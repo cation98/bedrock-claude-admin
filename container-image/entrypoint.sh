@@ -346,7 +346,50 @@ fi
 done) &
 
 # ---------------------------------------------------------------------------
-# 4c-2) 대화이력 주기적 자동 백업 (30분마다) — TTL 만료/크래시 시에도 보존
+# 4c-2) 메모리 사용량 모니터 (15초마다)
+#       cgroup v2 memory.current / memory.max 로 사용률 계산.
+#       80% 초과 → 경고, 90% 초과 → 긴급 경고 + Claude AI 알림 파일 생성.
+#       OOMKilled 방지를 위해 사전 경고.
+# ---------------------------------------------------------------------------
+(while true; do
+    sleep 15
+    # cgroup v2 메모리 정보 읽기
+    MEM_CURRENT=$(cat /sys/fs/cgroup/memory.current 2>/dev/null || echo 0)
+    MEM_MAX=$(cat /sys/fs/cgroup/memory.max 2>/dev/null || echo "max")
+    if [ "$MEM_MAX" = "max" ] || [ "$MEM_MAX" = "0" ]; then
+        sleep 45
+        continue
+    fi
+    PCT=$((MEM_CURRENT * 100 / MEM_MAX))
+    MEM_MB=$((MEM_CURRENT / 1048576))
+    MAX_MB=$((MEM_MAX / 1048576))
+
+    if [ "$PCT" -ge 90 ]; then
+        # 긴급 경고: 터미널 + Claude AI 알림 파일
+        for pts in /dev/pts/[0-9]*; do
+            echo "" > "$pts" 2>/dev/null
+            echo "  🚨 [긴급 메모리 경고] ${MEM_MB}MB / ${MAX_MB}MB (${PCT}%) — OOM 위험!" > "$pts" 2>/dev/null
+            echo "  대용량 작업을 즉시 중단하고, 불필요한 프로세스를 종료하세요." > "$pts" 2>/dev/null
+            echo "  (kill PID 또는 Ctrl+C로 현재 작업 중단)" > "$pts" 2>/dev/null
+            echo "" > "$pts" 2>/dev/null
+        done
+        # Claude AI가 감지할 수 있는 알림 파일
+        echo "{\"level\":\"critical\",\"memory_pct\":${PCT},\"memory_mb\":${MEM_MB},\"max_mb\":${MAX_MB}}" > /tmp/.memory-warning
+    elif [ "$PCT" -ge 80 ]; then
+        # 주의 경고: 터미널에만 표시
+        for pts in /dev/pts/[0-9]*; do
+            echo "" > "$pts" 2>/dev/null
+            echo "  ⚠ [메모리 주의] ${MEM_MB}MB / ${MAX_MB}MB (${PCT}%) — 대용량 작업 시 주의" > "$pts" 2>/dev/null
+            echo "" > "$pts" 2>/dev/null
+        done
+        rm -f /tmp/.memory-warning
+    else
+        rm -f /tmp/.memory-warning
+    fi
+done) &
+
+# ---------------------------------------------------------------------------
+# 4c-3) 대화이력 주기적 자동 백업 (30분마다) — TTL 만료/크래시 시에도 보존
 # ---------------------------------------------------------------------------
 (while true; do sleep 1800; backup-chat 2>/dev/null; done) &
 

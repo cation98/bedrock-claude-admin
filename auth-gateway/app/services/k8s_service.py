@@ -96,6 +96,74 @@ class K8sService:
             if e.status != 404:
                 logger.error(f"Failed to delete pod token secret: {e}")
 
+    def _build_volume_mounts(
+        self,
+        username: str,
+        shared_read_only: bool,
+    ) -> list:
+        """Pod volume mounts 구성.
+
+        [보안] .efs-users 전체 마운트 제거 (2026-04-09).
+        공유 데이터셋은 DB에서 조회하여 개별 sub_path로 마운트.
+        """
+        mounts = [
+            client.V1VolumeMount(
+                name="user-workspace",
+                mount_path="/home/node/workspace",
+                sub_path=f"users/{username.lower()}",
+            ),
+            client.V1VolumeMount(
+                name="user-workspace",
+                mount_path="/home/node/workspace/shared",
+                sub_path="shared",
+                read_only=shared_read_only,
+            ),
+        ]
+
+        # 공유 데이터셋 개별 마운트: ~/workspace/team/{owner}/{dataset_name}/
+        try:
+            from app.core.database import SessionLocal
+            from app.models.file_share import SharedDataset, FileShareACL
+
+            db = SessionLocal()
+            # 이 사용자에게 공유된 활성 ACL 조회
+            acls = (
+                db.query(FileShareACL)
+                .filter(
+                    FileShareACL.target_username == username.upper(),
+                    FileShareACL.revoked_at.is_(None),
+                )
+                .all()
+            )
+            # 각 ACL에 대응하는 데이터셋 조회 → sub_path 마운트
+            dataset_ids = [a.dataset_id for a in acls]
+            if dataset_ids:
+                datasets = (
+                    db.query(SharedDataset)
+                    .filter(SharedDataset.id.in_(dataset_ids))
+                    .all()
+                )
+                for ds in datasets:
+                    owner = ds.owner_username.lower()
+                    mount_path = f"/home/node/workspace/team/{ds.owner_username}/{ds.dataset_name}"
+                    sub_path = f"users/{owner}/shared-data/{ds.dataset_name}"
+                    mounts.append(
+                        client.V1VolumeMount(
+                            name="user-workspace",
+                            mount_path=mount_path,
+                            sub_path=sub_path,
+                            read_only=True,
+                        ),
+                    )
+                    logger.info(
+                        f"Shared mount for {username}: {mount_path} → {sub_path}"
+                    )
+            db.close()
+        except Exception as e:
+            logger.warning(f"Failed to load shared mounts for {username}: {e}")
+
+        return mounts
+
     def _build_env_vars(
         self,
         username: str,
@@ -376,30 +444,9 @@ class K8sService:
                             initial_delay_seconds=10,
                             period_seconds=30,
                         ),
-                        volume_mounts=[
-                            client.V1VolumeMount(
-                                name="user-workspace",
-                                mount_path="/home/node/workspace",
-                                sub_path=f"users/{username.lower()}",
-                            ),
-                            # 공유 디렉토리: infra_policy.shared_dir_writable에 따라 쓰기 가능
-                            client.V1VolumeMount(
-                                name="user-workspace",
-                                mount_path="/home/node/workspace/shared",
-                                sub_path="shared",
-                                read_only=shared_read_only,
-                            ),
-                            # 전체 사용자 EFS 디렉토리 (readOnly) — 실시간 공유 동기화용
-                            # share-sync.sh가 API 조회 후 ~/workspace/team/ 심링크를 생성하여
-                            # .efs-users/{owner}/shared-data/{name}/ 을 가리킨다.
-                            # Pod 재시작 없이 공유 변경이 반영된다.
-                            client.V1VolumeMount(
-                                name="user-workspace",
-                                mount_path="/home/node/.efs-users",
-                                sub_path="users",
-                                read_only=True,
-                            ),
-                        ],
+                        volume_mounts=self._build_volume_mounts(
+                            username, shared_read_only,
+                        ),
                     )
                 ],
                 volumes=[
