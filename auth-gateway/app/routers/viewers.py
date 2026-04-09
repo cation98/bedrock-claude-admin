@@ -6,6 +6,7 @@ Endpoints:
 """
 
 import hashlib
+import json
 import logging
 import os
 import secrets
@@ -19,8 +20,8 @@ from kubernetes import client
 from app.core.config import Settings, get_settings
 from app.core.security import decode_token
 
-# 임시 파일 토큰 저장 (메모리 — TTL 5분)
-_file_tokens: dict[str, dict] = {}  # token → {"username", "file_path", "expires"}
+# 임시 파일 토큰: Redis(분산) → 메모리(fallback)
+_file_tokens: dict[str, dict] = {}  # fallback: token → {"username", "file_path", "expires"}
 
 router = APIRouter(prefix="/api/v1/viewers", tags=["viewers"])
 logger = logging.getLogger(__name__)
@@ -48,8 +49,18 @@ async def _get_viewer_user(request: Request, settings: Settings = Depends(get_se
     raise HTTPException(status_code=401, detail="Not authenticated")
 
 def _create_file_token(username: str, file_path: str, ttl_seconds: int = 300) -> str:
-    """OnlyOffice 서버용 임시 파일 접근 토큰 생성 (5분 TTL)."""
+    """임시 파일 접근 토큰 생성 (5분 TTL). Redis 우선, fallback 메모리."""
     token = secrets.token_urlsafe(32)
+    value = json.dumps({"username": username, "file_path": file_path})
+    try:
+        from app.core.redis_client import get_redis
+        r = get_redis()
+        if r:
+            r.setex(f"ftoken:{token}", ttl_seconds, value)
+            return token
+    except Exception:
+        pass
+    # fallback: 메모리
     _file_tokens[token] = {
         "username": username,
         "file_path": file_path,
@@ -58,12 +69,23 @@ def _create_file_token(username: str, file_path: str, ttl_seconds: int = 300) ->
     return token
 
 
-def _cleanup_expired_tokens():
-    """만료된 토큰 정리."""
+def _consume_file_token(token: str) -> dict | None:
+    """토큰 검증 + 소비 (1회용). Redis 우선, fallback 메모리."""
+    try:
+        from app.core.redis_client import get_redis
+        r = get_redis()
+        if r:
+            val = r.getdel(f"ftoken:{token}")  # 원자적 get+delete
+            if val:
+                return json.loads(val)
+    except Exception:
+        pass
+    # fallback: 메모리
     now = time.time()
-    expired = [k for k, v in _file_tokens.items() if v["expires"] < now]
-    for k in expired:
-        _file_tokens.pop(k, None)
+    data = _file_tokens.pop(token, None)
+    if data and data.get("expires", 0) > now:
+        return data
+    return None
 
 
 MIME_MAP = {
@@ -109,10 +131,9 @@ async def stream_file(
     - 일반: Bearer/cookie 인증 (본인 Pod 또는 admin)
     - OnlyOffice: ?token= 임시 토큰 (서버 측 파일 다운로드용, 5분 TTL)
     """
-    # 임시 토큰 인증 (OnlyOffice 서버 → 파일 다운로드용)
+    # 임시 토큰 인증 (SheetJS 파일 다운로드용)
     if token:
-        _cleanup_expired_tokens()
-        token_data = _file_tokens.pop(token, None)
+        token_data = _consume_file_token(token)
         if not token_data:
             raise HTTPException(status_code=401, detail="Invalid or expired token")
         if token_data["username"].upper() != username.upper() or token_data["file_path"] != file_path:
