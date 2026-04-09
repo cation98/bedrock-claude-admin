@@ -2409,7 +2409,8 @@ function initFileExplorer() {{
       if(d.type==='dir') {{ loadDirectory(d.path); return; }}
       var ext=getFileExt(d.name);
       var username='{user_id}';
-      if(OFFICE_EXTENSIONS[ext]) window.open('/api/v1/viewers/office/'+encodeURIComponent(username)+'/'+encodeURIComponent(d.path),'_blank');
+      if(MARKDOWN_EXTENSIONS[ext]) window.open('/api/v1/viewers/markdown/'+encodeURIComponent(username)+'/'+encodeURIComponent(d.path),'_blank');
+      else if(OFFICE_EXTENSIONS[ext]) window.open('/api/v1/viewers/office/'+encodeURIComponent(username)+'/'+encodeURIComponent(d.path),'_blank');
       else if(PREVIEW_EXTENSIONS[ext]) window.open('/api/v1/viewers/file/'+encodeURIComponent(username)+'/'+encodeURIComponent(d.path),'_blank');
     }},
     rowContext:function(e,row){{ e.preventDefault(); feContextTarget=row.getData(); row.select(); showContextMenu(e.pageX,e.pageY); }}
@@ -2510,8 +2511,9 @@ function hideContextMenu() {{
 }}
 document.addEventListener('click', function(){{ hideContextMenu(); }});
 document.addEventListener('keydown', function(e){{ if(e.key==='Escape') hideContextMenu(); }});
-var PREVIEW_EXTENSIONS = {{'pdf':1,'png':1,'jpg':1,'jpeg':1,'gif':1,'svg':1,'txt':1,'md':1}};
+var PREVIEW_EXTENSIONS = {{'pdf':1,'png':1,'jpg':1,'jpeg':1,'gif':1,'svg':1,'txt':1}};
 var OFFICE_EXTENSIONS = {{'xlsx':1,'xls':1,'csv':1,'docx':1,'doc':1,'pptx':1,'ppt':1}};
+var MARKDOWN_EXTENSIONS = {{'md':1,'markdown':1}};
 
 function getFileExt(name) {{
   var parts = name.split('.');
@@ -2523,7 +2525,9 @@ function ctxPreview() {{
   var ext = getFileExt(feContextTarget.name);
   var username = '{user_id}';
   var path = feContextTarget.path;
-  if (OFFICE_EXTENSIONS[ext]) {{
+  if (MARKDOWN_EXTENSIONS[ext]) {{
+    window.open('/api/v1/viewers/markdown/' + encodeURIComponent(username) + '/' + encodeURIComponent(path), '_blank');
+  }} else if (OFFICE_EXTENSIONS[ext]) {{
     window.open('/api/v1/viewers/office/' + encodeURIComponent(username) + '/' + encodeURIComponent(path), '_blank');
   }} else if (PREVIEW_EXTENSIONS[ext]) {{
     window.open('/api/v1/viewers/file/' + encodeURIComponent(username) + '/' + encodeURIComponent(path), '_blank');

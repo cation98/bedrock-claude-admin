@@ -164,3 +164,103 @@ new DocsAPI.DocEditor("placeholder", config);
 </body></html>"""
 
     return HTMLResponse(content=html)
+
+
+@router.get("/markdown/{username}/{file_path:path}", response_class=HTMLResponse)
+async def markdown_viewer(
+    username: str,
+    file_path: str,
+    current_user: dict = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+):
+    """Markdown 파일을 HTML로 렌더링하여 표시."""
+    requesting = current_user.get("sub", "")
+    is_admin = current_user.get("role") == "admin"
+    if not is_admin and requesting.upper() != username.upper():
+        raise HTTPException(status_code=403, detail="접근 권한이 없습니다")
+
+    normalized = os.path.normpath(file_path)
+    if ".." in normalized or normalized.startswith("/"):
+        raise HTTPException(status_code=400, detail="Invalid file path")
+
+    pod_ip = _get_pod_ip(username, settings.k8s_namespace)
+    download_url = f"http://{pod_ip}:8080/api/download?path={file_path}"
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            resp = await http.get(download_url)
+            if resp.status_code != 200:
+                raise HTTPException(status_code=resp.status_code, detail="File not accessible")
+
+            md_text = resp.text
+    except httpx.RequestError as e:
+        logger.error(f"Pod proxy error: {e}")
+        raise HTTPException(status_code=502, detail="Pod fileserver unreachable")
+
+    import markdown
+    html_body = markdown.markdown(
+        md_text,
+        extensions=["tables", "fenced_code", "codehilite", "toc", "nl2br"],
+    )
+    basename = os.path.basename(file_path)
+
+    html = f"""<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<title>{basename} — Otto AI Viewer</title>
+<style>
+  body {{
+    font-family: 'Segoe UI', -apple-system, sans-serif;
+    background: #0d1117; color: #e6edf3;
+    max-width: 860px; margin: 0 auto; padding: 32px 24px;
+    line-height: 1.7;
+  }}
+  h1, h2, h3, h4 {{ color: #58a6ff; margin-top: 1.5em; margin-bottom: 0.5em; }}
+  h1 {{ font-size: 1.8rem; border-bottom: 1px solid #30363d; padding-bottom: 8px; }}
+  h2 {{ font-size: 1.4rem; border-bottom: 1px solid #21262d; padding-bottom: 6px; }}
+  h3 {{ font-size: 1.15rem; }}
+  a {{ color: #58a6ff; text-decoration: none; }}
+  a:hover {{ text-decoration: underline; }}
+  code {{
+    background: #161b22; padding: 2px 6px; border-radius: 4px;
+    font-family: 'SFMono-Regular', Consolas, monospace; font-size: 0.9em;
+    color: #79c0ff;
+  }}
+  pre {{
+    background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+    padding: 16px; overflow-x: auto; line-height: 1.5;
+  }}
+  pre code {{ background: none; padding: 0; color: #e6edf3; }}
+  table {{
+    border-collapse: collapse; width: 100%; margin: 16px 0;
+  }}
+  th, td {{
+    border: 1px solid #30363d; padding: 8px 12px; text-align: left;
+  }}
+  th {{ background: #161b22; color: #58a6ff; font-weight: 600; }}
+  tr:nth-child(even) {{ background: #0d1117; }}
+  tr:hover {{ background: #161b22; }}
+  blockquote {{
+    border-left: 3px solid #58a6ff; padding: 8px 16px; margin: 16px 0;
+    background: #161b22; color: #8b949e;
+  }}
+  img {{ max-width: 100%; border-radius: 8px; }}
+  ul, ol {{ padding-left: 24px; }}
+  li {{ margin: 4px 0; }}
+  hr {{ border: none; border-top: 1px solid #30363d; margin: 24px 0; }}
+  .header {{
+    display: flex; align-items: center; gap: 12px; margin-bottom: 24px;
+    padding-bottom: 12px; border-bottom: 1px solid #30363d;
+  }}
+  .header .icon {{ font-size: 24px; }}
+  .header .title {{ font-size: 1.1rem; color: #8b949e; }}
+</style>
+</head><body>
+<div class="header">
+  <span class="icon">📝</span>
+  <span class="title">{basename}</span>
+</div>
+{html_body}
+</body></html>"""
+
+    return HTMLResponse(content=html)
