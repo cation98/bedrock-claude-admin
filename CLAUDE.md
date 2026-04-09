@@ -101,6 +101,28 @@ DATABASE_URL=         # Platform PostgreSQL
 - O-Guard 프로젝트의 FastAPI 패턴(config loading, auth dependencies, error handling)을 참고할 것
 - Phase 1 MVP (임원 15명 실습, 1주 내) → Phase 2 (팀장 50명) → 상시 운영 (실무자 10명) 순서로 확장
 
+## Infrastructure Design Constraints
+
+### System Node Pair 운용 (필수)
+
+시스템 노드 2대에 auth-gateway + ingress-nginx를 **pair로 배치**한다. 이것은 본 프로젝트의 기본 설계이며 반드시 지켜야 한다.
+
+```
+System Node A: auth-gateway replica-1 + ingress-nginx replica-1
+System Node B: auth-gateway replica-2 + ingress-nginx replica-2
+```
+
+**구현 방법:**
+- auth-gateway: `requiredDuringSchedulingIgnoredDuringExecution` anti-affinity (hard) — 동일 노드 배치 금지
+- auth-gateway: `preferredDuringSchedulingIgnoredDuringExecution` pod affinity — ingress-nginx 근접 선호
+- ingress-nginx: `requiredDuringSchedulingIgnoredDuringExecution` anti-affinity (hard) — 동일 노드 배치 금지
+- system nodegroup: `system-node-large` (t3.large), desired=2, max=3
+
+**주의:**
+- 이미지 배포(rollout restart) 시 일시적으로 pair가 깨질 수 있으나, 안정 운용 시 반드시 pair 상태를 유지해야 함
+- 시스템 노드를 3대 이상으로 늘리지 않음 (비용 최적화)
+- anti-affinity를 soft(preferred)로 변경하지 않음 — 동일 노드 몰림 방지가 목적
+
 ## Design System
 Always read DESIGN.md before making any visual or UI decisions.
 All font choices, colors, spacing, and aesthetic direction are defined there.
