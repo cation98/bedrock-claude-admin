@@ -693,9 +693,14 @@ async def files_auth_check(
     user = db.query(User).filter(User.username == requesting_username).first()
     is_admin = user and user.role == "admin"
 
-    # X-Original-URI에서 pod_name 추출: /files/claude-terminal-{username}/...
+    # nginx-ingress는 X-Original-URL (full URL)을 보냄, X-Original-URI는 미제공
+    # X-Original-URL: https://claude.skons.net/hub/claude-terminal-n1102359/...
+    # X-Original-URI: /hub/claude-terminal-n1102359/... (fallback)
+    original_url = request.headers.get("X-Original-URL", "")
     original_uri = request.headers.get("X-Original-URI", "")
-    # /files/claude-terminal-n1102359/api/browse → claude-terminal-n1102359
+    if original_url:
+        from urllib.parse import urlparse
+        original_uri = urlparse(original_url).path
     parts = original_uri.strip("/").split("/")
     pod_name = parts[1] if len(parts) >= 2 else ""
 
