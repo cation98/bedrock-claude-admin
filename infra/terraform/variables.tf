@@ -114,7 +114,7 @@ variable "eks_dedicated_node_min_size" {
 variable "eks_dedicated_node_max_size" {
   description = "1:1 전용 노드 최대 개수"
   type        = number
-  default     = 15
+  default     = 55
 }
 
 # ----- Bedrock -----
