@@ -1639,6 +1639,44 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
     </div>
   </div>
 
+  <!-- 웹앱 공유(배포) 모달 -->
+  <div class="modal-overlay" id="deployModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>웹앱 공유하기</h3>
+        <button class="close-btn" onclick="closeDeployModal()">&times;</button>
+      </div>
+      <div style="padding:16px;">
+        <div style="margin-bottom:16px;">
+          <div style="font-size:0.82rem;color:#8b949e;margin-bottom:4px;">앱 이름</div>
+          <div id="deployAppName" style="font-weight:bold;font-size:1rem;"></div>
+        </div>
+        <div style="margin-bottom:16px;">
+          <div style="font-size:0.82rem;color:#8b949e;margin-bottom:8px;">공개 범위</div>
+          <label style="display:block;margin-bottom:6px;cursor:pointer;">
+            <input type="radio" name="deployVisibility" value="private" checked onchange="document.getElementById('deployAclSection').style.display='block'"> 비공개 (허용된 사용자만)
+          </label>
+          <label style="display:block;cursor:pointer;">
+            <input type="radio" name="deployVisibility" value="company" onchange="document.getElementById('deployAclSection').style.display='none'"> 전사 공개 (모든 임직원)
+          </label>
+        </div>
+        <div id="deployAclSection" style="margin-bottom:16px;">
+          <div style="font-size:0.82rem;color:#8b949e;margin-bottom:8px;">접근 허용 사용자</div>
+          <div style="display:flex;gap:8px;margin-bottom:8px;">
+            <input type="text" id="deployUserSearch" placeholder="사번 또는 이름 검색..."
+                   style="flex:1;padding:7px 10px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font-size:0.82rem;outline:none;"
+                   onkeypress="if(event.key==='Enter')searchDeployUsers()">
+            <button onclick="searchDeployUsers()" style="padding:7px 14px;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#58a6ff;font-size:0.82rem;cursor:pointer;">검색</button>
+          </div>
+          <ul class="acl-list" id="deploySearchResults" style="max-height:120px;overflow-y:auto;"></ul>
+          <div style="font-size:0.78rem;color:#8b949e;margin-top:8px;">선택된 사용자:</div>
+          <ul class="acl-list" id="deploySelectedUsers" style="max-height:100px;overflow-y:auto;"></ul>
+        </div>
+        <button onclick="executeDeploy()" style="width:100%;padding:10px;background:#238636;border:none;border-radius:8px;color:#fff;font-size:0.9rem;font-weight:bold;cursor:pointer;">배포하기</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 데이터 공유 관리 모달 -->
   <div class="modal-overlay" id="dataShareModal">
     <div class="modal" style="position:relative;width:480px;">
@@ -1984,6 +2022,107 @@ function undeployApp(appName) {{
   if (!confirm(appName + ' \uc571\uc744 \uc0ad\uc81c\ud569\ub2c8\ub2e4. \uc774 \uc791\uc5c5\uc740 \ub418\ub3cc\ub9b4 \uc218 \uc5c6\uc2b5\ub2c8\ub2e4.')) return;
   apiFetch('/apps/' + appName, {{ method: 'DELETE' }})
     .then(function() {{ loadMyApps(); }});
+}}
+
+// ── 웹앱 공유(배포) 모달 ──
+var deployAppNameVal = '';
+var deployAppPathVal = '';
+var deploySelectedUsernames = [];
+
+function openDeployModal(appName, appPath) {{
+  deployAppNameVal = appName;
+  deployAppPathVal = appPath;
+  deploySelectedUsernames = [];
+  document.getElementById('deployAppName').textContent = appName;
+  document.getElementById('deployUserSearch').value = '';
+  document.getElementById('deploySearchResults').replaceChildren();
+  document.getElementById('deploySelectedUsers').replaceChildren();
+  var radios = document.querySelectorAll('input[name="deployVisibility"]');
+  for (var i = 0; i < radios.length; i++) {{ if (radios[i].value === 'private') radios[i].checked = true; }}
+  document.getElementById('deployAclSection').style.display = 'block';
+  document.getElementById('deployModal').classList.add('active');
+}}
+
+function closeDeployModal() {{
+  document.getElementById('deployModal').classList.remove('active');
+}}
+
+function searchDeployUsers() {{
+  var q = document.getElementById('deployUserSearch').value.trim();
+  if (!q) return;
+  apiFetch('/files/org-members?q=' + encodeURIComponent(q)).then(function(data) {{
+    var users = data.members || [];
+    var el = document.getElementById('deploySearchResults');
+    el.replaceChildren();
+    users.forEach(function(u) {{
+      var li = document.createElement('li'); li.className = 'acl-item';
+      var info = document.createElement('span'); info.className = 'user-info';
+      info.textContent = (u.name || u.username) + ' (' + u.username + ') ' + (u.team_name || '');
+      li.appendChild(info);
+      var btn = document.createElement('button'); btn.className = 'btn-sm';
+      btn.style.borderColor = '#238636'; btn.style.color = '#3fb950';
+      btn.textContent = '\ucd94\uac00';
+      btn.onclick = function() {{
+        if (deploySelectedUsernames.indexOf(u.username) === -1) {{
+          deploySelectedUsernames.push(u.username);
+          renderDeploySelected();
+        }}
+      }};
+      li.appendChild(btn);
+      el.appendChild(li);
+    }});
+  }}).catch(function() {{}});
+}}
+
+function renderDeploySelected() {{
+  var el = document.getElementById('deploySelectedUsers');
+  el.replaceChildren();
+  deploySelectedUsernames.forEach(function(uname, i) {{
+    var li = document.createElement('li'); li.className = 'acl-item';
+    var info = document.createElement('span'); info.textContent = uname;
+    li.appendChild(info);
+    var btn = document.createElement('button'); btn.className = 'btn-sm danger';
+    btn.textContent = '\uc81c\uac70';
+    btn.onclick = function() {{
+      deploySelectedUsernames.splice(i, 1);
+      renderDeploySelected();
+    }};
+    li.appendChild(btn);
+    el.appendChild(li);
+  }});
+}}
+
+function executeDeploy() {{
+  var visibility = document.querySelector('input[name="deployVisibility"]:checked').value;
+  var t = document.getElementById('hubToast');
+  t.textContent = '\ubc30\ud3ec \uc911: ' + deployAppNameVal;
+  t.style.display = 'block';
+  apiFetch('/apps/deploy', {{
+    method: 'POST',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify({{
+      app_name: deployAppNameVal,
+      visibility: visibility,
+      app_port: 3000,
+      acl_usernames: visibility === 'company' ? [] : deploySelectedUsernames
+    }})
+  }}).then(function(data) {{
+    closeDeployModal();
+    if (data.app_url) {{
+      t.textContent = '\ubc30\ud3ec \uc644\ub8cc! URL: ' + data.app_url;
+    }} else if (data.detail) {{
+      t.textContent = '\ubc30\ud3ec \uc2e4\ud328: ' + data.detail;
+      t.style.background = '#da3633';
+    }} else {{
+      t.textContent = '\ubc30\ud3ec \uc644\ub8cc!';
+    }}
+    setTimeout(function() {{ t.style.display = 'none'; t.style.background = ''; }}, 4000);
+    loadMyApps();
+  }}).catch(function(err) {{
+    t.textContent = '\ubc30\ud3ec \uc624\ub958: ' + (err.message || err);
+    t.style.background = '#da3633';
+    setTimeout(function() {{ t.style.display = 'none'; t.style.background = ''; }}, 5000);
+  }});
 }}
 
 // ── 데이터 공유 관리 ──
@@ -2874,6 +3013,11 @@ function buildUnifiedAppItem(app) {{
     openBtn.href = app.app_url || '#'; openBtn.target = '_blank'; openBtn.textContent = '열기';
     openBtn.style.borderColor = '#58a6ff'; openBtn.style.color = '#58a6ff'; openBtn.style.textDecoration = 'none';
     actions.appendChild(openBtn);
+    var shareBtn = document.createElement('button'); shareBtn.className = 'btn-sm';
+    shareBtn.style.borderColor = '#a371f7'; shareBtn.style.color = '#a371f7';
+    shareBtn.textContent = '\uacf5\uc720';
+    shareBtn.onclick = function() {{ openDeployModal(app.name, app.path); }};
+    actions.appendChild(shareBtn);
     var stopBtn = document.createElement('button'); stopBtn.className = 'btn-sm danger';
     stopBtn.textContent = '중지';
     stopBtn.onclick = function() {{ stopApp(app.port); }};
@@ -2884,6 +3028,11 @@ function buildUnifiedAppItem(app) {{
     startBtn.textContent = '실행';
     startBtn.onclick = function() {{ startApp(app.path, app.type); }};
     actions.appendChild(startBtn);
+    var shareBtn2 = document.createElement('button'); shareBtn2.className = 'btn-sm';
+    shareBtn2.style.borderColor = '#a371f7'; shareBtn2.style.color = '#a371f7';
+    shareBtn2.textContent = '\uacf5\uc720';
+    shareBtn2.onclick = function() {{ openDeployModal(app.name, app.path); }};
+    actions.appendChild(shareBtn2);
     var delProjBtn = document.createElement('button'); delProjBtn.className = 'btn-sm danger';
     delProjBtn.textContent = '삭제';
     delProjBtn.onclick = function() {{ deleteProject(app.path); }};

@@ -621,6 +621,30 @@ async def deploy_app(
         existing_app.updated_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(existing_app)
+        # 재배포: 기존 K8s 리소스 삭제 후 재생성
+        try:
+            from app.services.app_deploy_service import AppDeployService
+
+            deploy_svc = AppDeployService(settings)
+            pod_name = f"app-{username.lower()}-{request.app_name}"
+            deploy_svc._delete_app_resources(pod_name)
+            user = db.query(User).filter(User.username == username).first()
+            deploy_svc._create_app_pod(
+                pod_name,
+                username,
+                request.app_name,
+                request.version or "v1",
+                user.security_policy if user else None,
+            )
+            deploy_svc._create_app_service(pod_name, username, request.app_name)
+            deploy_svc._create_app_ingress(pod_name, username, request.app_name)
+            logger.info(f"K8s resources recreated for {pod_name}")
+        except Exception as e:
+            logger.error(f"K8s redeploy failed for {request.app_name}: {e}")
+            # DB 레코드는 유지, status를 inactive로 변경
+            existing_app.status = "inactive"
+            db.commit()
+
         logger.info(f"App redeployed: {username}/{request.app_name} v={request.version}")
         return DeployedAppResponse.model_validate(existing_app)
 
@@ -663,6 +687,29 @@ async def deploy_app(
                     granted_by=username,
                 )
                 db.add(acl)
+        db.commit()
+
+    # K8s 리소스 생성 (신규 배포만 — 재배포는 위에서 처리)
+    try:
+        from app.services.app_deploy_service import AppDeployService
+
+        deploy_svc = AppDeployService(settings)
+        user = db.query(User).filter(User.username == username).first()
+        security_policy = user.security_policy if user else None
+        deploy_svc._create_app_pod(
+            pod_name,
+            username,
+            request.app_name,
+            request.version or "v1",
+            security_policy,
+        )
+        deploy_svc._create_app_service(pod_name, username, request.app_name)
+        deploy_svc._create_app_ingress(pod_name, username, request.app_name)
+        logger.info(f"K8s resources created for {pod_name}")
+    except Exception as e:
+        logger.error(f"K8s deploy failed for {request.app_name}: {e}")
+        # DB 레코드는 유지, status를 inactive로 변경
+        new_app.status = "inactive"
         db.commit()
 
     logger.info(f"App deployed: {username}/{request.app_name} v={request.version}")
