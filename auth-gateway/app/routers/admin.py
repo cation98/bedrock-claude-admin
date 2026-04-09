@@ -2089,12 +2089,21 @@ async def admin_broadcast(
     if "websocket" in request.channels:
         v1 = client.CoreV1Api()
         namespace = settings.k8s_namespace
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
         for user in users:
             pod_name = f"claude-terminal-{user.username.lower()}"
             try:
-                msg = "\\n  \\U0001F4E2 [관리자 공지] {subj}\\n  {body}\\n".format(
-                    subj=request.subject, body=request.message,
-                )
+                # ANSI 컬러 스타일 터미널 공지
+                lines = [
+                    "",
+                    "  \\033[1;33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\\033[0m",
+                    f"  \\033[1;37;44m 📢 관리자 공지 \\033[0m \\033[1;36m{request.subject}\\033[0m",
+                    f"  \\033[0;37m{request.message}\\033[0m",
+                    f"  \\033[0;90m🕐 {now_str} UTC | Otto AI Platform\\033[0m",
+                    "  \\033[1;33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\\033[0m",
+                    "",
+                ]
+                msg = "\\n".join(lines)
                 stream(
                     v1.connect_get_namespaced_pod_exec,
                     pod_name,
