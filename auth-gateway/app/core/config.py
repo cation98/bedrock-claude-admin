@@ -75,6 +75,9 @@ class Settings(BaseSettings):
     idle_timeout_minutes: int = 60          # 이 시간 이상 유휴 상태면 Pod 해제
     idle_check_interval_seconds: int = 600  # 유휴 체크 주기 (10분)
 
+    # ----- Redis -----
+    redis_url: str = ""  # e.g. redis://localhost:6379/0 — 비어 있으면 Redis 비활성화
+
     # ----- S3 Vault -----
     s3_vault_bucket: str = ""        # 민감 파일 격리 S3 버킷 이름
     s3_vault_kms_key_id: str = ""    # KMS 키 ID (ARN 또는 별칭)

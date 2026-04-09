@@ -749,6 +749,8 @@ class K8sService:
         pods = self.list_pods(label_selector)
         deleted = 0
         for pod in pods:
-            if self.delete_pod(pod["name"]):
+            # Extract username from pod name (claude-terminal-{username}) for Secret cleanup
+            username = pod["name"].replace("claude-terminal-", "").upper()
+            if self.delete_pod(pod["name"], username=username):
                 deleted += 1
         return deleted

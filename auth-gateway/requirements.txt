@@ -10,6 +10,7 @@ alembic==1.14.1
 kubernetes==31.0.0
 python-multipart==0.0.20
 boto3
+redis>=5.0
 supervisor
 cryptography>=42.0
 pytest>=8.0

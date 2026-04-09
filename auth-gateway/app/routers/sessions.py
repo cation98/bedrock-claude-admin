@@ -10,6 +10,7 @@ Endpoints:
   DELETE /api/v1/sessions/bulk     — 일괄 세션 종료 (관리자)
 """
 
+import hashlib
 import logging
 import secrets
 import time
@@ -680,6 +681,13 @@ async def internal_heartbeat(
     )
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+
+    # X-Pod-Token 검증: pod_token_hash가 있는 세션만 (이전 세션은 하위 호환)
+    pod_token = request.headers.get("X-Pod-Token", "")
+    if pod_token and session.pod_token_hash:
+        token_hash = hashlib.sha256(pod_token.encode()).hexdigest()
+        if token_hash != session.pod_token_hash:
+            raise HTTPException(status_code=403, detail="Invalid pod token")
 
     session.last_active_at = datetime.now(timezone.utc)
     db.commit()

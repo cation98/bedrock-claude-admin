@@ -17,6 +17,7 @@
         ...
 """
 
+import logging
 import time
 import hashlib
 from collections import defaultdict
@@ -26,22 +27,45 @@ from fastapi import Request, HTTPException
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
+logger = logging.getLogger(__name__)
+
+
+def _try_get_redis():
+    """Redis 클라이언트를 가져온다. 모듈이 없거나 실패하면 None."""
+    try:
+        from app.core.redis_client import get_redis
+        return get_redis()
+    except Exception:
+        return None
+
 
 # ---------- Rate Limiter ----------
 
 class RateLimiter:
     """IP 기반 요청 제한기.
 
+    Redis가 사용 가능하면 Redis로 rate limiting을 수행한다.
+    Redis가 불가하면 인메모리 dict로 fallback한다 (Issue #9).
+
     Args:
         max_requests: 허용 최대 요청 수
         window_seconds: 시간 윈도우 (초)
         key_func: 요청에서 식별키 추출 함수 (기본: IP)
+        redis_prefix: Redis 키 접두사
     """
 
-    def __init__(self, max_requests: int = 5, window_seconds: int = 300, key_func=None):
+    def __init__(
+        self,
+        max_requests: int = 5,
+        window_seconds: int = 300,
+        key_func=None,
+        redis_prefix: str = "ratelimit",
+    ):
         self.max_requests = max_requests
         self.window_seconds = window_seconds
         self.key_func = key_func or self._default_key
+        self.redis_prefix = redis_prefix
+        # 인메모리 fallback store (Redis 불가 시 사용)
         self._store: dict[str, list[float]] = defaultdict(list)
 
     @staticmethod
@@ -55,24 +79,94 @@ class RateLimiter:
         cutoff = now - self.window_seconds
         self._store[key] = [t for t in self._store[key] if t > cutoff]
 
-    def check(self, request: Request) -> None:
-        """요청 확인. 제한 초과 시 HTTPException(429) 발생."""
-        key = self.key_func(request)
+    def _redis_key(self, key: str) -> str:
+        return f"{self.redis_prefix}:{key}"
+
+    def _check_redis(self, r, key: str) -> None:
+        """Redis sorted set 기반 rate limit 체크."""
+        redis_key = self._redis_key(key)
+        now = time.time()
+        cutoff = now - self.window_seconds
+
+        pipe = r.pipeline()
+        # 만료된 엔트리 제거
+        pipe.zremrangebyscore(redis_key, 0, cutoff)
+        # 현재 윈도우의 요청 수 조회
+        pipe.zcard(redis_key)
+        results = pipe.execute()
+        count = results[1]
+
+        if count >= self.max_requests:
+            # 가장 오래된 요청의 타임스탬프 조회
+            oldest = r.zrange(redis_key, 0, 0, withscores=True)
+            if oldest:
+                retry_after = int(self.window_seconds - (now - oldest[0][1]))
+            else:
+                retry_after = self.window_seconds
+            raise HTTPException(
+                status_code=429,
+                detail=f"요청 횟수 초과. {max(1, retry_after)}초 후 다시 시도하세요.",
+                headers={"Retry-After": str(max(1, retry_after))},
+            )
+
+        # 현재 요청 기록
+        pipe2 = r.pipeline()
+        pipe2.zadd(redis_key, {f"{now}": now})
+        pipe2.expire(redis_key, self.window_seconds)
+        pipe2.execute()
+
+    def _check_memory(self, key: str) -> None:
+        """인메모리 fallback rate limit 체크."""
         self._cleanup(key)
 
         if len(self._store[key]) >= self.max_requests:
             retry_after = int(self.window_seconds - (time.time() - self._store[key][0]))
             raise HTTPException(
                 status_code=429,
-                detail=f"요청 횟수 초과. {retry_after}초 후 다시 시도하세요.",
+                detail=f"요청 횟수 초과. {max(1, retry_after)}초 후 다시 시도하세요.",
                 headers={"Retry-After": str(max(1, retry_after))},
             )
 
         self._store[key].append(time.time())
 
+    def check(self, request: Request) -> None:
+        """요청 확인. 제한 초과 시 HTTPException(429) 발생.
+
+        Issue #9: 매 호출마다 get_redis()를 호출하여 Redis 복구 시 자동 전환.
+        Redis 실패 시 해당 요청만 인메모리 fallback 사용.
+        """
+        key = self.key_func(request)
+
+        # 매 호출마다 Redis 클라이언트를 새로 가져옴 (캐싱하지 않음)
+        r = _try_get_redis()
+        if r is not None:
+            try:
+                self._check_redis(r, key)
+                return
+            except HTTPException:
+                raise  # 429는 그대로 전파
+            except Exception as e:
+                logger.warning("Redis rate limit 실패, 인메모리 fallback: %s", e)
+
+        # Redis 불가 시 인메모리 fallback
+        self._check_memory(key)
+
     def remaining(self, request: Request) -> int:
         """남은 요청 횟수."""
         key = self.key_func(request)
+
+        r = _try_get_redis()
+        if r is not None:
+            try:
+                redis_key = self._redis_key(key)
+                now = time.time()
+                cutoff = now - self.window_seconds
+                r.zremrangebyscore(redis_key, 0, cutoff)
+                count = r.zcard(redis_key)
+                return max(0, self.max_requests - count)
+            except Exception:
+                pass
+
         self._cleanup(key)
         return max(0, self.max_requests - len(self._store[key]))
 
