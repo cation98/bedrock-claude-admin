@@ -67,17 +67,17 @@ export default function BroadcastPage() {
 
   return (
     <main className="mx-auto max-w-3xl px-4 py-8 sm:px-6">
-      <h1 className="mb-6 text-xl font-bold text-gray-900">공지 발송</h1>
+      <h1 className="mb-6 text-xl font-bold text-[var(--text-primary)]">공지 발송</h1>
 
       {error && (
-        <div className="mb-4 rounded-md bg-red-50 px-4 py-3 text-sm text-red-600">
+        <div className="mb-4 rounded-md bg-[var(--danger-light)] px-4 py-3 text-sm text-[var(--danger)]">
           {error}
         </div>
       )}
 
-      <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
-        <div className="border-b border-gray-200 px-4 py-3">
-          <h2 className="text-base font-semibold text-gray-900">
+      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-sm">
+        <div className="border-b border-[var(--border)] px-4 py-3">
+          <h2 className="text-base font-semibold text-[var(--text-primary)]">
             메시지 작성
           </h2>
         </div>
@@ -85,20 +85,20 @@ export default function BroadcastPage() {
         <div className="space-y-5 p-4">
           {/* Subject */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">
               제목
             </label>
             <input
               type="text"
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+              className="w-full rounded-md border border-[var(--border-strong)] px-3 py-2 text-sm focus:border-[var(--primary)] focus:outline-none"
             />
           </div>
 
           {/* Message */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">
               메시지
             </label>
             <textarea
@@ -106,33 +106,33 @@ export default function BroadcastPage() {
               onChange={(e) => setMessage(e.target.value)}
               rows={6}
               placeholder="공지 내용을 입력하세요..."
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none resize-y"
+              className="w-full rounded-md border border-[var(--border-strong)] px-3 py-2 text-sm focus:border-[var(--primary)] focus:outline-none resize-y"
             />
           </div>
 
           {/* Target */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
               발송 대상
             </label>
             <div className="flex items-center gap-6">
-              <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+              <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer">
                 <input
                   type="radio"
                   name="targetMode"
                   checked={targetMode === "all"}
                   onChange={() => setTargetMode("all")}
-                  className="text-blue-600"
+                  className="text-[var(--primary)]"
                 />
                 전체 활성 사용자
               </label>
-              <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+              <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer">
                 <input
                   type="radio"
                   name="targetMode"
                   checked={targetMode === "specific"}
                   onChange={() => setTargetMode("specific")}
-                  className="text-blue-600"
+                  className="text-[var(--primary)]"
                 />
                 특정 사용자
               </label>
@@ -143,32 +143,32 @@ export default function BroadcastPage() {
                 value={targetInput}
                 onChange={(e) => setTargetInput(e.target.value)}
                 placeholder="사번을 쉼표로 구분 (예: N1234567, N7654321)"
-                className="mt-2 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+                className="mt-2 w-full rounded-md border border-[var(--border-strong)] px-3 py-2 text-sm focus:border-[var(--primary)] focus:outline-none"
               />
             )}
           </div>
 
           {/* Channels */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
               발송 채널
             </label>
             <div className="flex items-center gap-6">
-              <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+              <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer">
                 <input
                   type="checkbox"
                   checked={channelMms}
                   onChange={(e) => setChannelMms(e.target.checked)}
-                  className="rounded border-gray-300 text-blue-600"
+                  className="rounded border-[var(--border-strong)] text-[var(--primary)]"
                 />
                 MMS 문자
               </label>
-              <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+              <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer">
                 <input
                   type="checkbox"
                   checked={channelWs}
                   onChange={(e) => setChannelWs(e.target.checked)}
-                  className="rounded border-gray-300 text-blue-600"
+                  className="rounded border-[var(--border-strong)] text-[var(--primary)]"
                 />
                 WebSocket 실시간 (터미널)
               </label>
@@ -180,7 +180,7 @@ export default function BroadcastPage() {
             <button
               onClick={handleSend}
               disabled={sending || !message.trim()}
-              className="rounded-md bg-blue-600 px-6 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 transition-colors"
+              className="rounded-md bg-[var(--primary)] px-6 py-2 text-sm font-medium text-white hover:bg-[var(--primary-hover)] disabled:opacity-50 transition-colors"
             >
               {sending ? "발송 중..." : "발송"}
             </button>
@@ -190,43 +190,43 @@ export default function BroadcastPage() {
 
       {/* Result */}
       {result && (
-        <div className="mt-6 rounded-lg border border-gray-200 bg-white shadow-sm">
-          <div className="border-b border-gray-200 px-4 py-3">
-            <h2 className="text-base font-semibold text-gray-900">
+        <div className="mt-6 rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-sm">
+          <div className="border-b border-[var(--border)] px-4 py-3">
+            <h2 className="text-base font-semibold text-[var(--text-primary)]">
               발송 결과
             </h2>
           </div>
           <div className="p-4">
             <div className="grid grid-cols-3 gap-4 mb-4">
-              <div className="rounded-md bg-green-50 p-3 text-center">
-                <div className="text-xs text-gray-500">MMS 성공</div>
-                <div className="mt-1 text-xl font-bold text-green-600">
+              <div className="rounded-md bg-[var(--success-light)] p-3 text-center">
+                <div className="text-xs text-[var(--text-muted)]">MMS 성공</div>
+                <div className="mt-1 text-xl font-bold text-[var(--success)]">
                   {result.mms_sent}
                 </div>
               </div>
-              <div className="rounded-md bg-red-50 p-3 text-center">
-                <div className="text-xs text-gray-500">MMS 실패</div>
-                <div className="mt-1 text-xl font-bold text-red-600">
+              <div className="rounded-md bg-[var(--danger-light)] p-3 text-center">
+                <div className="text-xs text-[var(--text-muted)]">MMS 실패</div>
+                <div className="mt-1 text-xl font-bold text-[var(--danger)]">
                   {result.mms_failed}
                 </div>
               </div>
-              <div className="rounded-md bg-blue-50 p-3 text-center">
-                <div className="text-xs text-gray-500">WebSocket 전송</div>
-                <div className="mt-1 text-xl font-bold text-blue-600">
+              <div className="rounded-md bg-[var(--primary-light)] p-3 text-center">
+                <div className="text-xs text-[var(--text-muted)]">WebSocket 전송</div>
+                <div className="mt-1 text-xl font-bold text-[var(--primary)]">
                   {result.ws_sent}
                 </div>
               </div>
             </div>
             {result.targets.length > 0 && (
               <div>
-                <div className="text-xs font-medium text-gray-500 mb-1">
+                <div className="text-xs font-medium text-[var(--text-muted)] mb-1">
                   대상 사용자 ({result.targets.length}명)
                 </div>
                 <div className="flex flex-wrap gap-1">
                   {result.targets.map((t) => (
                     <span
                       key={t}
-                      className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-700"
+                      className="inline-flex items-center rounded-full bg-[var(--surface-hover)] px-2.5 py-0.5 text-xs font-medium text-[var(--text-secondary)]"
                     >
                       {t}
                     </span>

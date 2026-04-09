@@ -31,16 +31,16 @@ export default function FileModal({ podName, username, onClose }: FileModalProps
       onClick={(e) => e.target === backdropRef.current && onClose()}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
     >
-      <div className="relative flex h-[80vh] w-[90vw] max-w-4xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl">
+      <div className="relative flex h-[80vh] w-[90vw] max-w-4xl flex-col overflow-hidden rounded-xl bg-[var(--surface)] shadow-2xl">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3">
+        <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3">
           <div className="flex items-center gap-3">
             <span className="text-lg">&#128228;</span>
             <div>
-              <h2 className="text-sm font-semibold text-gray-900">
+              <h2 className="text-sm font-semibold text-[var(--text-primary)]">
                 파일 관리 — {username}
               </h2>
-              <p className="text-xs text-gray-500 font-mono">{podName}</p>
+              <p className="text-xs text-[var(--text-muted)] font-mono">{podName}</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -48,13 +48,13 @@ export default function FileModal({ podName, username, onClose }: FileModalProps
               href={filesUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+              className="rounded-md border border-[var(--border-strong)] px-3 py-1.5 text-xs font-medium text-[var(--text-secondary)] hover:bg-[var(--bg)] transition-colors"
             >
               새 탭에서 열기 &#8599;
             </a>
             <button
               onClick={onClose}
-              className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+              className="rounded-md p-1.5 text-[var(--text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-secondary)] transition-colors"
               aria-label="닫기"
             >
               <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">

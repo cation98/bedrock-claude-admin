@@ -1,1 +1,54 @@
 @import "tailwindcss";
+
+:root {
+  --bg: #F9FAFB;
+  --surface: #FFFFFF;
+  --surface-hover: #F3F4F6;
+  --border: #E5E7EB;
+  --border-strong: #D1D5DB;
+  --text-primary: #111827;
+  --text-secondary: #6B7280;
+  --text-muted: #9CA3AF;
+  --primary: #2563EB;
+  --primary-hover: #1D4ED8;
+  --primary-light: #DBEAFE;
+  --danger: #DC2626;
+  --danger-light: #FEE2E2;
+  --warning: #D97706;
+  --warning-light: #FEF3C7;
+  --success: #059669;
+  --success-light: #D1FAE5;
+  --info: #0891B2;
+  --info-light: #CFFAFE;
+  --error: #9333EA;
+  --error-light: #F3E8FF;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --font-sans: 'Geist', 'Pretendard Variable', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'Geist Mono', monospace;
+}
+
+[data-theme="dark"] {
+  --bg: #111827;
+  --surface: #1F2937;
+  --surface-hover: #374151;
+  --border: #374151;
+  --border-strong: #4B5563;
+  --text-primary: #F9FAFB;
+  --text-secondary: #9CA3AF;
+  --text-muted: #6B7280;
+  --primary: #3B82F6;
+  --primary-hover: #2563EB;
+  --primary-light: #1E3A5F;
+  --danger: #EF4444;
+  --danger-light: #450A0A;
+  --warning: #F59E0B;
+  --warning-light: #451A03;
+  --success: #10B981;
+  --success-light: #052E16;
+  --info: #06B6D4;
+  --info-light: #083344;
+  --error: #A855F7;
+  --error-light: #2D1457;
+}

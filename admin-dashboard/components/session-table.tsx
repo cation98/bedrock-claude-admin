@@ -16,13 +16,13 @@ function statusBadge(status: string) {
 
   switch (status) {
     case "running":
-      return <span className={`${base} bg-green-100 text-green-700`}>{status}</span>;
+      return <span className={`${base} bg-[var(--success-light)] text-[var(--success)]`}>{status}</span>;
     case "creating":
-      return <span className={`${base} bg-yellow-100 text-yellow-700`}>{status}</span>;
+      return <span className={`${base} bg-[var(--warning-light)] text-[var(--warning)]`}>{status}</span>;
     case "terminated":
-      return <span className={`${base} bg-gray-100 text-gray-500`}>{status}</span>;
+      return <span className={`${base} bg-[var(--surface-hover)] text-[var(--text-muted)]`}>{status}</span>;
     default:
-      return <span className={`${base} bg-gray-100 text-gray-500`}>{status}</span>;
+      return <span className={`${base} bg-[var(--surface-hover)] text-[var(--text-muted)]`}>{status}</span>;
   }
 }
 
@@ -93,7 +93,7 @@ export default function SessionTable({
   }, [hasExpiry]);
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-12 text-gray-400">
+      <div className="flex items-center justify-center py-12 text-[var(--text-muted)]">
         데이터를 불러오는 중...
       </div>
     );
@@ -101,7 +101,7 @@ export default function SessionTable({
 
   if (sessions.length === 0) {
     return (
-      <div className="flex items-center justify-center py-12 text-gray-400">
+      <div className="flex items-center justify-center py-12 text-[var(--text-muted)]">
         활성 세션이 없습니다.
       </div>
     );
@@ -116,61 +116,61 @@ export default function SessionTable({
         onClose={() => setFileModalPod(null)}
       />
     )}
-    <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-100">
+    <div className="flex items-center gap-2 px-4 py-2 border-b border-[var(--border)]">
       <SearchInput value={sessionSearch} onChange={setSessionSearch} placeholder="세션 검색 (사용자, Pod)..." />
-      {sessionSearch && <span className="text-xs text-gray-400">{filteredSessions.length}건</span>}
+      {sessionSearch && <span className="text-xs text-[var(--text-muted)]">{filteredSessions.length}건</span>}
     </div>
     <div className="overflow-x-auto">
-      <table className="min-w-full divide-y divide-gray-200">
-        <thead className="bg-gray-50">
+      <table className="min-w-full divide-y divide-[var(--border)]">
+        <thead className="bg-[var(--bg)]">
           <tr>
-            <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
               사용자
             </th>
-            <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
               Pod 이름
             </th>
-            <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
               상태
             </th>
-            <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
               운용 유형
             </th>
-            <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
               시작 시간
             </th>
-            <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
               접속
             </th>
-            <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+            <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
               남은시간
             </th>
             {onTerminate && (
-              <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+              <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
                 관리
               </th>
             )}
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-200 bg-white">
+        <tbody className="divide-y divide-[var(--border)] bg-[var(--surface)]">
           {paginatedSessions.map((s) => {
             const countdown = formatCountdown(s.expires_at);
             return (
-              <tr key={s.pod_name} className="hover:bg-gray-50">
-                <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-gray-900">
+              <tr key={s.pod_name} className="hover:bg-[var(--bg)]">
+                <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-[var(--text-primary)]">
                   {s.user_name ?? s.username}
-                  <span className="ml-1 text-xs text-gray-400">({s.username})</span>
+                  <span className="ml-1 text-xs text-[var(--text-muted)]">({s.username})</span>
                 </td>
-                <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600 font-mono">
+                <td className="whitespace-nowrap px-4 py-3 text-sm text-[var(--text-secondary)] font-mono">
                   {s.pod_name}
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 text-sm">
                   {statusBadge(s.pod_status)}
                 </td>
-                <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
+                <td className="whitespace-nowrap px-4 py-3 text-sm text-[var(--text-secondary)]">
                   {{"unlimited":"만료없음","weekday-office":"평일 09-18시","30d":"30일","7d":"7일","1d":"1일","8h":"8시간","4h":"4시간"}[s.session_type] ?? s.session_type}
                 </td>
-                <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
+                <td className="whitespace-nowrap px-4 py-3 text-sm text-[var(--text-secondary)]">
                   {formatDate(s.started_at)}
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 text-sm">
@@ -180,13 +180,13 @@ export default function SessionTable({
                         href={`https://claude.skons.net/terminal/${s.pod_name}/`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="rounded bg-blue-50 px-3 py-1 text-xs font-medium text-blue-600 hover:bg-blue-100 transition-colors"
+                        className="rounded bg-[var(--primary-light)] px-3 py-1 text-xs font-medium text-[var(--primary)] hover:bg-[var(--primary-light)] transition-colors"
                       >
                         터미널
                       </a>
                       <button
                         onClick={() => setFileModalPod(s)}
-                        className="rounded bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-600 hover:bg-emerald-100 transition-colors"
+                        className="rounded bg-[var(--success-light)] px-3 py-1 text-xs font-medium text-[var(--success)] hover:bg-[var(--success-light)] transition-colors"
                       >
                         파일
                       </button>
@@ -197,10 +197,10 @@ export default function SessionTable({
                   <span
                     className={
                       countdown.expired
-                        ? "font-medium text-red-600"
+                        ? "font-medium text-[var(--danger)]"
                         : countdown.text === "만료없음"
-                          ? "text-gray-400"
-                          : "text-gray-600"
+                          ? "text-[var(--text-muted)]"
+                          : "text-[var(--text-secondary)]"
                     }
                   >
                     {countdown.text}
@@ -211,7 +211,7 @@ export default function SessionTable({
                     {s.pod_status !== "terminated" && (
                       <button
                         onClick={() => onTerminate(s.id)}
-                        className="rounded bg-red-50 px-3 py-1 text-xs font-medium text-red-600 hover:bg-red-100 transition-colors"
+                        className="rounded bg-[var(--danger-light)] px-3 py-1 text-xs font-medium text-[var(--danger)] hover:bg-[var(--danger-light)] transition-colors"
                       >
                         종료
                       </button>

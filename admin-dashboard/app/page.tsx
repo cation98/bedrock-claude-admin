@@ -86,29 +86,29 @@ export default function LoginPage() {
   return (
     <div className="flex min-h-screen items-center justify-center px-4">
       <div className="w-full max-w-sm">
-        <div className="rounded-lg border border-gray-200 bg-white p-8 shadow-sm">
-          <h1 className="mb-1 text-center text-xl font-bold text-gray-900">
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-8 shadow-sm">
+          <h1 className="mb-1 text-center text-xl font-bold text-[var(--text-primary)]">
             Claude Code Platform
           </h1>
-          <p className="mb-6 text-center text-sm text-gray-500">
+          <p className="mb-6 text-center text-sm text-[var(--text-muted)]">
             사내 SSO 계정으로 로그인
           </p>
 
           {error && (
-            <p className="mb-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">
+            <p className="mb-4 rounded-md bg-[var(--danger-light)] px-3 py-2 text-sm text-[var(--danger)]">
               {error}
             </p>
           )}
 
           {step === "2fa" ? (
             <div className="space-y-4">
-              <p className="text-sm text-gray-600">
+              <p className="text-sm text-[var(--text-secondary)]">
                 {phoneMasked} 로 발송된 인증코드를 입력하세요
               </p>
               <div>
                 <label
                   htmlFor="tfa-code"
-                  className="mb-1 block text-sm font-medium text-gray-700"
+                  className="mb-1 block text-sm font-medium text-[var(--text-secondary)]"
                 >
                   인증코드
                 </label>
@@ -125,22 +125,22 @@ export default function LoginPage() {
                   }
                   onKeyDown={(e) => e.key === "Enter" && handleVerify()}
                   placeholder="000000"
-                  className="block w-full rounded-md border border-gray-300 px-3 py-2 text-center text-2xl tracking-[0.5em] font-mono shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="block w-full rounded-md border border-[var(--border-strong)] px-3 py-2 text-center text-2xl tracking-[0.5em] font-mono shadow-sm focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
                   autoFocus
                 />
               </div>
-              <p className="text-sm text-gray-500">
+              <p className="text-sm text-[var(--text-muted)]">
                 남은 시간: {Math.floor(countdown / 60)}:
                 {String(countdown % 60).padStart(2, "0")}
                 {countdown <= 0 && (
-                  <span className="ml-2 text-red-500">만료됨</span>
+                  <span className="ml-2 text-[var(--danger)]">만료됨</span>
                 )}
               </p>
               <button
                 type="button"
                 onClick={handleVerify}
                 disabled={loading || tfaCode.length !== 6 || countdown <= 0}
-                className="w-full rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
+                className="w-full rounded-md bg-[var(--primary)] px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-[var(--primary-hover)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)] focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
               >
                 {loading ? "확인 중..." : "인증 확인"}
               </button>
@@ -152,7 +152,7 @@ export default function LoginPage() {
                   setCodeId("");
                   setError("");
                 }}
-                className="w-full rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 transition-colors"
+                className="w-full rounded-md border border-[var(--border-strong)] px-4 py-2 text-sm font-medium text-[var(--text-secondary)] shadow-sm hover:bg-[var(--bg)] transition-colors"
               >
                 로그인으로 돌아가기
               </button>
@@ -162,7 +162,7 @@ export default function LoginPage() {
               <div>
                 <label
                   htmlFor="username"
-                  className="mb-1 block text-sm font-medium text-gray-700"
+                  className="mb-1 block text-sm font-medium text-[var(--text-secondary)]"
                 >
                   사용자명
                 </label>
@@ -172,7 +172,7 @@ export default function LoginPage() {
                   required
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="block w-full rounded-md border border-[var(--border-strong)] px-3 py-2 text-sm shadow-sm placeholder:text-[var(--text-muted)] focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
                   placeholder="admin"
                   autoComplete="username"
                 />
@@ -181,7 +181,7 @@ export default function LoginPage() {
               <div>
                 <label
                   htmlFor="password"
-                  className="mb-1 block text-sm font-medium text-gray-700"
+                  className="mb-1 block text-sm font-medium text-[var(--text-secondary)]"
                 >
                   비밀번호
                 </label>
@@ -191,7 +191,7 @@ export default function LoginPage() {
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="block w-full rounded-md border border-[var(--border-strong)] px-3 py-2 text-sm shadow-sm placeholder:text-[var(--text-muted)] focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
                   placeholder="********"
                   autoComplete="current-password"
                 />
@@ -200,7 +200,7 @@ export default function LoginPage() {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="w-full rounded-md bg-[var(--primary)] px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-[var(--primary-hover)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)] focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {loading ? "로그인 중..." : "로그인"}
               </button>

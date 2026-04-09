@@ -48,15 +48,15 @@ function roleBadge(role: string) {
   switch (role) {
     case "admin":
       return (
-        <span className={`${base} bg-purple-100 text-purple-700`}>{role}</span>
+        <span className={`${base} bg-[var(--info-light)] text-[var(--info)]`}>{role}</span>
       );
     case "user":
       return (
-        <span className={`${base} bg-blue-100 text-blue-700`}>{role}</span>
+        <span className={`${base} bg-[var(--primary-light)] text-[var(--primary)]`}>{role}</span>
       );
     default:
       return (
-        <span className={`${base} bg-gray-100 text-gray-500`}>{role}</span>
+        <span className={`${base} bg-[var(--surface-hover)] text-[var(--text-muted)]`}>{role}</span>
       );
   }
 }
@@ -226,26 +226,26 @@ export default function UsersPage() {
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
         {/* Messages */}
         {error && (
-          <div className="mb-6 rounded-md bg-red-50 px-4 py-3 text-sm text-red-600">
+          <div className="mb-6 rounded-md bg-[var(--danger-light)] px-4 py-3 text-sm text-[var(--danger)]">
             {error}
           </div>
         )}
         {success && (
-          <div className="mb-6 rounded-md bg-green-50 px-4 py-3 text-sm text-green-700">
+          <div className="mb-6 rounded-md bg-[var(--success-light)] px-4 py-3 text-sm text-[var(--success)]">
             {success}
           </div>
         )}
 
         {loading ? (
-          <div className="flex items-center justify-center py-12 text-gray-400">
+          <div className="flex items-center justify-center py-12 text-[var(--text-muted)]">
             데이터를 불러오는 중...
           </div>
         ) : (
           <div className="space-y-8">
             {/* Member Search + Direct Add */}
-            <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
-              <div className="border-b border-gray-200 px-4 py-3">
-                <h2 className="text-sm font-semibold text-gray-900">구성원 검색 + 직접 추가</h2>
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-sm">
+              <div className="border-b border-[var(--border)] px-4 py-3">
+                <h2 className="text-sm font-semibold text-[var(--text-primary)]">구성원 검색 + 직접 추가</h2>
               </div>
               <div className="px-4 py-3">
                 <div className="flex gap-2">
@@ -255,12 +255,12 @@ export default function UsersPage() {
                     onChange={(e) => setSearchQuery(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && handleSearch()}
                     placeholder="사번 또는 이름으로 검색"
-                    className="flex-1 rounded-md border border-gray-300 px-3 py-1.5 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    className="flex-1 rounded-md border border-[var(--border-strong)] px-3 py-1.5 text-sm shadow-sm focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
                   />
                   <select
                     value={addTtl}
                     onChange={(e) => setAddTtl(e.target.value)}
-                    className="rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+                    className="rounded-md border border-[var(--border-strong)] px-2 py-1.5 text-sm"
                   >
                     {TTL_OPTIONS.map((opt) => (
                       <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -269,33 +269,33 @@ export default function UsersPage() {
                   <button
                     onClick={handleSearch}
                     disabled={searchLoading || !searchQuery.trim()}
-                    className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                    className="rounded-md bg-[var(--primary)] px-4 py-1.5 text-sm font-medium text-white hover:bg-[var(--primary-hover)] disabled:opacity-50"
                   >
                     {searchLoading ? "검색중..." : "검색"}
                   </button>
                 </div>
                 {searchResults.length > 0 && (
                   <div className="mt-3 overflow-x-auto">
-                    <table className="min-w-full divide-y divide-gray-200">
-                      <thead className="bg-gray-50">
+                    <table className="min-w-full divide-y divide-[var(--border)]">
+                      <thead className="bg-[var(--bg)]">
                         <tr>
-                          <th className="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500">사번</th>
-                          <th className="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500">이름</th>
-                          <th className="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500">소속</th>
-                          <th className="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500">직책</th>
-                          <th className="px-3 py-2 text-left text-xs font-medium uppercase text-gray-500">전화번호</th>
-                          <th className="px-3 py-2 text-right text-xs font-medium uppercase text-gray-500">추가</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium uppercase text-[var(--text-muted)]">사번</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium uppercase text-[var(--text-muted)]">이름</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium uppercase text-[var(--text-muted)]">소속</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium uppercase text-[var(--text-muted)]">직책</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium uppercase text-[var(--text-muted)]">전화번호</th>
+                          <th className="px-3 py-2 text-right text-xs font-medium uppercase text-[var(--text-muted)]">추가</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-gray-200">
+                      <tbody className="divide-y divide-[var(--border)]">
                         {searchResults.map((r) => {
                           const alreadyAdded = approvedUsers.some((u) => u.username === r.username);
                           return (
-                            <tr key={r.username} className="hover:bg-gray-50">
-                              <td className="px-3 py-2 text-sm text-gray-900">{r.username}</td>
-                              <td className="px-3 py-2 text-sm text-gray-900">{r.first_name ?? "-"}</td>
-                              <td className="px-3 py-2 text-sm text-gray-600">{r.region_name ?? "-"} / {r.team_name ?? "-"}</td>
-                              <td className="px-3 py-2 text-sm text-gray-600">{r.job_name ?? "-"}</td>
+                            <tr key={r.username} className="hover:bg-[var(--bg)]">
+                              <td className="px-3 py-2 text-sm text-[var(--text-primary)]">{r.username}</td>
+                              <td className="px-3 py-2 text-sm text-[var(--text-primary)]">{r.first_name ?? "-"}</td>
+                              <td className="px-3 py-2 text-sm text-[var(--text-secondary)]">{r.region_name ?? "-"} / {r.team_name ?? "-"}</td>
+                              <td className="px-3 py-2 text-sm text-[var(--text-secondary)]">{r.job_name ?? "-"}</td>
                               <td className="px-3 py-2">
                                 {!alreadyAdded && (
                                   <input
@@ -303,17 +303,17 @@ export default function UsersPage() {
                                     placeholder="010-0000-0000"
                                     value={addPhones[r.username] || ""}
                                     onChange={(e) => setAddPhones((prev) => ({ ...prev, [r.username]: e.target.value }))}
-                                    className="w-32 rounded border border-gray-300 px-2 py-0.5 text-xs"
+                                    className="w-32 rounded border border-[var(--border-strong)] px-2 py-0.5 text-xs"
                                   />
                                 )}
                               </td>
                               <td className="px-3 py-2 text-right">
                                 {alreadyAdded ? (
-                                  <span className="text-xs text-gray-400">등록됨</span>
+                                  <span className="text-xs text-[var(--text-muted)]">등록됨</span>
                                 ) : (
                                   <button
                                     onClick={() => handleAddMember(r.username)}
-                                    className="rounded bg-green-600 px-3 py-1 text-xs font-medium text-white hover:bg-green-700"
+                                    className="rounded bg-[var(--success)] px-3 py-1 text-xs font-medium text-white hover:bg-[var(--success)]"
                                   >
                                     추가
                                   </button>
@@ -330,56 +330,56 @@ export default function UsersPage() {
             </div>
 
             {/* Pending Users */}
-            <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
-              <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
-                <h2 className="text-sm font-semibold text-gray-900">
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-sm">
+              <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
+                <h2 className="text-sm font-semibold text-[var(--text-primary)]">
                   승인 대기 ({pendingUsers.length})
                 </h2>
                 <div className="flex items-center gap-3">
                   <SearchInput value={pendingSearch} onChange={setPendingSearch} placeholder="대기자 검색..." />
-                  {pendingSearch && <span className="text-xs text-gray-400">{filteredPending.length}건</span>}
-                  <span className="text-xs text-gray-400">10초마다 자동 갱신</span>
+                  {pendingSearch && <span className="text-xs text-[var(--text-muted)]">{filteredPending.length}건</span>}
+                  <span className="text-xs text-[var(--text-muted)]">10초마다 자동 갱신</span>
                 </div>
               </div>
 
               {filteredPending.length === 0 ? (
-                <div className="flex items-center justify-center py-12 text-gray-400">
+                <div className="flex items-center justify-center py-12 text-[var(--text-muted)]">
                   {pendingSearch ? "검색 결과가 없습니다." : "승인 대기 중인 사용자가 없습니다."}
                 </div>
               ) : (
                 <>
                 <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
+                  <table className="min-w-full divide-y divide-[var(--border)]">
+                    <thead className="bg-[var(--bg)]">
                       <tr>
-                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
                           이름 (사번)
                         </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
                           소속
                         </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
                           역할
                         </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
                           Pod TTL
                         </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
                           최근 로그인
                         </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
                           작업
                         </th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-200 bg-white">
+                    <tbody className="divide-y divide-[var(--border)] bg-[var(--surface)]">
                       {paginatedPending.map((u) => (
-                        <tr key={u.id} className="hover:bg-gray-50">
-                          <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-gray-900">
+                        <tr key={u.id} className="hover:bg-[var(--bg)]">
+                          <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-[var(--text-primary)]">
                             {u.name ?? u.username}
-                            <span className="ml-1 text-xs text-gray-400">({u.username})</span>
+                            <span className="ml-1 text-xs text-[var(--text-muted)]">({u.username})</span>
                           </td>
-                          <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
+                          <td className="whitespace-nowrap px-4 py-3 text-sm text-[var(--text-secondary)]">
                             {[u.region_name, u.team_name, u.job_name].filter(Boolean).join(" / ") || "-"}
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-sm">
@@ -394,7 +394,7 @@ export default function UsersPage() {
                                   [u.id]: e.target.value,
                                 }))
                               }
-                              className="rounded-md border border-gray-300 px-2 py-1 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              className="rounded-md border border-[var(--border-strong)] px-2 py-1 text-sm shadow-sm focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
                             >
                               {TTL_OPTIONS.map((opt) => (
                                 <option key={opt.value} value={opt.value}>
@@ -403,14 +403,14 @@ export default function UsersPage() {
                               ))}
                             </select>
                           </td>
-                          <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
+                          <td className="whitespace-nowrap px-4 py-3 text-sm text-[var(--text-secondary)]">
                             {formatDate(u.last_login_at)}
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-sm">
                             <div className="flex gap-1.5">
                               <button
                                 onClick={() => handleApprove(u.id)}
-                                className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-blue-700 transition-colors"
+                                className="rounded-md bg-[var(--primary)] px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-[var(--primary-hover)] transition-colors"
                               >
                                 승인
                               </button>
@@ -420,7 +420,7 @@ export default function UsersPage() {
                                     rejectUser(u.id).then(() => fetchData());
                                   }
                                 }}
-                                className="rounded-md border border-red-300 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors"
+                                className="rounded-md border border-[var(--danger)] px-3 py-1.5 text-xs font-medium text-[var(--danger)] hover:bg-[var(--danger-light)] transition-colors"
                               >
                                 거절
                               </button>
@@ -443,66 +443,66 @@ export default function UsersPage() {
             </div>
 
             {/* Approved Users */}
-            <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
-              <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
-                <h2 className="text-sm font-semibold text-gray-900">
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-sm">
+              <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
+                <h2 className="text-sm font-semibold text-[var(--text-primary)]">
                   허용 목록 ({approvedUsers.length})
                 </h2>
                 <div className="flex items-center gap-2">
                   <SearchInput value={approvedSearch} onChange={setApprovedSearch} placeholder="사용자 검색..." />
-                  {approvedSearch && <span className="text-xs text-gray-400">{filteredApproved.length}건</span>}
+                  {approvedSearch && <span className="text-xs text-[var(--text-muted)]">{filteredApproved.length}건</span>}
                 </div>
               </div>
 
               {filteredApproved.length === 0 ? (
-                <div className="flex items-center justify-center py-12 text-gray-400">
+                <div className="flex items-center justify-center py-12 text-[var(--text-muted)]">
                   {approvedSearch ? "검색 결과가 없습니다." : "승인된 사용자가 없습니다."}
                 </div>
               ) : (
                 <>
                 <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
+                  <table className="min-w-full divide-y divide-[var(--border)]">
+                    <thead className="bg-[var(--bg)]">
                       <tr>
-                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
                           이름 (사번)
                         </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
                           소속
                         </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
                           역할
                         </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
                           전화번호
                         </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
                           Pod TTL
                         </th>
-                        <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-gray-500">
+                        <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
                           앱 배포
                         </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
                           승인일
                         </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
                           작업
                         </th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-200 bg-white">
+                    <tbody className="divide-y divide-[var(--border)] bg-[var(--surface)]">
                       {paginatedApproved.map((u) => (
-                        <tr key={u.id} className="hover:bg-gray-50">
-                          <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-gray-900">
+                        <tr key={u.id} className="hover:bg-[var(--bg)]">
+                          <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-[var(--text-primary)]">
                             {u.name ?? u.username}
-                            <span className="ml-1 text-xs text-gray-400">({u.username})</span>
+                            <span className="ml-1 text-xs text-[var(--text-muted)]">({u.username})</span>
                             {u.is_presenter && (
-                              <span className="ml-1.5 inline-flex items-center rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-700">
+                              <span className="ml-1.5 inline-flex items-center rounded-full bg-[var(--info-light)] px-2 py-0.5 text-xs font-medium text-[var(--info)]">
                                 전용
                               </span>
                             )}
                           </td>
-                          <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
+                          <td className="whitespace-nowrap px-4 py-3 text-sm text-[var(--text-secondary)]">
                             {[u.region_name, u.team_name, u.job_name].filter(Boolean).join(" / ") || "-"}
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-sm">
@@ -524,7 +524,7 @@ export default function UsersPage() {
                                 }
                               }}
                               onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-                              className="w-32 rounded border border-gray-300 px-2 py-0.5 text-xs focus:border-blue-500 focus:outline-none"
+                              className="w-32 rounded border border-[var(--border-strong)] px-2 py-0.5 text-xs focus:border-[var(--primary)] focus:outline-none"
                             />
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-sm">
@@ -533,7 +533,7 @@ export default function UsersPage() {
                               onChange={(e) =>
                                 handleTtlChange(u.id, e.target.value)
                               }
-                              className="rounded-md border border-gray-300 px-2 py-1 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              className="rounded-md border border-[var(--border-strong)] px-2 py-1 text-sm shadow-sm focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
                             >
                               {TTL_OPTIONS.map((opt) => (
                                 <option key={opt.value} value={opt.value}>
@@ -551,18 +551,18 @@ export default function UsersPage() {
                                   fetchData();
                                 } catch { setError("앱 배포 권한 변경 실패"); }
                               }}
-                              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${u.can_deploy_apps ? "bg-blue-600" : "bg-gray-300"}`}
+                              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${u.can_deploy_apps ? "bg-[var(--primary)]" : "bg-gray-300"}`}
                             >
-                              <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${u.can_deploy_apps ? "translate-x-4" : "translate-x-0.5"}`} />
+                              <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-[var(--surface)] transition-transform ${u.can_deploy_apps ? "translate-x-4" : "translate-x-0.5"}`} />
                             </button>
                           </td>
-                          <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
+                          <td className="whitespace-nowrap px-4 py-3 text-sm text-[var(--text-secondary)]">
                             {formatDate(u.approved_at)}
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-sm">
                             <button
                               onClick={() => handleRevoke(u.id, u.username)}
-                              className="rounded bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-100 transition-colors"
+                              className="rounded bg-[var(--danger-light)] px-3 py-1.5 text-xs font-medium text-[var(--danger)] hover:bg-[var(--danger-light)] transition-colors"
                             >
                               승인취소
                             </button>

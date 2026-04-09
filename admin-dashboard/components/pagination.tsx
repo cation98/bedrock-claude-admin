@@ -26,26 +26,26 @@ export default function Pagination({ currentPage, totalPages, totalItems, itemsP
   const end = Math.min(currentPage * itemsPerPage, totalItems);
 
   return (
-    <div className="flex items-center justify-between border-t border-gray-200 px-4 py-3">
-      <span className="text-sm text-gray-500">
+    <div className="flex items-center justify-between border-t border-[var(--border)] px-4 py-3">
+      <span className="text-sm text-[var(--text-muted)]">
         총 {totalItems}건 중 {start}-{end}
       </span>
       <div className="flex items-center gap-1">
         <button
           onClick={() => onPageChange(currentPage - 1)}
           disabled={currentPage === 1}
-          className="rounded px-2 py-1 text-sm text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed"
+          className="rounded px-2 py-1 text-sm text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] disabled:opacity-40 disabled:cursor-not-allowed"
         >
           ◀
         </button>
         {pages.map((p, i) =>
           p === "..." ? (
-            <span key={`dot-${i}`} className="px-2 py-1 text-sm text-gray-400">…</span>
+            <span key={`dot-${i}`} className="px-2 py-1 text-sm text-[var(--text-muted)]">…</span>
           ) : (
             <button
               key={p}
               onClick={() => onPageChange(p)}
-              className={`rounded px-2.5 py-1 text-sm ${p === currentPage ? "bg-blue-600 text-white" : "text-gray-600 hover:bg-gray-100"}`}
+              className={`rounded px-2.5 py-1 text-sm ${p === currentPage ? "bg-[var(--primary)] text-white" : "text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"}`}
             >
               {p}
             </button>
@@ -54,7 +54,7 @@ export default function Pagination({ currentPage, totalPages, totalItems, itemsP
         <button
           onClick={() => onPageChange(currentPage + 1)}
           disabled={currentPage === totalPages}
-          className="rounded px-2 py-1 text-sm text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed"
+          className="rounded px-2 py-1 text-sm text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] disabled:opacity-40 disabled:cursor-not-allowed"
         >
           ▶
         </button>
@@ -70,7 +70,7 @@ export function SearchInput({ value, onChange, placeholder = "검색..." }: { va
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
-      className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+      className="rounded-lg border border-[var(--border-strong)] px-3 py-1.5 text-sm focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
     />
   );
 }

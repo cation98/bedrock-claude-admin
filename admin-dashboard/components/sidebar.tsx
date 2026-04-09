@@ -30,18 +30,18 @@ export default function Sidebar() {
 
   return (
     <aside
-      className={`fixed left-0 top-0 z-30 flex h-screen flex-col border-r border-gray-200 bg-white transition-all duration-200 ${
+      className={`fixed left-0 top-0 z-30 flex h-screen flex-col border-r border-[var(--border)] bg-[var(--surface)] transition-all duration-200 ${
         collapsed ? "w-14" : "w-48"
       }`}
     >
       {/* Logo / Title */}
-      <div className="flex items-center justify-between border-b border-gray-200 px-3 py-3">
+      <div className="flex items-center justify-between border-b border-[var(--border)] px-3 py-3">
         {!collapsed && (
-          <span className="text-sm font-bold text-gray-900 truncate">Claude Admin</span>
+          <span className="text-sm font-bold text-[var(--text-primary)] truncate">Claude Admin</span>
         )}
         <button
           onClick={() => setCollapsed(!collapsed)}
-          className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+          className="rounded p-1 text-[var(--text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-secondary)]"
           title={collapsed ? "펼치기" : "접기"}
         >
           {collapsed ? "▶" : "◀"}
@@ -58,8 +58,8 @@ export default function Sidebar() {
               href={item.href}
               className={`flex items-center gap-2.5 px-3 py-2 text-sm transition-colors ${
                 isActive
-                  ? "bg-blue-50 text-blue-700 font-medium border-r-2 border-blue-600"
-                  : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                  ? "bg-[var(--primary-light)] text-[var(--primary)] font-medium border-r-2 border-[var(--primary)]"
+                  : "text-[var(--text-secondary)] hover:bg-[var(--bg)] hover:text-[var(--text-primary)]"
               }`}
               title={collapsed ? item.label : undefined}
             >
@@ -71,13 +71,13 @@ export default function Sidebar() {
       </nav>
 
       {/* User / Logout */}
-      <div className="border-t border-gray-200 px-3 py-3">
+      <div className="border-t border-[var(--border)] px-3 py-3">
         {!collapsed && user && (
-          <div className="mb-2 truncate text-xs text-gray-500">{user.name}</div>
+          <div className="mb-2 truncate text-xs text-[var(--text-muted)]">{user.name}</div>
         )}
         <button
           onClick={logout}
-          className={`flex items-center gap-2 rounded-md text-sm text-gray-600 hover:bg-gray-100 hover:text-gray-900 transition-colors ${
+          className={`flex items-center gap-2 rounded-md text-sm text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] transition-colors ${
             collapsed ? "justify-center p-1.5" : "px-2 py-1.5 w-full"
           }`}
           title="로그아웃"

@@ -61,7 +61,7 @@ function Sparkline({ data, width = 360, height = 32 }: { data: number[]; width?:
   const [hover, setHover] = useState<{ i: number; x: number; y: number } | null>(null);
 
   if (!data || data.length === 0 || data.every(v => v === 0)) {
-    return <div style={{ width, height }} className="text-gray-300 text-xs flex items-center">—</div>;
+    return <div style={{ width, height }} className="text-[var(--text-muted)] text-xs flex items-center">—</div>;
   }
 
   const len = data.length;
@@ -85,7 +85,7 @@ function Sparkline({ data, width = 360, height = 32 }: { data: number[]; width?:
   const visLen = visibleData.length;
 
   if (visLen === 0 || visibleData.every(v => v === 0)) {
-    return <div style={{ width, height }} className="text-gray-300 text-xs flex items-center">—</div>;
+    return <div style={{ width, height }} className="text-[var(--text-muted)] text-xs flex items-center">—</div>;
   }
 
   const max = Math.max(...visibleData) || 1;
@@ -143,7 +143,7 @@ function Sparkline({ data, width = 360, height = 32 }: { data: number[]; width?:
           : { h: (hover.i + 9) % 24, m: 0, nextDay: hover.i + 9 >= 24 };
         return (
           <div
-            className="absolute z-10 rounded bg-gray-900 px-2 py-1 text-xs text-white shadow-lg whitespace-nowrap pointer-events-none"
+            className="absolute z-10 rounded bg-[var(--text-primary)] px-2 py-1 text-xs text-white shadow-lg whitespace-nowrap pointer-events-none"
             style={{ left: Math.min(hover.x, width - 120), top: -28 }}
           >
             {String(kst.h).padStart(2, "0")}:{String(kst.m).padStart(2, "0")}{kst.nextDay ? " (+1)" : ""} — +{(visibleData[hover.i] ?? 0).toLocaleString()} (누적 {(visibleRaw[hover.i] ?? 0).toLocaleString()})
@@ -167,7 +167,7 @@ function TrendChart({ data, label, dateKey = "date", periodLabel }: {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
   if (!items || items.length === 0) {
-    return <div className="flex items-center justify-center py-8 text-gray-400 text-sm">추이 데이터가 없습니다</div>;
+    return <div className="flex items-center justify-center py-8 text-[var(--text-muted)] text-sm">추이 데이터가 없습니다</div>;
   }
 
   const maxTokens = Math.max(...items.map((d: any) => d.total_tokens)) || 1;
@@ -178,12 +178,12 @@ function TrendChart({ data, label, dateKey = "date", periodLabel }: {
   const totalCostKrw = items.reduce((s: number, d: any) => s + d.cost_krw, 0);
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white shadow-sm mb-6">
-      <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
-        <h2 className="text-sm font-semibold text-gray-900">{label} ({periodLabel ?? `${items.length}일`})</h2>
-        <div className="flex gap-4 text-xs text-gray-500">
-          <span>총 토큰: <strong className="text-gray-900">{fmt(totalTokens)}</strong></span>
-          <span>총 비용: <strong className="text-gray-900">{fmt(totalCostKrw)}원</strong></span>
+    <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-sm mb-6">
+      <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
+        <h2 className="text-sm font-semibold text-[var(--text-primary)]">{label} ({periodLabel ?? `${items.length}일`})</h2>
+        <div className="flex gap-4 text-xs text-[var(--text-muted)]">
+          <span>총 토큰: <strong className="text-[var(--text-primary)]">{fmt(totalTokens)}</strong></span>
+          <span>총 비용: <strong className="text-[var(--text-primary)]">{fmt(totalCostKrw)}원</strong></span>
         </div>
       </div>
       <div className="px-4 py-3 overflow-x-auto">
@@ -204,14 +204,14 @@ function TrendChart({ data, label, dateKey = "date", periodLabel }: {
           </svg>
           <div className="flex mt-1" style={{ width: chartW }}>
             {items.map((d: any) => (
-              <span key={String(d[dateKey])} className="text-[10px] text-gray-400 text-center" style={{ width: barW + 4 }}>
+              <span key={String(d[dateKey])} className="text-[10px] text-[var(--text-muted)] text-center" style={{ width: barW + 4 }}>
                 {String(d[dateKey]).slice(dateKey === "month" ? 2 : 5)}
               </span>
             ))}
           </div>
           {hoverIdx !== null && items[hoverIdx] && (
             <div
-              className="absolute z-10 rounded-lg bg-gray-900 px-3 py-2 text-xs text-white shadow-lg pointer-events-none"
+              className="absolute z-10 rounded-lg bg-[var(--text-primary)] px-3 py-2 text-xs text-white shadow-lg pointer-events-none"
               style={{
                 left: Math.min(hoverIdx * (barW + 4), chartW - 180),
                 top: -8,
@@ -437,15 +437,15 @@ export default function UsagePage() {
   const tabBtnClass = (t: Tab) =>
     `rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
       tab === t
-        ? "bg-blue-600 text-white"
-        : "bg-white text-gray-600 border border-gray-300 hover:bg-gray-50"
+        ? "bg-[var(--primary)] text-white"
+        : "bg-[var(--surface)] text-[var(--text-secondary)] border border-[var(--border-strong)] hover:bg-[var(--bg)]"
     }`;
 
   return (
     <>
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
         {error && (
-          <div className="mb-6 rounded-md bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>
+          <div className="mb-6 rounded-md bg-[var(--danger-light)] px-4 py-3 text-sm text-[var(--danger)]">{error}</div>
         )}
 
         {/* Toolbar: tabs + date picker + snapshot */}
@@ -468,7 +468,7 @@ export default function UsagePage() {
                 type="date"
                 value={selectedDate}
                 onChange={(e) => setSelectedDate(e.target.value)}
-                className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="rounded-md border border-[var(--border-strong)] px-3 py-1.5 text-sm text-[var(--text-secondary)] focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
               />
             )}
             {tab === "monthly" && (
@@ -476,12 +476,12 @@ export default function UsagePage() {
                 type="month"
                 value={selectedMonth}
                 onChange={(e) => setSelectedMonth(e.target.value)}
-                className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="rounded-md border border-[var(--border-strong)] px-3 py-1.5 text-sm text-[var(--text-secondary)] focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
               />
             )}
             <button
               onClick={handleSnapshot}
-              className="rounded-md border border-blue-300 bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-700 hover:bg-blue-100 transition-colors"
+              className="rounded-md border border-[var(--primary)] bg-[var(--primary-light)] px-3 py-1.5 text-sm font-medium text-[var(--primary)] hover:bg-[var(--primary-light)] transition-colors"
             >
               스냅샷 저장
             </button>
@@ -489,7 +489,7 @@ export default function UsagePage() {
         </div>
 
         {snapshotMsg && (
-          <div className="mb-4 rounded-md bg-green-50 px-4 py-2 text-sm text-green-700">
+          <div className="mb-4 rounded-md bg-[var(--success-light)] px-4 py-2 text-sm text-[var(--success)]">
             {snapshotMsg}
           </div>
         )}
@@ -514,11 +514,11 @@ export default function UsagePage() {
         )}
 
         {/* User table */}
-        <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
-          <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-sm">
+          <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
             <div>
-              <h2 className="text-sm font-semibold text-gray-900">사용자별 토큰 사용량</h2>
-              <p className="mt-0.5 text-xs text-gray-400">
+              <h2 className="text-sm font-semibold text-[var(--text-primary)]">사용자별 토큰 사용량</h2>
+              <p className="mt-0.5 text-xs text-[var(--text-muted)]">
               {tab === "realtime" && realtimeData && (
                 <>수집: {new Date(realtimeData.collected_at).toLocaleString("ko-KR")} / 30초 자동 갱신</>
               )}
@@ -528,71 +528,71 @@ export default function UsagePage() {
             </div>
             <div className="flex items-center gap-2">
               <SearchInput value={usageSearch} onChange={setUsageSearch} placeholder="사용자 검색..." />
-              {usageSearch && <span className="text-xs text-gray-400">{filteredUsers.length}건</span>}
+              {usageSearch && <span className="text-xs text-[var(--text-muted)]">{filteredUsers.length}건</span>}
             </div>
           </div>
 
           {loading ? (
-            <div className="flex items-center justify-center py-12 text-gray-400">
+            <div className="flex items-center justify-center py-12 text-[var(--text-muted)]">
               데이터를 불러오는 중...
             </div>
           ) : (
             <>
             <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
+              <table className="min-w-full divide-y divide-[var(--border)]">
+                <thead className="bg-[var(--bg)]">
                   <tr>
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500">사용자</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-500">Input</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-500">Output</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-500">Total</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-500">USD</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-500">KRW</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase text-[var(--text-muted)]">사용자</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium uppercase text-[var(--text-muted)]">Input</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium uppercase text-[var(--text-muted)]">Output</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium uppercase text-[var(--text-muted)]">Total</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium uppercase text-[var(--text-muted)]">USD</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium uppercase text-[var(--text-muted)]">KRW</th>
                     {tab === "realtime" && (
-                      <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500">시간별 추이</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium uppercase text-[var(--text-muted)]">시간별 추이</th>
                     )}
                     {showSessionCols && (
                       <>
-                        <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-500">사용시간</th>
-                        <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-500">최종 사용</th>
+                        <th className="px-4 py-3 text-right text-xs font-medium uppercase text-[var(--text-muted)]">사용시간</th>
+                        <th className="px-4 py-3 text-right text-xs font-medium uppercase text-[var(--text-muted)]">최종 사용</th>
                       </>
                     )}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-200">
+                <tbody className="divide-y divide-[var(--border)]">
                   {paginatedUsers.map((u) => (
-                    <tr key={u.username} className={`hover:bg-gray-50 cursor-pointer ${detailUser === u.username ? "bg-blue-50" : ""}`}
+                    <tr key={u.username} className={`hover:bg-[var(--bg)] cursor-pointer ${detailUser === u.username ? "bg-[var(--primary-light)]" : ""}`}
                       onClick={() => { setDetailUser(u.username); setDetailUserName(u.user_name || u.username); }}>
-                      <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-gray-900">
+                      <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-[var(--text-primary)]">
                         {u.user_name ?? u.username}
-                        <span className="ml-1 text-xs text-gray-400">({u.username})</span>
+                        <span className="ml-1 text-xs text-[var(--text-muted)]">({u.username})</span>
                       </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums text-gray-600">
+                      <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums text-[var(--text-secondary)]">
                         {fmt(u.input_tokens)}
                       </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums text-gray-600">
+                      <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums text-[var(--text-secondary)]">
                         {fmt(u.output_tokens)}
                       </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums font-medium text-gray-900">
+                      <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums font-medium text-[var(--text-primary)]">
                         {fmt(u.total_tokens)}
                       </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums text-gray-600">
+                      <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums text-[var(--text-secondary)]">
                         ${u.cost_usd.toFixed(4)}
                       </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums text-gray-600">
+                      <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums text-[var(--text-secondary)]">
                         {fmt(u.cost_krw)}원
                       </td>
                       {tab === "realtime" && (
-                        <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
+                        <td className="whitespace-nowrap px-4 py-3 text-sm text-[var(--text-secondary)]">
                           <Sparkline data={hourlyData?.users?.[u.username] || []} />
                         </td>
                       )}
                       {showSessionCols && (
                         <>
-                          <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums text-gray-600">
+                          <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums text-[var(--text-secondary)]">
                             {formatMinutes(u.session_minutes)}
                           </td>
-                          <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums text-gray-600">
+                          <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums text-[var(--text-secondary)]">
                             {formatTime(u.last_activity_at)}
                           </td>
                         </>
@@ -601,9 +601,9 @@ export default function UsagePage() {
                   ))}
                 </tbody>
                 {totals && filteredUsers.length > 0 && (
-                  <tfoot className="bg-gray-50">
+                  <tfoot className="bg-[var(--bg)]">
                     <tr className="font-semibold">
-                      <td className="px-4 py-3 text-sm text-gray-900">합계 ({filteredUsers.length}명)</td>
+                      <td className="px-4 py-3 text-sm text-[var(--text-primary)]">합계 ({filteredUsers.length}명)</td>
                       <td className="px-4 py-3 text-right text-sm tabular-nums">{fmt(totals.total_input)}</td>
                       <td className="px-4 py-3 text-right text-sm tabular-nums">{fmt(totals.total_output)}</td>
                       <td className="px-4 py-3 text-right text-sm tabular-nums">{fmt(totals.total_tokens)}</td>
@@ -636,57 +636,57 @@ export default function UsagePage() {
 
         {/* 개인별 일별 추이 패널 */}
         {detailUser && (
-          <div className="mt-6 rounded-lg border border-blue-200 bg-white shadow-sm">
-            <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
-              <h2 className="text-sm font-semibold text-gray-900">
+          <div className="mt-6 rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-sm">
+            <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
+              <h2 className="text-sm font-semibold text-[var(--text-primary)]">
                 {detailUserName} ({detailUser}) 일별 추이
               </h2>
               <div className="flex items-center gap-3">
-                <label className="text-xs text-gray-500">시작:</label>
+                <label className="text-xs text-[var(--text-muted)]">시작:</label>
                 <input type="date" value={detailFrom}
                   onChange={(e) => setDetailFrom(e.target.value)}
-                  className="rounded border border-gray-300 px-2 py-1 text-sm" />
-                <label className="text-xs text-gray-500">종료:</label>
+                  className="rounded border border-[var(--border-strong)] px-2 py-1 text-sm" />
+                <label className="text-xs text-[var(--text-muted)]">종료:</label>
                 <input type="date" value={detailTo}
                   onChange={(e) => setDetailTo(e.target.value)}
-                  className="rounded border border-gray-300 px-2 py-1 text-sm" />
+                  className="rounded border border-[var(--border-strong)] px-2 py-1 text-sm" />
                 <button onClick={() => setDetailUser(null)}
-                  className="text-gray-400 hover:text-gray-600 text-sm">✕ 닫기</button>
+                  className="text-[var(--text-muted)] hover:text-[var(--text-secondary)] text-sm">✕ 닫기</button>
               </div>
             </div>
             {detailLoading ? (
-              <div className="flex items-center justify-center py-8 text-gray-400">불러오는 중...</div>
+              <div className="flex items-center justify-center py-8 text-[var(--text-muted)]">불러오는 중...</div>
             ) : detailHistory.length === 0 ? (
-              <div className="flex items-center justify-center py-8 text-gray-400">해당 기간에 데이터가 없습니다</div>
+              <div className="flex items-center justify-center py-8 text-[var(--text-muted)]">해당 기간에 데이터가 없습니다</div>
             ) : (
               <>
               <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
+                <table className="min-w-full divide-y divide-[var(--border)]">
+                  <thead className="bg-[var(--bg)]">
                     <tr>
-                      <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500">날짜</th>
-                      <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-500">Input</th>
-                      <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-500">Output</th>
-                      <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-500">Total</th>
-                      <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-500">USD</th>
-                      <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-500">KRW</th>
-                      <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-500">사용시간</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium uppercase text-[var(--text-muted)]">날짜</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium uppercase text-[var(--text-muted)]">Input</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium uppercase text-[var(--text-muted)]">Output</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium uppercase text-[var(--text-muted)]">Total</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium uppercase text-[var(--text-muted)]">USD</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium uppercase text-[var(--text-muted)]">KRW</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium uppercase text-[var(--text-muted)]">사용시간</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-200">
+                  <tbody className="divide-y divide-[var(--border)]">
                     {paginatedDetail.map((h) => (
-                      <tr key={h.date} className="hover:bg-gray-50">
-                        <td className="whitespace-nowrap px-4 py-2 text-sm text-gray-900">{h.date}</td>
-                        <td className="whitespace-nowrap px-4 py-2 text-right text-sm tabular-nums text-gray-600">{fmt(h.input_tokens)}</td>
-                        <td className="whitespace-nowrap px-4 py-2 text-right text-sm tabular-nums text-gray-600">{fmt(h.output_tokens)}</td>
-                        <td className="whitespace-nowrap px-4 py-2 text-right text-sm tabular-nums font-medium text-gray-900">{fmt(h.total_tokens)}</td>
-                        <td className="whitespace-nowrap px-4 py-2 text-right text-sm tabular-nums text-gray-600">${h.cost_usd.toFixed(4)}</td>
-                        <td className="whitespace-nowrap px-4 py-2 text-right text-sm tabular-nums text-gray-600">{fmt(h.cost_krw)}원</td>
-                        <td className="whitespace-nowrap px-4 py-2 text-right text-sm tabular-nums text-gray-600">{formatMinutes(h.session_minutes)}</td>
+                      <tr key={h.date} className="hover:bg-[var(--bg)]">
+                        <td className="whitespace-nowrap px-4 py-2 text-sm text-[var(--text-primary)]">{h.date}</td>
+                        <td className="whitespace-nowrap px-4 py-2 text-right text-sm tabular-nums text-[var(--text-secondary)]">{fmt(h.input_tokens)}</td>
+                        <td className="whitespace-nowrap px-4 py-2 text-right text-sm tabular-nums text-[var(--text-secondary)]">{fmt(h.output_tokens)}</td>
+                        <td className="whitespace-nowrap px-4 py-2 text-right text-sm tabular-nums font-medium text-[var(--text-primary)]">{fmt(h.total_tokens)}</td>
+                        <td className="whitespace-nowrap px-4 py-2 text-right text-sm tabular-nums text-[var(--text-secondary)]">${h.cost_usd.toFixed(4)}</td>
+                        <td className="whitespace-nowrap px-4 py-2 text-right text-sm tabular-nums text-[var(--text-secondary)]">{fmt(h.cost_krw)}원</td>
+                        <td className="whitespace-nowrap px-4 py-2 text-right text-sm tabular-nums text-[var(--text-secondary)]">{formatMinutes(h.session_minutes)}</td>
                       </tr>
                     ))}
                   </tbody>
-                  <tfoot className="bg-gray-50">
+                  <tfoot className="bg-[var(--bg)]">
                     <tr className="font-semibold">
                       <td className="px-4 py-2 text-sm">합계 ({detailHistory.length}일)</td>
                       <td className="px-4 py-2 text-right text-sm tabular-nums">{fmt(detailHistory.reduce((s, h) => s + h.input_tokens, 0))}</td>

@@ -24,21 +24,21 @@ function statusBadge(status: string) {
   switch (status) {
     case "active":
       return (
-        <span className={`${base} bg-green-100 text-green-700`}>{status}</span>
+        <span className={`${base} bg-[var(--success-light)] text-[var(--success)]`}>{status}</span>
       );
     case "draft":
       return (
-        <span className={`${base} bg-yellow-100 text-yellow-700`}>
+        <span className={`${base} bg-[var(--warning-light)] text-[var(--warning)]`}>
           {status}
         </span>
       );
     case "closed":
       return (
-        <span className={`${base} bg-gray-100 text-gray-500`}>{status}</span>
+        <span className={`${base} bg-[var(--surface-hover)] text-[var(--text-muted)]`}>{status}</span>
       );
     default:
       return (
-        <span className={`${base} bg-blue-100 text-blue-600`}>{status}</span>
+        <span className={`${base} bg-[var(--primary-light)] text-[var(--primary)]`}>{status}</span>
       );
   }
 }
@@ -76,16 +76,16 @@ function PhotoThumbnail({ s3Key }: { s3Key: string }) {
 
   if (loading)
     return (
-      <span className="inline-block h-10 w-10 rounded bg-gray-100 animate-pulse" />
+      <span className="inline-block h-10 w-10 rounded bg-[var(--surface-hover)] animate-pulse" />
     );
-  if (!url) return <span className="text-xs text-gray-400">(no photo)</span>;
+  if (!url) return <span className="text-xs text-[var(--text-muted)]">(no photo)</span>;
 
   return (
     <>
       <img
         src={url}
         alt="photo"
-        className="h-10 w-10 rounded object-cover cursor-pointer border border-gray-200"
+        className="h-10 w-10 rounded object-cover cursor-pointer border border-[var(--border)]"
         onClick={() => setEnlarged(true)}
       />
       {enlarged && (
@@ -157,14 +157,14 @@ function AssignModal({
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40">
-      <div className="w-full max-w-lg rounded-lg bg-white p-6 shadow-xl">
+      <div className="w-full max-w-lg rounded-lg bg-[var(--surface)] p-6 shadow-xl">
         <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-base font-semibold text-gray-900">
+          <h3 className="text-base font-semibold text-[var(--text-primary)]">
             설문 배정 &mdash; {survey.title}
           </h3>
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-gray-600"
+            className="text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
           >
             &times;
           </button>
@@ -178,12 +178,12 @@ function AssignModal({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && doSearch()}
-            className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+            className="flex-1 rounded-md border border-[var(--border-strong)] px-3 py-2 text-sm focus:border-[var(--primary)] focus:outline-none"
           />
           <button
             onClick={doSearch}
             disabled={searching || query.length < 2}
-            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            className="rounded-md bg-[var(--primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--primary-hover)] disabled:opacity-50"
           >
             검색
           </button>
@@ -191,24 +191,24 @@ function AssignModal({
 
         {/* Results */}
         {results.length > 0 && (
-          <div className="mb-3 max-h-48 overflow-y-auto rounded border border-gray-200">
+          <div className="mb-3 max-h-48 overflow-y-auto rounded border border-[var(--border)]">
             {results.map((p) => (
               <label
                 key={p.username}
-                className="flex cursor-pointer items-center gap-2 px-3 py-2 hover:bg-gray-50"
+                className="flex cursor-pointer items-center gap-2 px-3 py-2 hover:bg-[var(--bg)]"
               >
                 <input
                   type="checkbox"
                   checked={selected.includes(p.username)}
                   onChange={() => toggleUser(p.username)}
-                  className="rounded border-gray-300"
+                  className="rounded border-[var(--border-strong)]"
                 />
-                <span className="text-sm text-gray-900">
+                <span className="text-sm text-[var(--text-primary)]">
                   {p.first_name || p.username}
                 </span>
-                <span className="text-xs text-gray-400">({p.username})</span>
+                <span className="text-xs text-[var(--text-muted)]">({p.username})</span>
                 {p.team_name && (
-                  <span className="text-xs text-gray-400">
+                  <span className="text-xs text-[var(--text-muted)]">
                     {p.team_name}
                   </span>
                 )}
@@ -219,26 +219,26 @@ function AssignModal({
 
         {/* Selected count */}
         {selected.length > 0 && (
-          <div className="mb-3 text-sm text-gray-600">
+          <div className="mb-3 text-sm text-[var(--text-secondary)]">
             {selected.length}명 선택됨
           </div>
         )}
 
         {message && (
-          <div className="mb-3 text-sm text-blue-600">{message}</div>
+          <div className="mb-3 text-sm text-[var(--primary)]">{message}</div>
         )}
 
         <div className="flex justify-end gap-2">
           <button
             onClick={onClose}
-            className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+            className="rounded-md border border-[var(--border-strong)] px-4 py-2 text-sm text-[var(--text-secondary)] hover:bg-[var(--bg)]"
           >
             닫기
           </button>
           <button
             onClick={handleAssign}
             disabled={submitting || selected.length === 0}
-            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            className="rounded-md bg-[var(--primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--primary-hover)] disabled:opacity-50"
           >
             {submitting ? "배정 중..." : "배정"}
           </button>
@@ -342,16 +342,16 @@ function CreateSurveyForm({ onCreated }: { onCreated: () => void }) {
   };
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
-      <div className="border-b border-gray-200 px-4 py-3">
-        <h2 className="text-base font-semibold text-gray-900">
+    <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-sm">
+      <div className="border-b border-[var(--border)] px-4 py-3">
+        <h2 className="text-base font-semibold text-[var(--text-primary)]">
           새 설문 양식 만들기
         </h2>
       </div>
       <div className="p-4 space-y-4">
         {/* Title */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
+          <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">
             제목
           </label>
           <input
@@ -359,13 +359,13 @@ function CreateSurveyForm({ onCreated }: { onCreated: () => void }) {
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="설문 제목"
-            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+            className="w-full rounded-md border border-[var(--border-strong)] px-3 py-2 text-sm focus:border-[var(--primary)] focus:outline-none"
           />
         </div>
 
         {/* Description */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
+          <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">
             설명
           </label>
           <textarea
@@ -373,23 +373,23 @@ function CreateSurveyForm({ onCreated }: { onCreated: () => void }) {
             onChange={(e) => setDescription(e.target.value)}
             placeholder="설문 설명 (선택)"
             rows={2}
-            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none resize-none"
+            className="w-full rounded-md border border-[var(--border-strong)] px-3 py-2 text-sm focus:border-[var(--primary)] focus:outline-none resize-none"
           />
         </div>
 
         {/* Questions */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
+          <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
             질문 목록
           </label>
           <div className="space-y-3">
             {questions.map((q, qIdx) => (
               <div
                 key={qIdx}
-                className="rounded-md border border-gray-200 bg-gray-50 p-3"
+                className="rounded-md border border-[var(--border)] bg-[var(--bg)] p-3"
               >
                 <div className="flex items-center gap-2 mb-2">
-                  <span className="text-xs font-medium text-gray-500">
+                  <span className="text-xs font-medium text-[var(--text-muted)]">
                     Q{qIdx + 1}
                   </span>
                   <select
@@ -401,7 +401,7 @@ function CreateSurveyForm({ onCreated }: { onCreated: () => void }) {
                           e.target.value === "choice" ? q.options : [],
                       })
                     }
-                    className="rounded border border-gray-300 px-2 py-1 text-xs focus:border-blue-500 focus:outline-none"
+                    className="rounded border border-[var(--border-strong)] px-2 py-1 text-xs focus:border-[var(--primary)] focus:outline-none"
                   >
                     <option value="text">텍스트</option>
                     <option value="photo">사진</option>
@@ -414,23 +414,23 @@ function CreateSurveyForm({ onCreated }: { onCreated: () => void }) {
                       updateQuestion(qIdx, { label: e.target.value })
                     }
                     placeholder="질문 내용"
-                    className="flex-1 rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none"
+                    className="flex-1 rounded border border-[var(--border-strong)] px-2 py-1 text-sm focus:border-[var(--primary)] focus:outline-none"
                   />
-                  <label className="flex items-center gap-1 text-xs text-gray-500 whitespace-nowrap">
+                  <label className="flex items-center gap-1 text-xs text-[var(--text-muted)] whitespace-nowrap">
                     <input
                       type="checkbox"
                       checked={q.required}
                       onChange={(e) =>
                         updateQuestion(qIdx, { required: e.target.checked })
                       }
-                      className="rounded border-gray-300"
+                      className="rounded border-[var(--border-strong)]"
                     />
                     필수
                   </label>
                   {questions.length > 1 && (
                     <button
                       onClick={() => removeQuestion(qIdx)}
-                      className="text-red-400 hover:text-red-600 text-sm"
+                      className="text-[var(--danger)] hover:text-[var(--danger)] text-sm"
                       title="질문 삭제"
                     >
                       &times;
@@ -443,7 +443,7 @@ function CreateSurveyForm({ onCreated }: { onCreated: () => void }) {
                   <div className="ml-6 space-y-1">
                     {q.options.map((opt, oIdx) => (
                       <div key={oIdx} className="flex items-center gap-2">
-                        <span className="text-xs text-gray-400">
+                        <span className="text-xs text-[var(--text-muted)]">
                           {oIdx + 1}.
                         </span>
                         <input
@@ -453,11 +453,11 @@ function CreateSurveyForm({ onCreated }: { onCreated: () => void }) {
                             updateOption(qIdx, oIdx, e.target.value)
                           }
                           placeholder={`선택지 ${oIdx + 1}`}
-                          className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs focus:border-blue-500 focus:outline-none"
+                          className="flex-1 rounded border border-[var(--border-strong)] px-2 py-1 text-xs focus:border-[var(--primary)] focus:outline-none"
                         />
                         <button
                           onClick={() => removeOption(qIdx, oIdx)}
-                          className="text-red-400 hover:text-red-600 text-xs"
+                          className="text-[var(--danger)] hover:text-[var(--danger)] text-xs"
                         >
                           &times;
                         </button>
@@ -465,7 +465,7 @@ function CreateSurveyForm({ onCreated }: { onCreated: () => void }) {
                     ))}
                     <button
                       onClick={() => addOption(qIdx)}
-                      className="text-xs text-blue-600 hover:text-blue-700"
+                      className="text-xs text-[var(--primary)] hover:text-[var(--primary)]"
                     >
                       + 선택지 추가
                     </button>
@@ -476,7 +476,7 @@ function CreateSurveyForm({ onCreated }: { onCreated: () => void }) {
           </div>
           <button
             onClick={() => setQuestions([...questions, emptyQuestion()])}
-            className="mt-2 text-sm text-blue-600 hover:text-blue-700"
+            className="mt-2 text-sm text-[var(--primary)] hover:text-[var(--primary)]"
           >
             + 질문 추가
           </button>
@@ -484,7 +484,7 @@ function CreateSurveyForm({ onCreated }: { onCreated: () => void }) {
 
         {message && (
           <div
-            className={`text-sm ${message.includes("완료") ? "text-green-600" : "text-red-600"}`}
+            className={`text-sm ${message.includes("완료") ? "text-[var(--success)]" : "text-[var(--danger)]"}`}
           >
             {message}
           </div>
@@ -494,7 +494,7 @@ function CreateSurveyForm({ onCreated }: { onCreated: () => void }) {
           <button
             onClick={handleSubmit}
             disabled={submitting || !title.trim()}
-            className="rounded-md bg-blue-600 px-6 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            className="rounded-md bg-[var(--primary)] px-6 py-2 text-sm font-medium text-white hover:bg-[var(--primary-hover)] disabled:opacity-50"
           >
             {submitting ? "생성 중..." : "설문 생성"}
           </button>
@@ -516,55 +516,55 @@ function ResponsePanel({
   loading: boolean;
 }) {
   const choiceBadge =
-    "inline-flex items-center rounded-full bg-indigo-100 text-indigo-700 px-2 py-0.5 text-xs font-medium";
+    "inline-flex items-center rounded-full bg-[var(--info-light)] text-[var(--info)] px-2 py-0.5 text-xs font-medium";
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white shadow-sm h-full">
-      <div className="border-b border-gray-200 px-4 py-3">
-        <h2 className="text-base font-semibold text-gray-900 truncate">
+    <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-sm h-full">
+      <div className="border-b border-[var(--border)] px-4 py-3">
+        <h2 className="text-base font-semibold text-[var(--text-primary)] truncate">
           {survey.title} &mdash; 응답
         </h2>
-        <p className="text-xs text-gray-500 mt-0.5">
+        <p className="text-xs text-[var(--text-muted)] mt-0.5">
           총 {responses.length}건
         </p>
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center py-12 text-gray-400">
+        <div className="flex items-center justify-center py-12 text-[var(--text-muted)]">
           응답을 불러오는 중...
         </div>
       ) : responses.length === 0 ? (
-        <div className="py-12 text-center text-sm text-gray-400">
+        <div className="py-12 text-center text-sm text-[var(--text-muted)]">
           아직 응답이 없습니다.
         </div>
       ) : (
         <div className="overflow-x-auto overflow-y-auto max-h-[60vh]">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50 sticky top-0">
+          <table className="min-w-full divide-y divide-[var(--border)]">
+            <thead className="bg-[var(--bg)] sticky top-0">
               <tr>
-                <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
                   응답자
                 </th>
-                <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
                   완료시간
                 </th>
                 {survey.questions.map((q, i) => (
                   <th
                     key={i}
-                    className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500"
+                    className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]"
                   >
                     {q.label}
                   </th>
                 ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-200 bg-white">
+            <tbody className="divide-y divide-[var(--border)] bg-[var(--surface)]">
               {responses.map((r, rIdx) => (
-                <tr key={rIdx} className="hover:bg-gray-50">
-                  <td className="whitespace-nowrap px-3 py-2 text-sm text-gray-900">
+                <tr key={rIdx} className="hover:bg-[var(--bg)]">
+                  <td className="whitespace-nowrap px-3 py-2 text-sm text-[var(--text-primary)]">
                     {r.responder_username}
                   </td>
-                  <td className="whitespace-nowrap px-3 py-2 text-sm text-gray-600">
+                  <td className="whitespace-nowrap px-3 py-2 text-sm text-[var(--text-secondary)]">
                     {formatDate(r.completed_at)}
                   </td>
                   {survey.questions.map((q, qIdx) => {
@@ -581,11 +581,11 @@ function ResponsePanel({
                         ) : q.type === "choice" && answer ? (
                           <span className={choiceBadge}>{String(answer)}</span>
                         ) : answer ? (
-                          <span className="text-gray-700">
+                          <span className="text-[var(--text-secondary)]">
                             {String(answer)}
                           </span>
                         ) : (
-                          <span className="text-gray-300">-</span>
+                          <span className="text-[var(--text-muted)]">-</span>
                         )}
                       </td>
                     );
@@ -672,28 +672,28 @@ export default function SurveysPage() {
     <>
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
         {error && (
-          <div className="mb-6 rounded-md bg-red-50 px-4 py-3 text-sm text-red-600">
+          <div className="mb-6 rounded-md bg-[var(--danger-light)] px-4 py-3 text-sm text-[var(--danger)]">
             {error}
           </div>
         )}
 
         {/* Stats */}
         <div className="mb-6 grid grid-cols-3 gap-4">
-          <div className="rounded-lg border border-gray-200 bg-white p-4">
-            <div className="text-sm text-gray-500">전체 양식</div>
-            <div className="mt-1 text-2xl font-bold text-gray-900">
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
+            <div className="text-sm text-[var(--text-muted)]">전체 양식</div>
+            <div className="mt-1 text-2xl font-bold text-[var(--text-primary)]">
               {surveys.length}
             </div>
           </div>
-          <div className="rounded-lg border border-gray-200 bg-white p-4">
-            <div className="text-sm text-gray-500">활성</div>
-            <div className="mt-1 text-2xl font-bold text-green-600">
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
+            <div className="text-sm text-[var(--text-muted)]">활성</div>
+            <div className="mt-1 text-2xl font-bold text-[var(--success)]">
               {activeCount}
             </div>
           </div>
-          <div className="rounded-lg border border-gray-200 bg-white p-4">
-            <div className="text-sm text-gray-500">총 응답 수</div>
-            <div className="mt-1 text-2xl font-bold text-purple-600">
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
+            <div className="text-sm text-[var(--text-muted)]">총 응답 수</div>
+            <div className="mt-1 text-2xl font-bold text-[var(--info)]">
               {totalResponses}
             </div>
           </div>
@@ -702,78 +702,78 @@ export default function SurveysPage() {
         {/* Two-column: Survey list + Responses */}
         <div className="mb-6 grid grid-cols-5 gap-4">
           {/* Left: Survey List (60%) */}
-          <div className="col-span-3 rounded-lg border border-gray-200 bg-white shadow-sm">
-            <div className="border-b border-gray-200 px-4 py-3">
-              <h2 className="text-base font-semibold text-gray-900">
+          <div className="col-span-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-sm">
+            <div className="border-b border-[var(--border)] px-4 py-3">
+              <h2 className="text-base font-semibold text-[var(--text-primary)]">
                 설문 목록
               </h2>
             </div>
 
             {loading ? (
-              <div className="flex items-center justify-center py-12 text-gray-400">
+              <div className="flex items-center justify-center py-12 text-[var(--text-muted)]">
                 데이터를 불러오는 중...
               </div>
             ) : surveys.length === 0 ? (
-              <div className="py-12 text-center text-sm text-gray-400">
+              <div className="py-12 text-center text-sm text-[var(--text-muted)]">
                 설문이 없습니다.
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
+                <table className="min-w-full divide-y divide-[var(--border)]">
+                  <thead className="bg-[var(--bg)]">
                     <tr>
-                      <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                      <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
                         제목
                       </th>
-                      <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                      <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
                         생성자
                       </th>
-                      <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-gray-500">
+                      <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
                         질문 수
                       </th>
-                      <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-gray-500">
+                      <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
                         응답 수
                       </th>
-                      <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                      <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
                         상태
                       </th>
-                      <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                      <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
                         생성일
                       </th>
-                      <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-gray-500">
+                      <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
                         배정
                       </th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-200 bg-white">
+                  <tbody className="divide-y divide-[var(--border)] bg-[var(--surface)]">
                     {surveys.map((s) => (
                       <tr
                         key={s.id}
                         className={`cursor-pointer transition-colors ${
                           selectedId === s.id
-                            ? "bg-blue-50"
-                            : "hover:bg-gray-50"
+                            ? "bg-[var(--primary-light)]"
+                            : "hover:bg-[var(--bg)]"
                         }`}
                         onClick={() =>
                           setSelectedId(selectedId === s.id ? null : s.id)
                         }
                       >
-                        <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-gray-900">
+                        <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-[var(--text-primary)]">
                           {s.title}
                         </td>
-                        <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
+                        <td className="whitespace-nowrap px-4 py-3 text-sm text-[var(--text-secondary)]">
                           {s.owner_username}
                         </td>
-                        <td className="whitespace-nowrap px-4 py-3 text-sm text-center text-gray-600">
+                        <td className="whitespace-nowrap px-4 py-3 text-sm text-center text-[var(--text-secondary)]">
                           {s.questions?.length ?? 0}
                         </td>
-                        <td className="whitespace-nowrap px-4 py-3 text-sm text-center text-gray-600">
+                        <td className="whitespace-nowrap px-4 py-3 text-sm text-center text-[var(--text-secondary)]">
                           {s.response_count ?? 0}
                         </td>
                         <td className="whitespace-nowrap px-4 py-3 text-sm">
                           {statusBadge(s.status)}
                         </td>
-                        <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
+                        <td className="whitespace-nowrap px-4 py-3 text-sm text-[var(--text-secondary)]">
                           {formatDate(s.created_at)}
                         </td>
                         <td className="whitespace-nowrap px-4 py-3 text-center">
@@ -782,7 +782,7 @@ export default function SurveysPage() {
                               e.stopPropagation();
                               setAssignTarget(s);
                             }}
-                            className="rounded bg-blue-50 px-2 py-1 text-xs font-medium text-blue-600 hover:bg-blue-100"
+                            className="rounded bg-[var(--primary-light)] px-2 py-1 text-xs font-medium text-[var(--primary)] hover:bg-[var(--primary-light)]"
                           >
                             배정
                           </button>
@@ -804,8 +804,8 @@ export default function SurveysPage() {
                 loading={responsesLoading}
               />
             ) : (
-              <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-gray-300 bg-white p-8">
-                <p className="text-sm text-gray-400">
+              <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-[var(--border-strong)] bg-[var(--surface)] p-8">
+                <p className="text-sm text-[var(--text-muted)]">
                   설문을 선택하면 응답을 확인할 수 있습니다.
                 </p>
               </div>

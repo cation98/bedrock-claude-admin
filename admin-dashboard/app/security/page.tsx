@@ -25,9 +25,9 @@ const REFRESH_INTERVAL = 30_000;
 const KNOWN_LEVELS = ["basic", "standard", "full"] as const;
 
 const LEVEL_BADGE: Record<string, string> = {
-  basic: "bg-gray-100 text-gray-600",
-  standard: "bg-blue-100 text-blue-700",
-  full: "bg-green-100 text-green-700",
+  basic: "bg-[var(--surface-hover)] text-[var(--text-secondary)]",
+  standard: "bg-[var(--primary-light)] text-[var(--primary)]",
+  full: "bg-[var(--success-light)] text-[var(--success)]",
 };
 
 const LEVEL_LABEL: Record<string, string> = {
@@ -64,7 +64,7 @@ interface MergedTemplate {
 
 /** Badge renderer -- purple fallback for custom levels */
 function levelBadge(level: string) {
-  const colors = LEVEL_BADGE[level] || "bg-purple-100 text-purple-700";
+  const colors = LEVEL_BADGE[level] || "bg-[var(--info-light)] text-[var(--info)]";
   const label = LEVEL_LABEL[level] || level.charAt(0).toUpperCase() + level.slice(1);
   return (
     <span
@@ -464,10 +464,10 @@ export default function SecurityPage() {
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
         {/* Messages */}
         {error && (
-          <div className="mb-6 rounded-md bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>
+          <div className="mb-6 rounded-md bg-[var(--danger-light)] px-4 py-3 text-sm text-[var(--danger)]">{error}</div>
         )}
         {success && (
-          <div className="mb-6 rounded-md bg-green-50 px-4 py-3 text-sm text-green-700">
+          <div className="mb-6 rounded-md bg-[var(--success-light)] px-4 py-3 text-sm text-[var(--success)]">
             {success}
           </div>
         )}
@@ -481,7 +481,7 @@ export default function SecurityPage() {
         </div>
 
         {loading ? (
-          <div className="flex items-center justify-center py-12 text-gray-400">
+          <div className="flex items-center justify-center py-12 text-[var(--text-muted)]">
             데이터를 불러오는 중...
           </div>
         ) : (
@@ -489,16 +489,16 @@ export default function SecurityPage() {
             {/* ═══════════════════════════════════════
                 LEFT PANEL (60%) -- User list + assignment
                 ═══════════════════════════════════════ */}
-            <div className="rounded-lg border border-gray-200 bg-white shadow-sm lg:col-span-3">
-              <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
-                <h2 className="text-sm font-semibold text-gray-900">
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-sm lg:col-span-3">
+              <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
+                <h2 className="text-sm font-semibold text-[var(--text-primary)]">
                   사용자 보안 정책 ({policies.length}명)
                 </h2>
-                <span className="text-xs text-gray-400">30초마다 자동 갱신</span>
+                <span className="text-xs text-[var(--text-muted)]">30초마다 자동 갱신</span>
               </div>
 
               {/* Search + Bulk action toolbar */}
-              <div className="flex items-center justify-between gap-3 border-b border-gray-200 px-4 py-3">
+              <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-3">
                 {/* Left: search */}
                 <div className="flex items-center gap-2">
                   <input
@@ -506,20 +506,20 @@ export default function SecurityPage() {
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder="사용자 검색 (이름, 사번, 소속)..."
-                    className="rounded-md border border-gray-300 px-3 py-1.5 text-sm w-64 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    className="rounded-md border border-[var(--border-strong)] px-3 py-1.5 text-sm w-64 focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
                   />
                   {searchQuery && (
-                    <span className="text-xs text-gray-400">{filteredPolicies.length}건</span>
+                    <span className="text-xs text-[var(--text-muted)]">{filteredPolicies.length}건</span>
                   )}
                 </div>
 
                 {/* Right: bulk action (visible when users are checked) */}
                 {checkedUsers.size > 0 && (
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-blue-600">{checkedUsers.size}명 선택</span>
+                    <span className="text-sm font-medium text-[var(--primary)]">{checkedUsers.size}명 선택</span>
                     <select
                       id="bulkPolicy"
-                      className="rounded-md border border-gray-300 px-2 py-1.5 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      className="rounded-md border border-[var(--border-strong)] px-2 py-1.5 text-sm shadow-sm focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
                     >
                       {allTemplates.map((t) => (
                         <option key={t.name} value={t.name}>
@@ -529,13 +529,13 @@ export default function SecurityPage() {
                     </select>
                     <button
                       onClick={handleBulkApply}
-                      className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-blue-700 transition-colors"
+                      className="rounded-md bg-[var(--primary)] px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-[var(--primary-hover)] transition-colors"
                     >
                       일괄 적용
                     </button>
                     <button
                       onClick={() => setCheckedUsers(new Set())}
-                      className="text-sm text-gray-500 hover:text-gray-700"
+                      className="text-sm text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
                     >
                       선택 해제
                     </button>
@@ -544,14 +544,14 @@ export default function SecurityPage() {
               </div>
 
               {filteredPolicies.length === 0 ? (
-                <div className="flex items-center justify-center py-12 text-gray-400">
+                <div className="flex items-center justify-center py-12 text-[var(--text-muted)]">
                   {searchQuery ? "검색 결과가 없습니다." : "사용자가 없습니다."}
                 </div>
               ) : (
                 <>
                 <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
+                  <table className="min-w-full divide-y divide-[var(--border)]">
+                    <thead className="bg-[var(--bg)]">
                       <tr>
                         <th className="w-10 px-4 py-3">
                           <input
@@ -560,45 +560,45 @@ export default function SecurityPage() {
                               filteredPolicies.length > 0 && checkedUsers.size === filteredPolicies.length
                             }
                             onChange={toggleAllUsers}
-                            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            className="h-4 w-4 rounded border-[var(--border-strong)] text-[var(--primary)] focus:ring-[var(--primary)]"
                           />
                         </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
                           사용자
                         </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
                           소속
                         </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
                           보안등급
                         </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
                           빠른설정
                         </th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-200 bg-white">
+                    <tbody className="divide-y divide-[var(--border)] bg-[var(--surface)]">
                       {paginatedPolicies.map((p) => (
-                        <tr key={p.user_id} className="hover:bg-gray-50">
+                        <tr key={p.user_id} className="hover:bg-[var(--bg)]">
                           <td className="px-4 py-3">
                             <input
                               type="checkbox"
                               checked={checkedUsers.has(p.user_id)}
                               onChange={() => toggleUserCheck(p.user_id)}
-                              className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                              className="h-4 w-4 rounded border-[var(--border-strong)] text-[var(--primary)] focus:ring-[var(--primary)]"
                             />
                           </td>
-                          <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-gray-900">
+                          <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-[var(--text-primary)]">
                             {p.name ?? p.username}
-                            <span className="ml-1 text-xs text-gray-400">({p.username})</span>
+                            <span className="ml-1 text-xs text-[var(--text-muted)]">({p.username})</span>
                           </td>
-                          <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
+                          <td className="whitespace-nowrap px-4 py-3 text-sm text-[var(--text-secondary)]">
                             {p.region_name ?? "-"}
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-sm">
                             {levelBadge(p.security_level)}
                             {p.pod_restart_required && (
-                              <span className="ml-1.5 inline-flex items-center rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-700">
+                              <span className="ml-1.5 inline-flex items-center rounded-full bg-[var(--warning-light)] px-2 py-0.5 text-xs font-medium text-[var(--warning)]">
                                 재시작 필요
                               </span>
                             )}
@@ -611,7 +611,7 @@ export default function SecurityPage() {
                                 handleQuickApply(p.user_id, e.target.value);
                                 e.target.value = "";
                               }}
-                              className="rounded-md border border-gray-300 px-2 py-1 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              className="rounded-md border border-[var(--border-strong)] px-2 py-1 text-sm shadow-sm focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
                             >
                               <option value="">
                                 현재:{" "}
@@ -646,9 +646,9 @@ export default function SecurityPage() {
                 ═══════════════════════════════════════ */}
             <div className="space-y-4 lg:col-span-2">
               {/* ── Template list ── */}
-              <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
-                <div className="border-b border-gray-200 px-4 py-3">
-                  <h2 className="text-sm font-semibold text-gray-900">정책 관리</h2>
+              <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-sm">
+                <div className="border-b border-[var(--border)] px-4 py-3">
+                  <h2 className="text-sm font-semibold text-[var(--text-primary)]">정책 관리</h2>
                 </div>
                 <div className="max-h-72 overflow-y-auto p-3 space-y-1">
                   {allTemplates.map((t) => {
@@ -669,25 +669,25 @@ export default function SecurityPage() {
                         }}
                         className={`flex items-center justify-between p-2.5 rounded-md cursor-pointer text-sm transition-colors ${
                           isActive
-                            ? "bg-blue-50 border border-blue-300"
-                            : "hover:bg-gray-50 border border-transparent"
+                            ? "bg-[var(--primary-light)] border border-[var(--primary)]"
+                            : "hover:bg-[var(--bg)] border border-transparent"
                         } ${!t.isBuiltin ? "border-l-4 border-l-purple-300" : ""}`}
                       >
                         <div className="flex-1 min-w-0">
-                          <div className="font-medium text-gray-900 truncate">
+                          <div className="font-medium text-[var(--text-primary)] truncate">
                             {t.name}
                             {t.isBuiltin && (
-                              <span className="ml-1.5 text-xs text-gray-400 font-normal">
+                              <span className="ml-1.5 text-xs text-[var(--text-muted)] font-normal">
                                 기본
                               </span>
                             )}
                           </div>
-                          <div className="text-xs text-gray-400 truncate">
+                          <div className="text-xs text-[var(--text-muted)] truncate">
                             {t.description || (t.isBuiltin ? "기본 정책" : "Custom")}
                           </div>
                         </div>
                         {usersOnPolicy > 0 && (
-                          <span className="ml-2 flex-shrink-0 inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">
+                          <span className="ml-2 flex-shrink-0 inline-flex items-center rounded-full bg-[var(--surface-hover)] px-2 py-0.5 text-xs text-[var(--text-secondary)]">
                             {usersOnPolicy}명
                           </span>
                         )}
@@ -703,7 +703,7 @@ export default function SecurityPage() {
                       setSelectedTemplate(null);
                       clearForm();
                     }}
-                    className="p-2.5 rounded-md cursor-pointer text-sm text-purple-600 hover:bg-purple-50 border border-dashed border-purple-200 transition-colors"
+                    className="p-2.5 rounded-md cursor-pointer text-sm text-[var(--info)] hover:bg-[var(--info-light)] border border-dashed border-[var(--primary)] transition-colors"
                   >
                     + 새 정책 만들기
                   </div>
@@ -712,22 +712,22 @@ export default function SecurityPage() {
 
               {/* ── Selected template detail ── */}
               {(selectedTemplate !== null || isCreatingNew) && (
-                <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
-                  <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
-                    <h3 className="text-sm font-semibold text-gray-900">
+                <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-sm">
+                  <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
+                    <h3 className="text-sm font-semibold text-[var(--text-primary)]">
                       {isCreatingNew
                         ? "새 정책 만들기"
                         : `${selectedTemplate} 편집`}
                     </h3>
                     {editDirty && (
-                      <span className="text-xs font-medium text-amber-600">변경됨</span>
+                      <span className="text-xs font-medium text-[var(--warning)]">변경됨</span>
                     )}
                   </div>
 
                   <div className="space-y-4 px-4 py-4">
                     {/* Policy name */}
                     <div>
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1">
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1">
                         정책명
                       </label>
                       {isCreatingNew ? (
@@ -739,16 +739,16 @@ export default function SecurityPage() {
                             setEditName(e.target.value);
                             setEditDirty(true);
                           }}
-                          className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          className="w-full rounded-md border border-[var(--border-strong)] px-3 py-1.5 text-sm focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
                         />
                       ) : (
-                        <p className="text-sm text-gray-900 font-medium">{editName}</p>
+                        <p className="text-sm text-[var(--text-primary)] font-medium">{editName}</p>
                       )}
                     </div>
 
                     {/* Description */}
                     <div>
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1">
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1">
                         설명
                       </label>
                       <input
@@ -759,13 +759,13 @@ export default function SecurityPage() {
                           setEditDesc(e.target.value);
                           setEditDirty(true);
                         }}
-                        className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        className="w-full rounded-md border border-[var(--border-strong)] px-3 py-1.5 text-sm focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
                       />
                     </div>
 
                     {/* DB Access */}
                     <fieldset>
-                      <legend className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">
+                      <legend className="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-2">
                         DB 접근 권한
                       </legend>
                       <div className="space-y-2">
@@ -778,7 +778,7 @@ export default function SecurityPage() {
                           return (
                             <div key={key}>
                               <div className="flex items-center justify-between">
-                                <label className="flex items-center gap-2 text-sm text-gray-700">
+                                <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
                                   <input
                                     type="checkbox"
                                     checked={isAllowed}
@@ -790,7 +790,7 @@ export default function SecurityPage() {
                                       }));
                                       setEditDirty(true);
                                     }}
-                                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                    className="h-4 w-4 rounded border-[var(--border-strong)] text-[var(--primary)] focus:ring-[var(--primary)]"
                                   />
                                   {DB_LABELS[key]}
                                 </label>
@@ -827,7 +827,7 @@ export default function SecurityPage() {
                                     onChange={(e) => setTableFilter(e.target.value)}
                                   />
                                   {getTablesForDb(key).length === 0 ? (
-                                    <p className="text-xs text-gray-400 py-1">
+                                    <p className="text-xs text-[var(--text-muted)] py-1">
                                       테이블 목록을 불러올 수 없습니다
                                     </p>
                                   ) : (
@@ -843,7 +843,7 @@ export default function SecurityPage() {
                                       .map((t) => (
                                         <label
                                           key={t.name}
-                                          className="flex items-center gap-2 text-xs hover:bg-gray-50 px-1 py-0.5 rounded"
+                                          className="flex items-center gap-2 text-xs hover:bg-[var(--bg)] px-1 py-0.5 rounded"
                                         >
                                           <input
                                             type="checkbox"
@@ -852,13 +852,13 @@ export default function SecurityPage() {
                                             onChange={(e) =>
                                               toggleTable(key, t.name, e.target.checked)
                                             }
-                                            className="h-3 w-3 rounded border-gray-300 text-blue-600"
+                                            className="h-3 w-3 rounded border-[var(--border-strong)] text-[var(--primary)]"
                                           />
-                                          <span className="font-mono text-gray-700">
+                                          <span className="font-mono text-[var(--text-secondary)]">
                                             {t.name}
                                           </span>
                                           {t.description && (
-                                            <span className="text-gray-400">
+                                            <span className="text-[var(--text-muted)]">
                                               -- {t.description}
                                             </span>
                                           )}
@@ -871,12 +871,12 @@ export default function SecurityPage() {
                           );
                         })}
 
-                        <label className="flex items-center gap-2 text-sm text-gray-400">
+                        <label className="flex items-center gap-2 text-sm text-[var(--text-muted)]">
                           <input
                             type="checkbox"
                             checked={false}
                             disabled
-                            className="h-4 w-4 rounded border-gray-300"
+                            className="h-4 w-4 rounded border-[var(--border-strong)]"
                           />
                           Platform DB (항상 OFF)
                         </label>
@@ -885,14 +885,14 @@ export default function SecurityPage() {
 
                     {/* Skills */}
                     <fieldset>
-                      <legend className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">
+                      <legend className="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-2">
                         허용 스킬
                       </legend>
                       <div className="grid grid-cols-2 gap-2">
                         {SKILL_KEYS.map((key) => (
                           <label
                             key={key}
-                            className="flex items-center gap-2 text-sm text-gray-700"
+                            className="flex items-center gap-2 text-sm text-[var(--text-secondary)]"
                           >
                             <input
                               type="checkbox"
@@ -906,7 +906,7 @@ export default function SecurityPage() {
                                 );
                                 setEditDirty(true);
                               }}
-                              className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                              className="h-4 w-4 rounded border-[var(--border-strong)] text-[var(--primary)] focus:ring-[var(--primary)]"
                             />
                             {SKILL_LABELS[key]}
                           </label>
@@ -916,10 +916,10 @@ export default function SecurityPage() {
 
                     {/* Schema exposure */}
                     <fieldset>
-                      <legend className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">
+                      <legend className="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-2">
                         스키마 노출
                       </legend>
-                      <label className="flex items-center gap-2 text-sm text-gray-700">
+                      <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
                         <input
                           type="checkbox"
                           checked={editSchema}
@@ -928,7 +928,7 @@ export default function SecurityPage() {
                             setEditSchema(e.target.checked);
                             setEditDirty(true);
                           }}
-                          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          className="h-4 w-4 rounded border-[var(--border-strong)] text-[var(--primary)] focus:ring-[var(--primary)]"
                         />
                         DB 스키마 정보 제공
                       </label>
@@ -939,14 +939,14 @@ export default function SecurityPage() {
                       <button
                         onClick={handleSaveTemplate}
                         disabled={saving}
-                        className="flex-1 rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                        className="flex-1 rounded-md bg-[var(--primary)] px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-[var(--primary-hover)] disabled:opacity-50 transition-colors"
                       >
                         {saving ? "저장 중..." : isCreatingNew ? "생성" : "저장"}
                       </button>
                       {!isCreatingNew && selectedTemplateObj && !isSelectedBuiltin && (
                         <button
                           onClick={handleDeleteTemplate}
-                          className="rounded-md border border-red-300 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 transition-colors"
+                          className="rounded-md border border-[var(--danger)] px-3 py-2 text-sm font-medium text-[var(--danger)] hover:bg-[var(--danger-light)] transition-colors"
                         >
                           삭제
                         </button>

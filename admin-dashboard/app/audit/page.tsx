@@ -54,7 +54,7 @@ const CATEGORY_COLORS: Record<string, string> = {
 function CategoryBarChart({ data }: { data: Record<string, number> }) {
   const entries = Object.entries(data).sort((a, b) => b[1] - a[1]);
   if (entries.length === 0) {
-    return <div className="py-8 text-center text-sm text-gray-400">카테고리 데이터가 없습니다</div>;
+    return <div className="py-8 text-center text-sm text-[var(--text-muted)]">카테고리 데이터가 없습니다</div>;
   }
   const max = Math.max(...entries.map((e) => e[1])) || 1;
   const barHeight = 28;
@@ -108,15 +108,15 @@ function severityBadge(severity: string) {
     "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium";
   switch (severity) {
     case "critical":
-      return <span className={`${base} bg-red-100 text-red-700`}>CRITICAL</span>;
+      return <span className={`${base} bg-[var(--danger-light)] text-[var(--danger)]`}>CRITICAL</span>;
     case "high":
       return <span className={`${base} bg-orange-100 text-orange-700`}>HIGH</span>;
     case "medium":
-      return <span className={`${base} bg-yellow-100 text-yellow-700`}>MEDIUM</span>;
+      return <span className={`${base} bg-[var(--warning-light)] text-[var(--warning)]`}>MEDIUM</span>;
     case "low":
-      return <span className={`${base} bg-gray-100 text-gray-500`}>LOW</span>;
+      return <span className={`${base} bg-[var(--surface-hover)] text-[var(--text-muted)]`}>LOW</span>;
     default:
-      return <span className={`${base} bg-gray-100 text-gray-500`}>{severity}</span>;
+      return <span className={`${base} bg-[var(--surface-hover)] text-[var(--text-muted)]`}>{severity}</span>;
   }
 }
 
@@ -240,8 +240,8 @@ export default function AuditPage() {
   const tabBtnClass = (t: Tab) =>
     `rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
       tab === t
-        ? "bg-blue-600 text-white"
-        : "bg-white text-gray-600 border border-gray-300 hover:bg-gray-50"
+        ? "bg-[var(--primary)] text-white"
+        : "bg-[var(--surface)] text-[var(--text-secondary)] border border-[var(--border-strong)] hover:bg-[var(--bg)]"
     }`;
 
   // Security tab stats
@@ -255,7 +255,7 @@ export default function AuditPage() {
     <>
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
         {error && (
-          <div className="mb-6 rounded-md bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>
+          <div className="mb-6 rounded-md bg-[var(--danger-light)] px-4 py-3 text-sm text-[var(--danger)]">{error}</div>
         )}
 
         {/* Toolbar */}
@@ -272,25 +272,25 @@ export default function AuditPage() {
           <div className="ml-auto flex items-center gap-3">
             {tab === "usage" && (
               <>
-                <label className="text-xs text-gray-500">기간:</label>
+                <label className="text-xs text-[var(--text-muted)]">기간:</label>
                 <input
                   type="date"
                   value={dateFrom}
                   onChange={(e) => setDateFrom(e.target.value)}
-                  className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="rounded-md border border-[var(--border-strong)] px-3 py-1.5 text-sm text-[var(--text-secondary)] focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
                 />
-                <span className="text-gray-400">~</span>
+                <span className="text-[var(--text-muted)]">~</span>
                 <input
                   type="date"
                   value={dateTo}
                   onChange={(e) => setDateTo(e.target.value)}
-                  className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="rounded-md border border-[var(--border-strong)] px-3 py-1.5 text-sm text-[var(--text-secondary)] focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
                 />
               </>
             )}
             <button
               onClick={handleCollect}
-              className="rounded-md border border-blue-300 bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-700 hover:bg-blue-100 transition-colors"
+              className="rounded-md border border-[var(--primary)] bg-[var(--primary-light)] px-3 py-1.5 text-sm font-medium text-[var(--primary)] hover:bg-[var(--primary-light)] transition-colors"
             >
               수집 실행
             </button>
@@ -298,13 +298,13 @@ export default function AuditPage() {
         </div>
 
         {collectMsg && (
-          <div className="mb-4 rounded-md bg-green-50 px-4 py-2 text-sm text-green-700">
+          <div className="mb-4 rounded-md bg-[var(--success-light)] px-4 py-2 text-sm text-[var(--success)]">
             {collectMsg}
           </div>
         )}
 
         {loading ? (
-          <div className="flex items-center justify-center py-12 text-gray-400">
+          <div className="flex items-center justify-center py-12 text-[var(--text-muted)]">
             데이터를 불러오는 중...
           </div>
         ) : tab === "usage" ? (
@@ -319,10 +319,10 @@ export default function AuditPage() {
               </div>
 
               {/* Category bar chart */}
-              <div className="mb-8 rounded-lg border border-gray-200 bg-white shadow-sm">
-                <div className="border-b border-gray-200 px-4 py-3">
-                  <h2 className="text-sm font-semibold text-gray-900">카테고리별 사용량</h2>
-                  <p className="mt-0.5 text-xs text-gray-400">
+              <div className="mb-8 rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-sm">
+                <div className="border-b border-[var(--border)] px-4 py-3">
+                  <h2 className="text-sm font-semibold text-[var(--text-primary)]">카테고리별 사용량</h2>
+                  <p className="mt-0.5 text-xs text-[var(--text-muted)]">
                     {summary.date_from} ~ {summary.date_to} / 60초 자동 갱신
                   </p>
                 </div>
@@ -332,43 +332,43 @@ export default function AuditPage() {
               </div>
 
               {/* Per-user table */}
-              <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
-                <div className="border-b border-gray-200 px-4 py-3">
-                  <h2 className="text-sm font-semibold text-gray-900">
+              <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-sm">
+                <div className="border-b border-[var(--border)] px-4 py-3">
+                  <h2 className="text-sm font-semibold text-[var(--text-primary)]">
                     사용자별 프롬프트 분석 ({summary.users.length}명)
                   </h2>
                 </div>
                 {summary.users.length === 0 ? (
-                  <div className="flex items-center justify-center py-12 text-gray-400">
+                  <div className="flex items-center justify-center py-12 text-[var(--text-muted)]">
                     감사 데이터가 없습니다
                   </div>
                 ) : (
                   <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-gray-200">
-                      <thead className="bg-gray-50">
+                    <table className="min-w-full divide-y divide-[var(--border)]">
+                      <thead className="bg-[var(--bg)]">
                         <tr>
-                          <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500">
+                          <th className="px-4 py-3 text-left text-xs font-medium uppercase text-[var(--text-muted)]">
                             사용자
                           </th>
-                          <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-500">
+                          <th className="px-4 py-3 text-right text-xs font-medium uppercase text-[var(--text-muted)]">
                             총 프롬프트
                           </th>
-                          <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500">
+                          <th className="px-4 py-3 text-left text-xs font-medium uppercase text-[var(--text-muted)]">
                             주요 카테고리
                           </th>
-                          <th className="px-4 py-3 text-right text-xs font-medium uppercase text-gray-500">
+                          <th className="px-4 py-3 text-right text-xs font-medium uppercase text-[var(--text-muted)]">
                             플래그 수
                           </th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-gray-200">
+                      <tbody className="divide-y divide-[var(--border)]">
                         {summary.users.map((u) => (
-                          <tr key={u.username} className="hover:bg-gray-50">
-                            <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-gray-900">
+                          <tr key={u.username} className="hover:bg-[var(--bg)]">
+                            <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-[var(--text-primary)]">
                               {u.user_name ?? u.username}
-                              <span className="ml-1 text-xs text-gray-400">({u.username})</span>
+                              <span className="ml-1 text-xs text-[var(--text-muted)]">({u.username})</span>
                             </td>
-                            <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums text-gray-600">
+                            <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums text-[var(--text-secondary)]">
                               {(u.total_prompts ?? 0).toLocaleString()}
                             </td>
                             <td className="px-4 py-3 text-sm">
@@ -385,15 +385,15 @@ export default function AuditPage() {
                                   </span>
                                 ))}
                                 {topCategories(u.category_counts).length === 0 && (
-                                  <span className="text-xs text-gray-400">-</span>
+                                  <span className="text-xs text-[var(--text-muted)]">-</span>
                                 )}
                               </div>
                             </td>
                             <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums">
                               {u.flagged_count > 0 ? (
-                                <span className="font-medium text-red-600">{u.flagged_count}</span>
+                                <span className="font-medium text-[var(--danger)]">{u.flagged_count}</span>
                               ) : (
-                                <span className="text-gray-400">0</span>
+                                <span className="text-[var(--text-muted)]">0</span>
                               )}
                             </td>
                           </tr>
@@ -405,7 +405,7 @@ export default function AuditPage() {
               </div>
             </>
           ) : (
-            <div className="flex items-center justify-center py-12 text-gray-400">
+            <div className="flex items-center justify-center py-12 text-[var(--text-muted)]">
               감사 데이터가 없습니다
             </div>
           )
@@ -421,11 +421,11 @@ export default function AuditPage() {
 
             {/* Filter bar */}
             <div className="mb-4 flex flex-wrap items-center gap-3">
-              <label className="text-xs font-medium text-gray-500">심각도:</label>
+              <label className="text-xs font-medium text-[var(--text-muted)]">심각도:</label>
               <select
                 value={severityFilter}
                 onChange={(e) => setSeverityFilter(e.target.value)}
-                className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="rounded-md border border-[var(--border-strong)] px-3 py-1.5 text-sm text-[var(--text-secondary)] focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
               >
                 <option value="all">전체</option>
                 <option value="critical">Critical</option>
@@ -434,11 +434,11 @@ export default function AuditPage() {
                 <option value="low">Low</option>
               </select>
 
-              <label className="ml-4 text-xs font-medium text-gray-500">검토 상태:</label>
+              <label className="ml-4 text-xs font-medium text-[var(--text-muted)]">검토 상태:</label>
               <select
                 value={reviewedFilter}
                 onChange={(e) => setReviewedFilter(e.target.value)}
-                className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="rounded-md border border-[var(--border-strong)] px-3 py-1.5 text-sm text-[var(--text-secondary)] focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
               >
                 <option value="all">전체</option>
                 <option value="unreviewed">미검토</option>
@@ -447,58 +447,58 @@ export default function AuditPage() {
             </div>
 
             {/* Flags table */}
-            <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
-              <div className="border-b border-gray-200 px-4 py-3">
-                <h2 className="text-sm font-semibold text-gray-900">
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-sm">
+              <div className="border-b border-[var(--border)] px-4 py-3">
+                <h2 className="text-sm font-semibold text-[var(--text-primary)]">
                   보안 플래그 ({flags.length}건)
                 </h2>
-                <p className="mt-0.5 text-xs text-gray-400">60초 자동 갱신</p>
+                <p className="mt-0.5 text-xs text-[var(--text-muted)]">60초 자동 갱신</p>
               </div>
               {flags.length === 0 ? (
-                <div className="flex items-center justify-center py-12 text-gray-400">
+                <div className="flex items-center justify-center py-12 text-[var(--text-muted)]">
                   감사 데이터가 없습니다
                 </div>
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
+                  <table className="min-w-full divide-y divide-[var(--border)]">
+                    <thead className="bg-[var(--bg)]">
                       <tr>
-                        <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500">
+                        <th className="px-4 py-3 text-left text-xs font-medium uppercase text-[var(--text-muted)]">
                           시간
                         </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500">
+                        <th className="px-4 py-3 text-left text-xs font-medium uppercase text-[var(--text-muted)]">
                           사용자
                         </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500">
+                        <th className="px-4 py-3 text-left text-xs font-medium uppercase text-[var(--text-muted)]">
                           심각도
                         </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500">
+                        <th className="px-4 py-3 text-left text-xs font-medium uppercase text-[var(--text-muted)]">
                           카테고리
                         </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500">
+                        <th className="px-4 py-3 text-left text-xs font-medium uppercase text-[var(--text-muted)]">
                           프롬프트 발췌
                         </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500">
+                        <th className="px-4 py-3 text-left text-xs font-medium uppercase text-[var(--text-muted)]">
                           사유
                         </th>
-                        <th className="px-4 py-3 text-center text-xs font-medium uppercase text-gray-500">
+                        <th className="px-4 py-3 text-center text-xs font-medium uppercase text-[var(--text-muted)]">
                           상태
                         </th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-200">
+                    <tbody className="divide-y divide-[var(--border)]">
                       {flags.map((f) => (
-                        <tr key={f.id} className="hover:bg-gray-50">
-                          <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
+                        <tr key={f.id} className="hover:bg-[var(--bg)]">
+                          <td className="whitespace-nowrap px-4 py-3 text-sm text-[var(--text-secondary)]">
                             {formatDateTime(f.flagged_at)}
                           </td>
-                          <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-gray-900">
+                          <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-[var(--text-primary)]">
                             {f.username}
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-sm">
                             {severityBadge(f.severity)}
                           </td>
-                          <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
+                          <td className="whitespace-nowrap px-4 py-3 text-sm text-[var(--text-secondary)]">
                             <span
                               className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium text-white"
                               style={{
@@ -515,7 +515,7 @@ export default function AuditPage() {
                               }
                               className="text-left"
                             >
-                              <code className="block rounded bg-gray-100 px-2 py-1 font-mono text-xs text-gray-700">
+                              <code className="block rounded bg-[var(--surface-hover)] px-2 py-1 font-mono text-xs text-[var(--text-secondary)]">
                                 {expandedFlag === f.id
                                   ? f.prompt_excerpt
                                   : f.prompt_excerpt.length > 100
@@ -524,18 +524,18 @@ export default function AuditPage() {
                               </code>
                             </button>
                           </td>
-                          <td className="max-w-[200px] px-4 py-3 text-sm text-gray-600">
+                          <td className="max-w-[200px] px-4 py-3 text-sm text-[var(--text-secondary)]">
                             {f.reason}
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-center text-sm">
                             {f.reviewed ? (
-                              <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-700">
+                              <span className="inline-flex items-center rounded-full bg-[var(--success-light)] px-2.5 py-0.5 text-xs font-medium text-[var(--success)]">
                                 검토완료
                               </span>
                             ) : (
                               <button
                                 onClick={() => handleReview(f.id)}
-                                className="rounded-md border border-blue-300 bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100 transition-colors"
+                                className="rounded-md border border-[var(--primary)] bg-[var(--primary-light)] px-2.5 py-1 text-xs font-medium text-[var(--primary)] hover:bg-[var(--primary-light)] transition-colors"
                               >
                                 검토완료
                               </button>

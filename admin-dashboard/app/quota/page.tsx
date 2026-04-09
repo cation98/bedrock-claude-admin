@@ -205,26 +205,26 @@ export default function QuotaPage() {
   const krwRate = 1450; // approximate exchange rate
 
   if (loading) {
-    return <div className="flex items-center justify-center py-20 text-gray-400">데이터를 불러오는 중...</div>;
+    return <div className="flex items-center justify-center py-20 text-[var(--text-muted)]">데이터를 불러오는 중...</div>;
   }
 
   return (
     <div className="px-6 py-8">
-      {error && <div className="mb-4 rounded-md bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>}
-      {success && <div className="mb-4 rounded-md bg-green-50 px-4 py-3 text-sm text-green-700">{success}</div>}
+      {error && <div className="mb-4 rounded-md bg-[var(--danger-light)] px-4 py-3 text-sm text-[var(--danger)]">{error}</div>}
+      {success && <div className="mb-4 rounded-md bg-[var(--success-light)] px-4 py-3 text-sm text-[var(--success)]">{success}</div>}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
         {/* ═══ LEFT: User assignments (60%) ═══ */}
         <div className="lg:col-span-3">
-          <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
-            <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
-              <h2 className="text-sm font-semibold text-gray-900">
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-sm">
+            <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
+              <h2 className="text-sm font-semibold text-[var(--text-primary)]">
                 사용자 토큰 정책 ({approvedUsers.length}명)
               </h2>
               <div className="flex items-center gap-2">
                 {checkedUsers.size > 0 && (
                   <select
-                    className="rounded-md border border-blue-300 bg-blue-50 px-2 py-1 text-xs text-blue-700"
+                    className="rounded-md border border-[var(--primary)] bg-[var(--primary-light)] px-2 py-1 text-xs text-[var(--primary)]"
                     value=""
                     onChange={(e) => { if (e.target.value) handleBulkAssign(e.target.value); }}
                   >
@@ -239,14 +239,14 @@ export default function QuotaPage() {
                   placeholder="검색..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="rounded-md border border-gray-300 px-2.5 py-1 text-xs w-36"
+                  className="rounded-md border border-[var(--border-strong)] px-2.5 py-1 text-xs w-36"
                 />
               </div>
             </div>
 
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="bg-gray-50 text-xs text-gray-500 uppercase">
+                <thead className="bg-[var(--bg)] text-xs text-[var(--text-muted)] uppercase">
                   <tr>
                     <th className="px-4 py-2 text-left w-8">
                       <input
@@ -256,7 +256,7 @@ export default function QuotaPage() {
                           if (e.target.checked) setCheckedUsers(new Set(filteredUsers.map(u => u.username)));
                           else setCheckedUsers(new Set());
                         }}
-                        className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600"
+                        className="h-3.5 w-3.5 rounded border-[var(--border-strong)] text-[var(--primary)]"
                       />
                     </th>
                     <th className="px-4 py-2 text-left">사용자</th>
@@ -268,9 +268,9 @@ export default function QuotaPage() {
                     <th className="px-4 py-2 text-right">빠른 설정</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100">
+                <tbody className="divide-y divide-[var(--border)]">
                   {paginatedUsers.length === 0 ? (
-                    <tr><td colSpan={8} className="px-4 py-8 text-center text-xs text-gray-400">
+                    <tr><td colSpan={8} className="px-4 py-8 text-center text-xs text-[var(--text-muted)]">
                       {searchQuery ? "검색 결과 없음" : "사용자 없음"}
                     </td></tr>
                   ) : paginatedUsers.map(u => {
@@ -279,7 +279,7 @@ export default function QuotaPage() {
                       ? Math.min(100, (q.current_usage_usd / q.cost_limit_usd) * 100)
                       : 0;
                     return (
-                      <tr key={u.username} className="hover:bg-gray-50/50">
+                      <tr key={u.username} className="hover:bg-[var(--bg)]/50">
                         <td className="px-4 py-2">
                           <input
                             type="checkbox"
@@ -290,34 +290,34 @@ export default function QuotaPage() {
                               else next.delete(u.username);
                               setCheckedUsers(next);
                             }}
-                            className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600"
+                            className="h-3.5 w-3.5 rounded border-[var(--border-strong)] text-[var(--primary)]"
                           />
                         </td>
                         <td className="px-4 py-2">
-                          <span className="font-medium text-gray-900">{u.name ?? u.username}</span>
-                          <span className="ml-1 text-xs text-gray-400">({u.username})</span>
+                          <span className="font-medium text-[var(--text-primary)]">{u.name ?? u.username}</span>
+                          <span className="ml-1 text-xs text-[var(--text-muted)]">({u.username})</span>
                         </td>
                         <td className="px-4 py-2">
                           {u.assignment ? (
-                            <span className="inline-flex items-center rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-medium text-indigo-700">
+                            <span className="inline-flex items-center rounded-full bg-[var(--info-light)] px-2.5 py-0.5 text-xs font-medium text-[var(--info)]">
                               {u.assignment.template_name}
                             </span>
                           ) : (
-                            <span className="text-xs text-gray-400">미설정</span>
+                            <span className="text-xs text-[var(--text-muted)]">미설정</span>
                           )}
                         </td>
-                        <td className="px-4 py-2 text-right text-xs tabular-nums text-gray-600">
+                        <td className="px-4 py-2 text-right text-xs tabular-nums text-[var(--text-secondary)]">
                           {q ? (q.is_unlimited ? "무제한" : `$${q.cost_limit_usd.toFixed(2)}`) : "-"}
                         </td>
-                        <td className="px-4 py-2 text-right text-xs tabular-nums text-gray-600">
+                        <td className="px-4 py-2 text-right text-xs tabular-nums text-[var(--text-secondary)]">
                           {q ? `$${q.current_usage_usd.toFixed(2)}` : "-"}
                         </td>
                         <td className="px-4 py-2 text-right text-xs tabular-nums">
                           {q ? (
                             q.is_unlimited ? (
-                              <span className="text-green-600">∞</span>
+                              <span className="text-[var(--success)]">∞</span>
                             ) : (
-                              <span className={q.is_exceeded ? "text-red-600 font-medium" : "text-gray-600"}>
+                              <span className={q.is_exceeded ? "text-[var(--danger)] font-medium" : "text-[var(--text-secondary)]"}>
                                 ${q.remaining_usd.toFixed(2)}
                               </span>
                             )
@@ -326,21 +326,21 @@ export default function QuotaPage() {
                         <td className="px-4 py-2 text-center">
                           {q ? (
                             q.is_unlimited ? (
-                              <span className="inline-flex rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">무제한</span>
+                              <span className="inline-flex rounded-full bg-[var(--success-light)] px-2 py-0.5 text-xs font-medium text-[var(--success)]">무제한</span>
                             ) : q.is_exceeded ? (
-                              <span className="inline-flex rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">초과</span>
+                              <span className="inline-flex rounded-full bg-[var(--danger-light)] px-2 py-0.5 text-xs font-medium text-[var(--danger)]">초과</span>
                             ) : pct > 80 ? (
-                              <span className="inline-flex rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-700">{pct.toFixed(0)}%</span>
+                              <span className="inline-flex rounded-full bg-[var(--warning-light)] px-2 py-0.5 text-xs font-medium text-[var(--warning)]">{pct.toFixed(0)}%</span>
                             ) : (
-                              <span className="inline-flex rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">{pct.toFixed(0)}%</span>
+                              <span className="inline-flex rounded-full bg-[var(--success-light)] px-2 py-0.5 text-xs font-medium text-[var(--success)]">{pct.toFixed(0)}%</span>
                             )
                           ) : (
-                            <span className="text-xs text-gray-400">-</span>
+                            <span className="text-xs text-[var(--text-muted)]">-</span>
                           )}
                         </td>
                         <td className="px-4 py-2 text-right">
                           <select
-                            className="rounded border border-gray-200 px-1.5 py-0.5 text-xs"
+                            className="rounded border border-[var(--border)] px-1.5 py-0.5 text-xs"
                             value=""
                             onChange={async (e) => {
                               if (!e.target.value) return;
@@ -378,31 +378,31 @@ export default function QuotaPage() {
         {/* ═══ RIGHT: Template management (40%) ═══ */}
         <div className="space-y-4 lg:col-span-2">
           {/* Template list */}
-          <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
-            <div className="border-b border-gray-200 px-4 py-3">
-              <h2 className="text-sm font-semibold text-gray-900">정책 템플릿</h2>
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-sm">
+            <div className="border-b border-[var(--border)] px-4 py-3">
+              <h2 className="text-sm font-semibold text-[var(--text-primary)]">정책 템플릿</h2>
             </div>
-            <div className="divide-y divide-gray-100">
+            <div className="divide-y divide-[var(--border)]">
               {templates.map(t => {
                 const assignedCount = assignments.filter(a => a.template_name === t.name).length;
                 return (
                   <button
                     key={t.name}
                     onClick={() => selectTemplate(t.name)}
-                    className={`w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors ${
-                      selectedTemplate === t.name ? "bg-blue-50 border-l-2 border-blue-600" : ""
+                    className={`w-full text-left px-4 py-3 hover:bg-[var(--bg)] transition-colors ${
+                      selectedTemplate === t.name ? "bg-[var(--primary-light)] border-l-2 border-[var(--primary)]" : ""
                     }`}
                   >
                     <div className="flex items-center justify-between">
                       <div>
-                        <span className="text-sm font-medium text-gray-900">{t.name}</span>
+                        <span className="text-sm font-medium text-[var(--text-primary)]">{t.name}</span>
                         {t.is_unlimited && (
-                          <span className="ml-2 inline-flex rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">무제한</span>
+                          <span className="ml-2 inline-flex rounded-full bg-[var(--success-light)] px-2 py-0.5 text-xs text-[var(--success)]">무제한</span>
                         )}
                       </div>
-                      <span className="text-xs text-gray-400">{assignedCount}명</span>
+                      <span className="text-xs text-[var(--text-muted)]">{assignedCount}명</span>
                     </div>
-                    <div className="mt-0.5 text-xs text-gray-500">
+                    <div className="mt-0.5 text-xs text-[var(--text-muted)]">
                       {t.is_unlimited
                         ? t.description || "무제한 사용"
                         : `${CYCLE_LABEL[t.refresh_cycle]} $${t.cost_limit_usd} (≈${Math.round(t.cost_limit_usd * krwRate).toLocaleString()}원)`}
@@ -412,7 +412,7 @@ export default function QuotaPage() {
               })}
               <button
                 onClick={startNewTemplate}
-                className="w-full text-left px-4 py-3 text-sm text-blue-600 hover:bg-blue-50 transition-colors"
+                className="w-full text-left px-4 py-3 text-sm text-[var(--primary)] hover:bg-[var(--primary-light)] transition-colors"
               >
                 + 새 정책 만들기
               </button>
@@ -421,31 +421,31 @@ export default function QuotaPage() {
 
           {/* Template editor */}
           {(selectedTemplate || isCreatingNew) && (
-            <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
-              <div className="border-b border-gray-200 px-4 py-3">
-                <h2 className="text-sm font-semibold text-gray-900">
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-sm">
+              <div className="border-b border-[var(--border)] px-4 py-3">
+                <h2 className="text-sm font-semibold text-[var(--text-primary)]">
                   {isCreatingNew ? "새 정책 만들기" : `"${selectedTemplate}" 수정`}
                 </h2>
               </div>
               <div className="space-y-3 px-4 py-4">
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">정책 이름</label>
+                  <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">정책 이름</label>
                   <input
                     type="text"
                     value={editName}
                     onChange={(e) => setEditName(e.target.value)}
                     placeholder="예: standard"
-                    className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm"
+                    className="w-full rounded-md border border-[var(--border-strong)] px-3 py-1.5 text-sm"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">설명</label>
+                  <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">설명</label>
                   <input
                     type="text"
                     value={editDesc}
                     onChange={(e) => setEditDesc(e.target.value)}
                     placeholder="정책 설명"
-                    className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm"
+                    className="w-full rounded-md border border-[var(--border-strong)] px-3 py-1.5 text-sm"
                   />
                 </div>
                 <div className="flex items-center gap-2">
@@ -454,33 +454,33 @@ export default function QuotaPage() {
                     id="unlimited"
                     checked={editUnlimited}
                     onChange={(e) => setEditUnlimited(e.target.checked)}
-                    className="h-4 w-4 rounded border-gray-300 text-blue-600"
+                    className="h-4 w-4 rounded border-[var(--border-strong)] text-[var(--primary)]"
                   />
-                  <label htmlFor="unlimited" className="text-sm text-gray-700">무제한 사용</label>
+                  <label htmlFor="unlimited" className="text-sm text-[var(--text-secondary)]">무제한 사용</label>
                 </div>
                 {!editUnlimited && (
                   <>
                     <div>
-                      <label className="block text-xs font-medium text-gray-700 mb-1">비용 한도 (USD)</label>
+                      <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">비용 한도 (USD)</label>
                       <div className="flex items-center gap-2">
                         <input
                           type="number"
                           step="0.01"
                           value={editCostUsd}
                           onChange={(e) => setEditCostUsd(e.target.value)}
-                          className="w-28 rounded-md border border-gray-300 px-3 py-1.5 text-sm"
+                          className="w-28 rounded-md border border-[var(--border-strong)] px-3 py-1.5 text-sm"
                         />
-                        <span className="text-xs text-gray-500">
+                        <span className="text-xs text-[var(--text-muted)]">
                           ≈ {Math.round((parseFloat(editCostUsd) || 0) * krwRate).toLocaleString()}원
                         </span>
                       </div>
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-gray-700 mb-1">초기화 주기</label>
+                      <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">초기화 주기</label>
                       <select
                         value={editCycle}
                         onChange={(e) => setEditCycle(e.target.value)}
-                        className="rounded-md border border-gray-300 px-3 py-1.5 text-sm"
+                        className="rounded-md border border-[var(--border-strong)] px-3 py-1.5 text-sm"
                       >
                         {CYCLE_OPTIONS.map(o => (
                           <option key={o.value} value={o.value}>{o.label}</option>
@@ -492,21 +492,21 @@ export default function QuotaPage() {
                 <div className="flex gap-2 pt-2">
                   <button
                     onClick={handleSaveTemplate}
-                    className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
+                    className="rounded-md bg-[var(--primary)] px-4 py-1.5 text-sm font-medium text-white hover:bg-[var(--primary-hover)]"
                   >
                     {isCreatingNew ? "생성" : "저장"}
                   </button>
                   {!isCreatingNew && (
                     <button
                       onClick={handleDeleteTemplate}
-                      className="rounded-md border border-red-300 px-4 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50"
+                      className="rounded-md border border-[var(--danger)] px-4 py-1.5 text-sm font-medium text-[var(--danger)] hover:bg-[var(--danger-light)]"
                     >
                       삭제
                     </button>
                   )}
                   <button
                     onClick={() => { setSelectedTemplate(null); setIsCreatingNew(false); }}
-                    className="rounded-md border border-gray-300 px-4 py-1.5 text-sm text-gray-600 hover:bg-gray-50"
+                    className="rounded-md border border-[var(--border-strong)] px-4 py-1.5 text-sm text-[var(--text-secondary)] hover:bg-[var(--bg)]"
                   >
                     취소
                   </button>

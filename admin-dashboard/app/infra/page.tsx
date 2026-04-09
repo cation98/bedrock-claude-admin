@@ -36,22 +36,22 @@ function shortNode(name: string): string {
 
 function StatusBadge({ status }: { status: string }) {
   const colors: Record<string, string> = {
-    Ready: "bg-green-100 text-green-700",
-    Running: "bg-green-100 text-green-700",
-    Pending: "bg-yellow-100 text-yellow-700",
-    NotReady: "bg-red-100 text-red-700",
+    Ready: "bg-[var(--success-light)] text-[var(--success)]",
+    Running: "bg-[var(--success-light)] text-[var(--success)]",
+    Pending: "bg-[var(--warning-light)] text-[var(--warning)]",
+    NotReady: "bg-[var(--danger-light)] text-[var(--danger)]",
   };
   return (
-    <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${colors[status] ?? "bg-gray-100 text-gray-600"}`}>
+    <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${colors[status] ?? "bg-[var(--surface-hover)] text-[var(--text-secondary)]"}`}>
       {status}
     </span>
   );
 }
 
 const ROLE_BADGE: Record<string, { bg: string; label: string }> = {
-  system: { bg: "bg-red-100 text-red-700", label: "시스템 (삭제 금지)" },
-  presenter: { bg: "bg-purple-100 text-purple-700", label: "전용 노드" },
-  user: { bg: "bg-blue-50 text-blue-700", label: "사용자" },
+  system: { bg: "bg-[var(--danger-light)] text-[var(--danger)]", label: "시스템 (삭제 금지)" },
+  presenter: { bg: "bg-[var(--info-light)] text-[var(--info)]", label: "전용 노드" },
+  user: { bg: "bg-[var(--primary-light)] text-[var(--primary)]", label: "사용자" },
 };
 
 function NodeCard({ node, allNodes, onAction }: { node: NodeInfo; allNodes: NodeInfo[]; onAction: () => void }) {
@@ -59,11 +59,11 @@ function NodeCard({ node, allNodes, onAction }: { node: NodeInfo; allNodes: Node
   const isSystem = node.node_role === "system";
   const role = ROLE_BADGE[node.node_role] ?? ROLE_BADGE.user;
   return (
-    <div className={`rounded-lg border ${isSystem ? "border-red-200 bg-red-50/30" : hasPods ? "border-blue-200 bg-white" : "border-gray-200 bg-gray-50"} shadow-sm`}>
-      <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
+    <div className={`rounded-lg border ${isSystem ? "border-[var(--danger-light)] bg-[var(--danger-light)]/30" : hasPods ? "border-[var(--border)] bg-[var(--surface)]" : "border-[var(--border)] bg-[var(--bg)]"} shadow-sm`}>
+      <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
         <div>
-          <span className="text-sm font-semibold text-gray-900">{shortNode(node.node_name)}</span>
-          <span className="ml-2 rounded bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
+          <span className="text-sm font-semibold text-[var(--text-primary)]">{shortNode(node.node_name)}</span>
+          <span className="ml-2 rounded bg-[var(--primary-light)] px-2 py-0.5 text-xs font-medium text-[var(--primary)]">
             {node.instance_type}
           </span>
           <span className={`ml-2 rounded px-2 py-0.5 text-xs font-medium ${role.bg}`}>
@@ -72,7 +72,7 @@ function NodeCard({ node, allNodes, onAction }: { node: NodeInfo; allNodes: Node
         </div>
         <div className="flex items-center gap-2">
           <StatusBadge status={node.status} />
-          <span className="text-xs text-gray-400">
+          <span className="text-xs text-[var(--text-muted)]">
             CPU {node.cpu_capacity} / Mem {node.memory_capacity}
           </span>
           {!isSystem && (
@@ -86,7 +86,7 @@ function NodeCard({ node, allNodes, onAction }: { node: NodeInfo; allNodes: Node
                   } catch (err) { alert(err instanceof Error ? err.message : "노드 종료 실패"); }
                 }
               }}
-              className="rounded bg-red-50 px-2 py-0.5 text-xs font-medium text-red-600 hover:bg-red-100 disabled:opacity-30 disabled:cursor-not-allowed"
+              className="rounded bg-[var(--danger-light)] px-2 py-0.5 text-xs font-medium text-[var(--danger)] hover:bg-[var(--danger-light)] disabled:opacity-30 disabled:cursor-not-allowed"
               title={node.pods.filter((p) => p.username !== "SYSTEM").length > 0 ? "Pod을 먼저 종료하세요" : "노드 종료"}
             >
               노드 종료
@@ -96,17 +96,17 @@ function NodeCard({ node, allNodes, onAction }: { node: NodeInfo; allNodes: Node
       </div>
 
       {hasPods ? (
-        <div className="divide-y divide-gray-100">
+        <div className="divide-y divide-[var(--border)]">
           {node.pods.map((pod) => (
             <div key={pod.pod_name} className="flex items-center justify-between px-4 py-2.5">
               <div>
-                <span className="text-sm font-medium text-gray-900">
+                <span className="text-sm font-medium text-[var(--text-primary)]">
                   {pod.user_name ?? pod.username}
                 </span>
-                <span className="ml-1 text-xs text-gray-400">({pod.username})</span>
+                <span className="ml-1 text-xs text-[var(--text-muted)]">({pod.username})</span>
               </div>
               <div className="flex items-center gap-3">
-                <span className="text-xs text-gray-500">
+                <span className="text-xs text-[var(--text-muted)]">
                   CPU {pod.cpu_request} / Mem {pod.memory_request}
                 </span>
                 <StatusBadge status={pod.status} />
@@ -121,7 +121,7 @@ function NodeCard({ node, allNodes, onAction }: { node: NodeInfo; allNodes: Node
                           } catch (err) { alert(err instanceof Error ? err.message : "종료 실패"); }
                         }
                       }}
-                      className="rounded bg-red-50 px-2 py-0.5 text-xs font-medium text-red-600 hover:bg-red-100"
+                      className="rounded bg-[var(--danger-light)] px-2 py-0.5 text-xs font-medium text-[var(--danger)] hover:bg-[var(--danger-light)]"
                     >
                       종료
                     </button>
@@ -132,7 +132,7 @@ function NodeCard({ node, allNodes, onAction }: { node: NodeInfo; allNodes: Node
           ))}
         </div>
       ) : (
-        <div className="px-4 py-4 text-center text-xs text-gray-400">
+        <div className="px-4 py-4 text-center text-xs text-[var(--text-muted)]">
           Pod 없음 (가용)
         </div>
       )}
@@ -356,10 +356,10 @@ export default function InfraPage() {
     <>
       <main className="mx-auto max-w-[1400px] px-4 py-8 sm:px-6">
         {error && (
-          <div className="mb-4 rounded-md bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>
+          <div className="mb-4 rounded-md bg-[var(--danger-light)] px-4 py-3 text-sm text-[var(--danger)]">{error}</div>
         )}
         {success && (
-          <div className="mb-4 rounded-md bg-green-50 px-4 py-3 text-sm text-green-700">{success}</div>
+          <div className="mb-4 rounded-md bg-[var(--success-light)] px-4 py-3 text-sm text-[var(--success)]">{success}</div>
         )}
 
         {/* Stats Cards */}
@@ -374,15 +374,15 @@ export default function InfraPage() {
 
         {data && (
           <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-gray-900">노드 / Pod 현황</h2>
-            <p className="text-xs text-gray-400">
+            <h2 className="text-sm font-semibold text-[var(--text-primary)]">노드 / Pod 현황</h2>
+            <p className="text-xs text-[var(--text-muted)]">
               수집: {new Date(data.collected_at).toLocaleString("ko-KR")} / 15초 자동 갱신
             </p>
           </div>
         )}
 
         {loading ? (
-          <div className="flex items-center justify-center py-12 text-gray-400">
+          <div className="flex items-center justify-center py-12 text-[var(--text-muted)]">
             데이터를 불러오는 중...
           </div>
         ) : (
@@ -391,22 +391,22 @@ export default function InfraPage() {
             <div className="flex-[3] min-w-0 space-y-4">
 
               {/* Node Group Scaling */}
-              <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
-                <div className="border-b border-gray-200 px-4 py-3">
-                  <h3 className="text-sm font-semibold text-gray-900">노드그룹 관리</h3>
+              <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-sm">
+                <div className="border-b border-[var(--border)] px-4 py-3">
+                  <h3 className="text-sm font-semibold text-[var(--text-primary)]">노드그룹 관리</h3>
                 </div>
-                <div className="divide-y divide-gray-100">
+                <div className="divide-y divide-[var(--border)]">
                   {nodeGroups.map((ng) => (
                     <div key={ng.name} className="flex items-center justify-between px-4 py-3">
                       <div>
-                        <span className="text-sm font-medium text-gray-900">{ng.name}</span>
-                        <span className="ml-2 rounded bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">{ng.instance_type}</span>
-                        <span className={`ml-2 rounded px-2 py-0.5 text-xs font-medium ${ng.status === "ACTIVE" ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-700"}`}>
+                        <span className="text-sm font-medium text-[var(--text-primary)]">{ng.name}</span>
+                        <span className="ml-2 rounded bg-[var(--primary-light)] px-2 py-0.5 text-xs font-medium text-[var(--primary)]">{ng.instance_type}</span>
+                        <span className={`ml-2 rounded px-2 py-0.5 text-xs font-medium ${ng.status === "ACTIVE" ? "bg-[var(--success-light)] text-[var(--success)]" : "bg-[var(--warning-light)] text-[var(--warning)]"}`}>
                           {ng.status}
                         </span>
                       </div>
                       <div className="flex items-center gap-3">
-                        <span className="text-xs text-gray-500">
+                        <span className="text-xs text-[var(--text-muted)]">
                           현재 {ng.desired_size}대 (min {ng.min_size} / max {ng.max_size})
                         </span>
                         <div className="flex items-center gap-1">
@@ -419,7 +419,7 @@ export default function InfraPage() {
                               }
                             }}
                             disabled={ng.desired_size <= 0}
-                            className="rounded border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-30"
+                            className="rounded border border-[var(--border-strong)] px-2 py-1 text-xs font-medium text-[var(--text-secondary)] hover:bg-[var(--bg)] disabled:opacity-30"
                           >
                             -1
                           </button>
@@ -431,7 +431,7 @@ export default function InfraPage() {
                               try { await scaleNodeGroup(ng.name, newSize); fetchData(); } catch (err) { setError(err instanceof Error ? err.message : "스케일링 실패"); }
                             }}
                             disabled={ng.desired_size >= ng.max_size}
-                            className="rounded border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-30"
+                            className="rounded border border-[var(--border-strong)] px-2 py-1 text-xs font-medium text-[var(--text-secondary)] hover:bg-[var(--bg)] disabled:opacity-30"
                           >
                             +1
                           </button>
@@ -442,7 +442,7 @@ export default function InfraPage() {
                                   try { await scaleNodeGroup(ng.name, 0); fetchData(); } catch (err) { setError(err instanceof Error ? err.message : "스케일링 실패"); }
                                 }
                               }}
-                              className="ml-1 rounded bg-red-50 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-100"
+                              className="ml-1 rounded bg-[var(--danger-light)] px-2 py-1 text-xs font-medium text-[var(--danger)] hover:bg-[var(--danger-light)]"
                             >
                               전체 종료
                             </button>
@@ -455,13 +455,13 @@ export default function InfraPage() {
               </div>
 
               {/* Pod 할당 (simple) */}
-              <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-                <h3 className="mb-2 text-sm font-semibold text-gray-900">Pod 할당</h3>
+              <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 shadow-sm">
+                <h3 className="mb-2 text-sm font-semibold text-[var(--text-primary)]">Pod 할당</h3>
                 <div className="flex gap-2">
                   <select
                     value={assignUser}
                     onChange={(e) => setAssignUser(e.target.value)}
-                    className="flex-1 rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+                    className="flex-1 rounded-md border border-[var(--border-strong)] px-2 py-1.5 text-sm"
                   >
                     <option value="">사용자 선택</option>
                     {approvedUsers
@@ -473,7 +473,7 @@ export default function InfraPage() {
                   <select
                     value={assignNode}
                     onChange={(e) => setAssignNode(e.target.value)}
-                    className="flex-1 rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+                    className="flex-1 rounded-md border border-[var(--border-strong)] px-2 py-1.5 text-sm"
                   >
                     <option value="">노드 자동 배치</option>
                     {data?.nodes.filter((n) => n.node_role !== "system").map((n) => (
@@ -493,7 +493,7 @@ export default function InfraPage() {
                         fetchData();
                       } catch (err) { setError(err instanceof Error ? err.message : "할당 실패"); }
                     }}
-                    className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                    className="rounded-md bg-[var(--primary)] px-4 py-1.5 text-sm font-medium text-white hover:bg-[var(--primary-hover)] disabled:opacity-50"
                   >
                     할당
                   </button>
@@ -501,15 +501,15 @@ export default function InfraPage() {
               </div>
 
               {/* ── User Infra Policy Table ── */}
-              <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
-                <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
-                  <h3 className="text-sm font-semibold text-gray-900">사용자 인프라 정책</h3>
+              <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-sm">
+                <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
+                  <h3 className="text-sm font-semibold text-[var(--text-primary)]">사용자 인프라 정책</h3>
                   <div className="flex items-center gap-2">
                     {checkedUsers.size > 0 && (
                       <div className="flex items-center gap-2">
-                        <span className="text-xs font-medium text-blue-600">{checkedUsers.size}명 선택</span>
+                        <span className="text-xs font-medium text-[var(--primary)]">{checkedUsers.size}명 선택</span>
                         <select
-                          className="rounded-md border border-blue-300 bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700"
+                          className="rounded-md border border-[var(--primary)] bg-[var(--primary-light)] px-2 py-1 text-xs font-medium text-[var(--primary)]"
                           value=""
                           onChange={(e) => {
                             if (e.target.value) handleBulkAssign(e.target.value);
@@ -527,13 +527,13 @@ export default function InfraPage() {
                       placeholder="사용자 검색..."
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      className="rounded-md border border-gray-300 px-2.5 py-1 text-xs w-40"
+                      className="rounded-md border border-[var(--border-strong)] px-2.5 py-1 text-xs w-40"
                     />
                   </div>
                 </div>
                 <div className="overflow-y-auto">
                   <table className="w-full text-sm">
-                    <thead className="sticky top-0 bg-gray-50 text-xs text-gray-500 uppercase">
+                    <thead className="sticky top-0 bg-[var(--bg)] text-xs text-[var(--text-muted)] uppercase">
                       <tr>
                         <th className="px-4 py-2 text-left w-8">
                           <input
@@ -546,7 +546,7 @@ export default function InfraPage() {
                                 setCheckedUsers(new Set());
                               }
                             }}
-                            className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600"
+                            className="h-3.5 w-3.5 rounded border-[var(--border-strong)] text-[var(--primary)]"
                           />
                         </th>
                         <th className="px-4 py-2 text-left">사용자</th>
@@ -554,16 +554,16 @@ export default function InfraPage() {
                         <th className="px-4 py-2 text-right">빠른 설정</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-100">
+                    <tbody className="divide-y divide-[var(--border)]">
                       {filteredAssignments.length === 0 ? (
                         <tr>
-                          <td colSpan={4} className="px-4 py-6 text-center text-xs text-gray-400">
+                          <td colSpan={4} className="px-4 py-6 text-center text-xs text-[var(--text-muted)]">
                             {searchQuery ? "검색 결과 없음" : "인프라 정책 데이터 없음"}
                           </td>
                         </tr>
                       ) : (
                         paginatedAssignments.map((user) => (
-                          <tr key={user.user_id} className="hover:bg-gray-50/50">
+                          <tr key={user.user_id} className="hover:bg-[var(--bg)]/50">
                             <td className="px-4 py-2">
                               <input
                                 type="checkbox"
@@ -574,21 +574,21 @@ export default function InfraPage() {
                                   else next.delete(user.username);
                                   setCheckedUsers(next);
                                 }}
-                                className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600"
+                                className="h-3.5 w-3.5 rounded border-[var(--border-strong)] text-[var(--primary)]"
                               />
                             </td>
                             <td className="px-4 py-2">
-                              <span className="font-medium text-gray-900">{user.name ?? user.username}</span>
-                              <span className="ml-1 text-xs text-gray-400">({user.username})</span>
+                              <span className="font-medium text-[var(--text-primary)]">{user.name ?? user.username}</span>
+                              <span className="ml-1 text-xs text-[var(--text-muted)]">({user.username})</span>
                             </td>
                             <td className="px-4 py-2">
-                              <span className="inline-flex items-center rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-medium text-indigo-700">
+                              <span className="inline-flex items-center rounded-full bg-[var(--info-light)] px-2.5 py-0.5 text-xs font-medium text-[var(--info)]">
                                 {user.infra_policy_name}
                               </span>
                             </td>
                             <td className="px-4 py-2 text-right">
                               <select
-                                className="rounded border border-gray-200 px-1.5 py-0.5 text-xs"
+                                className="rounded border border-[var(--border)] px-1.5 py-0.5 text-xs"
                                 value=""
                                 onChange={async (e) => {
                                   if (!e.target.value) return;
@@ -629,26 +629,26 @@ export default function InfraPage() {
 
             {/* ═══════ RIGHT PANEL (40%) ═══════ */}
             <div className="flex-[2] min-w-0">
-              <div className="sticky top-6 rounded-lg border border-gray-200 bg-white shadow-sm">
+              <div className="sticky top-6 rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-sm">
                 {/* Header */}
-                <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
-                  <h3 className="text-sm font-semibold text-gray-900">인프라 정책 관리</h3>
+                <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
+                  <h3 className="text-sm font-semibold text-[var(--text-primary)]">인프라 정책 관리</h3>
                   <button
                     onClick={() => {
                       setIsCreatingNew(true);
                       setSelectedTemplate(null);
                       clearForm();
                     }}
-                    className="rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-700 transition-colors"
+                    className="rounded-md bg-[var(--primary)] px-2.5 py-1 text-xs font-medium text-white hover:bg-[var(--primary-hover)] transition-colors"
                   >
                     + 새 정책
                   </button>
                 </div>
 
                 {/* Template list */}
-                <div className="max-h-[180px] overflow-y-auto border-b border-gray-200">
+                <div className="max-h-[180px] overflow-y-auto border-b border-[var(--border)]">
                   {infraTemplates.length === 0 ? (
-                    <div className="px-4 py-6 text-center text-xs text-gray-400">
+                    <div className="px-4 py-6 text-center text-xs text-[var(--text-muted)]">
                       정책 템플릿이 없습니다
                     </div>
                   ) : (
@@ -663,21 +663,21 @@ export default function InfraPage() {
                             setSelectedTemplate(t.name);
                           }}
                           className={`flex w-full items-center justify-between px-4 py-2.5 text-left transition-colors ${
-                            isActive ? "bg-blue-50 border-l-2 border-blue-600" : "hover:bg-gray-50 border-l-2 border-transparent"
+                            isActive ? "bg-[var(--primary-light)] border-l-2 border-[var(--primary)]" : "hover:bg-[var(--bg)] border-l-2 border-transparent"
                           }`}
                         >
                           <div>
-                            <span className={`text-sm font-medium ${isActive ? "text-blue-700" : "text-gray-900"}`}>
+                            <span className={`text-sm font-medium ${isActive ? "text-[var(--primary)]" : "text-[var(--text-primary)]"}`}>
                               {t.name}
                             </span>
                             {t.is_builtin && (
-                              <span className="ml-1.5 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
+                              <span className="ml-1.5 rounded bg-[var(--surface-hover)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--text-muted)]">
                                 기본
                               </span>
                             )}
-                            <p className="text-xs text-gray-400 mt-0.5 truncate max-w-[200px]">{t.description}</p>
+                            <p className="text-xs text-[var(--text-muted)] mt-0.5 truncate max-w-[200px]">{t.description}</p>
                           </div>
-                          <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">
+                          <span className="rounded-full bg-[var(--surface-hover)] px-2 py-0.5 text-xs font-medium text-[var(--text-secondary)]">
                             {assignedCount}명
                           </span>
                         </button>
@@ -690,14 +690,14 @@ export default function InfraPage() {
                 {(selectedTemplate || isCreatingNew) && (
                   <div className="space-y-3 p-4">
                     {isCreatingNew && (
-                      <div className="rounded-md bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700">
+                      <div className="rounded-md bg-[var(--primary-light)] px-3 py-1.5 text-xs font-medium text-[var(--primary)]">
                         새 정책 생성
                       </div>
                     )}
 
                     {/* 정책명 */}
                     <div>
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1">
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1">
                         정책명
                       </label>
                       <input
@@ -705,34 +705,34 @@ export default function InfraPage() {
                         value={editName}
                         onChange={(e) => { setEditName(e.target.value); setEditDirty(true); }}
                         disabled={!isCreatingNew && selectedTemplateObj?.is_builtin}
-                        className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm disabled:bg-gray-50 disabled:text-gray-500"
+                        className="w-full rounded-md border border-[var(--border-strong)] px-3 py-1.5 text-sm disabled:bg-[var(--bg)] disabled:text-[var(--text-muted)]"
                         placeholder="예: standard, premium"
                       />
                     </div>
 
                     {/* 설명 */}
                     <div>
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1">
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1">
                         설명
                       </label>
                       <input
                         type="text"
                         value={editDesc}
                         onChange={(e) => { setEditDesc(e.target.value); setEditDirty(true); }}
-                        className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm"
+                        className="w-full rounded-md border border-[var(--border-strong)] px-3 py-1.5 text-sm"
                         placeholder="정책 설명"
                       />
                     </div>
 
                     {/* 노드그룹 */}
                     <div>
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1">
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1">
                         노드그룹
                       </label>
                       <select
                         value={editNodegroup}
                         onChange={(e) => { setEditNodegroup(e.target.value); setEditDirty(true); }}
-                        className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm"
+                        className="w-full rounded-md border border-[var(--border-strong)] px-3 py-1.5 text-sm"
                       >
                         {nodegroupNames.length > 0 ? (
                           nodegroupNames.map((name) => (
@@ -746,7 +746,7 @@ export default function InfraPage() {
 
                     {/* 노드당 Pod 수 */}
                     <div>
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1">
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1">
                         노드당 Pod 수
                       </label>
                       <input
@@ -755,57 +755,57 @@ export default function InfraPage() {
                         max={20}
                         value={editMaxPods}
                         onChange={(e) => { setEditMaxPods(Number(e.target.value)); setEditDirty(true); }}
-                        className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm"
+                        className="w-full rounded-md border border-[var(--border-strong)] px-3 py-1.5 text-sm"
                       />
                     </div>
 
                     {/* CPU / Memory grid */}
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1">
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1">
                           CPU Request
                         </label>
                         <input
                           type="text"
                           value={editCpuReq}
                           onChange={(e) => { setEditCpuReq(e.target.value); setEditDirty(true); }}
-                          className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm"
+                          className="w-full rounded-md border border-[var(--border-strong)] px-3 py-1.5 text-sm"
                           placeholder="500m"
                         />
                       </div>
                       <div>
-                        <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1">
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1">
                           CPU Limit
                         </label>
                         <input
                           type="text"
                           value={editCpuLim}
                           onChange={(e) => { setEditCpuLim(e.target.value); setEditDirty(true); }}
-                          className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm"
+                          className="w-full rounded-md border border-[var(--border-strong)] px-3 py-1.5 text-sm"
                           placeholder="1000m"
                         />
                       </div>
                       <div>
-                        <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1">
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1">
                           Mem Request
                         </label>
                         <input
                           type="text"
                           value={editMemReq}
                           onChange={(e) => { setEditMemReq(e.target.value); setEditDirty(true); }}
-                          className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm"
+                          className="w-full rounded-md border border-[var(--border-strong)] px-3 py-1.5 text-sm"
                           placeholder="1.5Gi"
                         />
                       </div>
                       <div>
-                        <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1">
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1">
                           Mem Limit
                         </label>
                         <input
                           type="text"
                           value={editMemLim}
                           onChange={(e) => { setEditMemLim(e.target.value); setEditDirty(true); }}
-                          className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm"
+                          className="w-full rounded-md border border-[var(--border-strong)] px-3 py-1.5 text-sm"
                           placeholder="3Gi"
                         />
                       </div>
@@ -813,12 +813,12 @@ export default function InfraPage() {
 
                     {/* 공유 디렉토리 쓰기 */}
                     <div>
-                      <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                      <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer">
                         <input
                           type="checkbox"
                           checked={editSharedWritable}
                           onChange={(e) => { setEditSharedWritable(e.target.checked); setEditDirty(true); }}
-                          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          className="h-4 w-4 rounded border-[var(--border-strong)] text-[var(--primary)] focus:ring-[var(--primary)]"
                         />
                         공유 디렉토리 쓰기
                       </label>
@@ -829,14 +829,14 @@ export default function InfraPage() {
                       <button
                         onClick={handleSaveTemplate}
                         disabled={saving}
-                        className="flex-1 rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                        className="flex-1 rounded-md bg-[var(--primary)] px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-[var(--primary-hover)] disabled:opacity-50 transition-colors"
                       >
                         {saving ? "저장 중..." : isCreatingNew ? "생성" : "저장"}
                       </button>
                       {!isCreatingNew && selectedTemplateObj && !selectedTemplateObj.is_builtin && (
                         <button
                           onClick={handleDeleteTemplate}
-                          className="rounded-md border border-red-300 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 transition-colors"
+                          className="rounded-md border border-[var(--danger)] px-3 py-2 text-sm font-medium text-[var(--danger)] hover:bg-[var(--danger-light)] transition-colors"
                         >
                           삭제
                         </button>
@@ -847,7 +847,7 @@ export default function InfraPage() {
 
                 {/* Empty state when nothing selected */}
                 {!selectedTemplate && !isCreatingNew && (
-                  <div className="px-4 py-8 text-center text-xs text-gray-400">
+                  <div className="px-4 py-8 text-center text-xs text-[var(--text-muted)]">
                     좌측 목록에서 정책을 선택하거나<br />
                     &quot;+ 새 정책&quot; 버튼으로 생성하세요
                   </div>

@@ -81,13 +81,13 @@ export default function DashboardPage() {
     <>
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
         {error && (
-          <div className="mb-6 rounded-md bg-red-50 px-4 py-3 text-sm text-red-600">
+          <div className="mb-6 rounded-md bg-[var(--danger-light)] px-4 py-3 text-sm text-[var(--danger)]">
             {error}
           </div>
         )}
 
         {success && (
-          <div className="mb-6 rounded-md bg-green-50 px-4 py-3 text-sm text-green-600">
+          <div className="mb-6 rounded-md bg-[var(--success-light)] px-4 py-3 text-sm text-[var(--success)]">
             {success}
           </div>
         )}
@@ -100,12 +100,12 @@ export default function DashboardPage() {
         </div>
 
         {/* Sessions Table */}
-        <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
-          <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
-            <h2 className="text-sm font-semibold text-gray-900">
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-sm">
+          <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
+            <h2 className="text-sm font-semibold text-[var(--text-primary)]">
               활성 세션 ({total})
             </h2>
-            <span className="text-xs text-gray-400">10초마다 자동 갱신</span>
+            <span className="text-xs text-[var(--text-muted)]">10초마다 자동 갱신</span>
           </div>
           <SessionTable sessions={sessions} loading={loading} onTerminate={async (sessionId) => {
             if (confirm('이 세션의 Pod을 종료하시겠습니까?\n대화 내용은 EFS에 백업되어 복원 가능합니다.')) {
@@ -120,19 +120,19 @@ export default function DashboardPage() {
         </div>
 
         {/* 스케줄링 + 연장 요청 관리 */}
-        <div className="mt-8 rounded-lg border border-gray-200 bg-white shadow-sm">
-          <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
-            <h2 className="text-sm font-semibold text-gray-900">스케줄링 관리</h2>
-            <span className="text-xs text-gray-400">24/7 운영 — Pod 수명은 사용자별 TTL로 관리</span>
+        <div className="mt-8 rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-sm">
+          <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
+            <h2 className="text-sm font-semibold text-[var(--text-primary)]">스케줄링 관리</h2>
+            <span className="text-xs text-[var(--text-muted)]">24/7 운영 — Pod 수명은 사용자별 TTL로 관리</span>
           </div>
 
           {/* 연장 요청 목록 */}
           <div className="p-4">
-            <h3 className="mb-2 text-xs font-semibold uppercase text-gray-500">
+            <h3 className="mb-2 text-xs font-semibold uppercase text-[var(--text-muted)]">
               연장 요청
             </h3>
             {extensionRequests.length === 0 ? (
-              <p className="text-sm text-gray-400">연장 요청이 없습니다.</p>
+              <p className="text-sm text-[var(--text-muted)]">연장 요청이 없습니다.</p>
             ) : (
               <div className="space-y-2">
                 {extensionRequests.map((req) => (
@@ -140,23 +140,23 @@ export default function DashboardPage() {
                     key={req.id}
                     className={`flex items-center justify-between rounded-lg border p-3 ${
                       req.status === "pending"
-                        ? "border-yellow-200 bg-yellow-50"
+                        ? "border-[var(--warning-light)] bg-[var(--warning-light)]"
                         : req.status === "approved"
-                          ? "border-green-200 bg-green-50"
-                          : "border-gray-200 bg-gray-50"
+                          ? "border-[var(--success-light)] bg-[var(--success-light)]"
+                          : "border-[var(--border)] bg-[var(--bg)]"
                     }`}
                   >
                     <div>
                       <span className="text-sm font-medium">
                         {req.user_name || req.username}
                       </span>
-                      <span className="ml-1 text-xs text-gray-400">
+                      <span className="ml-1 text-xs text-[var(--text-muted)]">
                         ({req.username})
                       </span>
-                      <span className="ml-2 text-xs text-gray-500">
+                      <span className="ml-2 text-xs text-[var(--text-muted)]">
                         {req.requested_hours}시간 연장
                       </span>
-                      <span className="ml-2 text-xs text-gray-400">
+                      <span className="ml-2 text-xs text-[var(--text-muted)]">
                         {new Date(req.requested_at).toLocaleString("ko-KR")}
                       </span>
                     </div>
@@ -168,7 +168,7 @@ export default function DashboardPage() {
                               await approveExtension(req.id);
                               fetchExtensions();
                             }}
-                            className="rounded bg-green-600 px-3 py-1 text-xs font-medium text-white hover:bg-green-700"
+                            className="rounded bg-[var(--success)] px-3 py-1 text-xs font-medium text-white hover:bg-[var(--success)]"
                           >
                             승인
                           </button>
@@ -177,7 +177,7 @@ export default function DashboardPage() {
                               await rejectExtension(req.id);
                               fetchExtensions();
                             }}
-                            className="rounded bg-red-50 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-100"
+                            className="rounded bg-[var(--danger-light)] px-2 py-1 text-xs font-medium text-[var(--danger)] hover:bg-[var(--danger-light)]"
                           >
                             거절
                           </button>
@@ -186,8 +186,8 @@ export default function DashboardPage() {
                         <span
                           className={`rounded-full px-2 py-0.5 text-xs font-medium ${
                             req.status === "approved"
-                              ? "bg-green-100 text-green-700"
-                              : "bg-gray-100 text-gray-500"
+                              ? "bg-[var(--success-light)] text-[var(--success)]"
+                              : "bg-[var(--surface-hover)] text-[var(--text-muted)]"
                           }`}
                         >
                           {req.status === "approved" ? "승인됨" : "거절됨"}
