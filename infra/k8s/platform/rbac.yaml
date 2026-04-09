@@ -14,10 +14,12 @@ rules:
   - apiGroups: [""]
     resources: ["pods", "services"]
     verbs: ["get", "list", "create", "delete"]
-  # Pod exec: 유휴 체커에서 Pod 내부 활동 상태 확인
+  # Pod exec: 토큰 수집 + 유휴 체커에서 Pod 내부 상태 확인
+  # get: Python K8s client의 connect_get_namespaced_pod_exec (WebSocket GET)
+  # create: kubectl exec 등 POST 기반 exec
   - apiGroups: [""]
     resources: ["pods/exec"]
-    verbs: ["create"]
+    verbs: ["create", "get"]
   # Ingress 관리: 사용자 Pod에 대한 URL 라우팅 규칙 생성
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses"]
