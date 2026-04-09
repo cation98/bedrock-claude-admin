@@ -642,7 +642,10 @@ class FileServerHandler(SimpleHTTPRequestHandler):
                 if 'dev' in pkg.get('scripts', {}):
                     cmd = ['npm', 'run', 'dev']
         elif app_type == 'python':
-            cmd = ['python3', '-m', 'uvicorn', 'app:app', '--host', '0.0.0.0', '--port', str(port)]
+            entrypoint = registry.get(app_name, {}).get('entrypoint')
+            if not entrypoint:
+                entrypoint = 'main:app' if os.path.isfile(os.path.join(app_path, 'main.py')) else 'app:app'
+            cmd = ['python3', '-m', 'uvicorn', entrypoint, '--host', '0.0.0.0', '--port', str(port)]
         else:
             self._send_json(400, {"error": f"지원하지 않는 앱 유형: {app_type}"})
             return
@@ -1246,7 +1249,7 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
       <p>파일 업로드 (드래그&amp;드롭)<br>결과물 다운로드</p>
       <span class="badge badge-green">파일 탐색기</span>
     </div>
-    <div class="card" style="cursor:pointer" onclick="document.getElementById('myAppsSection').scrollIntoView({{behavior:'smooth'}})">
+    <div class="card" style="cursor:pointer" onclick="switchHubTab('apps')">
       <div class="icon">&#127760;</div>
       <h2>웹앱</h2>
       <p id="webappCardDesc">실행 중인 앱 없음</p>
