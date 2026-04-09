@@ -439,6 +439,79 @@ class FileServerHandler(SimpleHTTPRequestHandler):
         content_length = int(self.headers.get('Content-Length', 0))
         return self.rfile.read(content_length).decode('utf-8')
 
+    # ── Webapp Helpers ──────────────────────────────────────────────
+
+    @staticmethod
+    def _kill_port(port):
+        """포트를 사용하는 프로세스를 /proc에서 찾아서 종료."""
+        import signal
+        for pid_dir in os.listdir('/proc'):
+            if not pid_dir.isdigit():
+                continue
+            try:
+                fd_dir = f'/proc/{pid_dir}/fd'
+                for fd in os.listdir(fd_dir):
+                    try:
+                        link = os.readlink(f'{fd_dir}/{fd}')
+                        if 'socket' in link:
+                            with open(f'/proc/{pid_dir}/net/tcp') as f:
+                                for line in f:
+                                    parts = line.strip().split()
+                                    if len(parts) > 1 and parts[1].endswith(f':{port:04X}') and parts[3] == '0A':
+                                        os.kill(int(pid_dir), signal.SIGTERM)
+                                        return True
+                    except Exception:
+                        continue
+            except Exception:
+                continue
+        return False
+
+    @staticmethod
+    def _scan_listening_ports():
+        """3000-3100 범위의 리스닝 포트를 /proc/net/tcp에서 스캔."""
+        ports = {}
+        try:
+            with open('/proc/net/tcp') as f:
+                for line in f:
+                    parts = line.strip().split()
+                    if len(parts) < 4 or parts[3] != '0A':
+                        continue
+                    addr = parts[1]
+                    port = int(addr.split(':')[1], 16)
+                    if 3000 <= port <= 3100:
+                        inode = parts[9] if len(parts) > 9 else None
+                        pid = None
+                        if inode:
+                            for pid_dir in os.listdir('/proc'):
+                                if not pid_dir.isdigit():
+                                    continue
+                                try:
+                                    for fd in os.listdir(f'/proc/{pid_dir}/fd'):
+                                        try:
+                                            link = os.readlink(f'/proc/{pid_dir}/fd/{fd}')
+                                            if f'socket:[{inode}]' in link:
+                                                pid = int(pid_dir)
+                                                break
+                                        except Exception:
+                                            continue
+                                    if pid:
+                                        break
+                                except Exception:
+                                    continue
+                        cwd = None
+                        cmd = None
+                        if pid:
+                            try:
+                                cwd = os.readlink(f'/proc/{pid}/cwd')
+                                with open(f'/proc/{pid}/cmdline') as cf:
+                                    cmd = cf.read().split('\x00')[0]
+                            except Exception:
+                                pass
+                        ports[port] = {"port": port, "pid": pid, "command": cmd, "cwd": cwd}
+        except Exception:
+            pass
+        return ports
+
     # ── Webapp Management API Handlers ──────────────────────────────
 
     def _handle_apps_status(self):
@@ -451,28 +524,8 @@ class FileServerHandler(SimpleHTTPRequestHandler):
                 registry = json.load(f)
 
         # 2. Scan listening ports 3000-3100
-        running = []
-        try:
-            result = subprocess.run(['ss', '-tlnp'], capture_output=True, text=True, timeout=5)
-            for line in result.stdout.split('\n'):
-                m = re.search(r':(\d+)\s', line)
-                if m:
-                    port = int(m.group(1))
-                    if 3000 <= port <= 3100:
-                        pid_match = re.search(r'pid=(\d+)', line)
-                        pid = int(pid_match.group(1)) if pid_match else None
-                        cwd = None
-                        cmd = None
-                        if pid:
-                            try:
-                                cwd = os.readlink(f'/proc/{pid}/cwd')
-                                with open(f'/proc/{pid}/cmdline') as f:
-                                    cmd = f.read().split('\x00')[0]
-                            except Exception:
-                                pass
-                        running.append({"port": port, "pid": pid, "command": cmd, "cwd": cwd})
-        except Exception:
-            pass
+        port_map = self._scan_listening_ports()
+        running = list(port_map.values())
 
         # 3. Scan workspace projects
         projects = []
@@ -598,18 +651,8 @@ class FileServerHandler(SimpleHTTPRequestHandler):
             self._send_json(403, {"error": "workspace 외부 경로에서는 실행할 수 없습니다"})
             return
 
-        # Find used ports: 리스닝 포트 + 레지스트리에 할당된 포트 모두 확인
-        used_ports = set()
-        try:
-            result = subprocess.run(['ss', '-tlnp'], capture_output=True, text=True, timeout=5)
-            for line in result.stdout.split('\n'):
-                m = re.search(r':(\d+)\s', line)
-                if m:
-                    p = int(m.group(1))
-                    if 3000 <= p <= 3100:
-                        used_ports.add(p)
-        except Exception:
-            pass
+        # Find used ports: /proc/net/tcp에서 리스닝 포트 확인
+        used_ports = set(self._scan_listening_ports().keys())
 
         reg_path = os.path.join(self.directory, '.webapp-registry.json')
         registry = {}
@@ -626,7 +669,7 @@ class FileServerHandler(SimpleHTTPRequestHandler):
         port = None
         existing_port = registry.get(app_name, {}).get('port')
         if existing_port and existing_port in used_ports:
-            subprocess.run(['fuser', '-k', f'{existing_port}/tcp'], capture_output=True, timeout=5)
+            self._kill_port(existing_port)
             port = existing_port
         elif existing_port and existing_port not in used_ports:
             port = existing_port
@@ -684,15 +727,15 @@ class FileServerHandler(SimpleHTTPRequestHandler):
             self._send_json(400, {"error": "포트는 3000-3100 범위만 허용됩니다"})
             return
         if port:
-            subprocess.run(['fuser', '-k', f'{port}/tcp'], capture_output=True, timeout=10)
+            self._kill_port(port)
         self._send_json(200, {"stopped": True, "port": port})
 
     def _handle_apps_stop_all(self):
         """POST /api/apps/stop-all — Stop all apps on ports 3000-3100."""
         stopped = []
-        for port in range(3000, 3101):
-            result = subprocess.run(['fuser', '-k', f'{port}/tcp'], capture_output=True, timeout=5)
-            if result.returncode == 0:
+        listening = self._scan_listening_ports()
+        for port in listening:
+            if self._kill_port(port):
                 stopped.append(port)
         self._send_json(200, {"stopped": stopped})
 
@@ -734,8 +777,7 @@ class FileServerHandler(SimpleHTTPRequestHandler):
             with open(reg_path) as f:
                 registry = json.load(f)
         if app_name in registry and registry[app_name].get('port'):
-            subprocess.run(['fuser', '-k', f'{registry[app_name]["port"]}/tcp'],
-                           capture_output=True, timeout=5)
+            self._kill_port(registry[app_name]['port'])
 
         # Delete directory
         if os.path.isdir(app_path):
