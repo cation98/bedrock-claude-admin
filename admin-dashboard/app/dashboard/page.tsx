@@ -81,7 +81,7 @@ export default function DashboardPage() {
     <>
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
         {error && (
-          <div className="mb-6 rounded-md bg-[var(--danger-light)] px-4 py-3 text-sm text-[var(--danger)]">
+          <div className="mb-6 rounded-md bg-[var(--error-light)] px-4 py-3 text-sm text-[var(--error)]">
             {error}
           </div>
         )}

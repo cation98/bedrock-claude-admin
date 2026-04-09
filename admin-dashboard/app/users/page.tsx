@@ -226,7 +226,7 @@ export default function UsersPage() {
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
         {/* Messages */}
         {error && (
-          <div className="mb-6 rounded-md bg-[var(--danger-light)] px-4 py-3 text-sm text-[var(--danger)]">
+          <div className="mb-6 rounded-md bg-[var(--error-light)] px-4 py-3 text-sm text-[var(--error)]">
             {error}
           </div>
         )}
@@ -551,7 +551,7 @@ export default function UsersPage() {
                                   fetchData();
                                 } catch { setError("앱 배포 권한 변경 실패"); }
                               }}
-                              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${u.can_deploy_apps ? "bg-[var(--primary)]" : "bg-gray-300"}`}
+                              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${u.can_deploy_apps ? "bg-[var(--primary)]" : "bg-[var(--border-strong)]"}`}
                             >
                               <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-[var(--surface)] transition-transform ${u.can_deploy_apps ? "translate-x-4" : "translate-x-0.5"}`} />
                             </button>

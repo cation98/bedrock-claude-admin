@@ -241,7 +241,7 @@ export default function DataGovernancePage() {
 
       {/* Error */}
       {error && (
-        <div className="rounded-md border border-[var(--danger-light)] bg-[var(--danger-light)] px-4 py-3 text-sm text-[var(--danger)]">
+        <div className="rounded-md border border-[var(--error-light)] bg-[var(--error-light)] px-4 py-3 text-sm text-[var(--error)]">
           {error}
         </div>
       )}

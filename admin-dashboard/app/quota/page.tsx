@@ -210,7 +210,7 @@ export default function QuotaPage() {
 
   return (
     <div className="px-6 py-8">
-      {error && <div className="mb-4 rounded-md bg-[var(--danger-light)] px-4 py-3 text-sm text-[var(--danger)]">{error}</div>}
+      {error && <div className="mb-4 rounded-md bg-[var(--error-light)] px-4 py-3 text-sm text-[var(--error)]">{error}</div>}
       {success && <div className="mb-4 rounded-md bg-[var(--success-light)] px-4 py-3 text-sm text-[var(--success)]">{success}</div>}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">

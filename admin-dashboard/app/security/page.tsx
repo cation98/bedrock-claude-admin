@@ -464,7 +464,7 @@ export default function SecurityPage() {
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
         {/* Messages */}
         {error && (
-          <div className="mb-6 rounded-md bg-[var(--danger-light)] px-4 py-3 text-sm text-[var(--danger)]">{error}</div>
+          <div className="mb-6 rounded-md bg-[var(--error-light)] px-4 py-3 text-sm text-[var(--error)]">{error}</div>
         )}
         {success && (
           <div className="mb-6 rounded-md bg-[var(--success-light)] px-4 py-3 text-sm text-[var(--success)]">

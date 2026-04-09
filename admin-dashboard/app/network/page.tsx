@@ -122,7 +122,7 @@ function DomainsPanel() {
   return (
     <div>
       {error && (
-        <div className="mb-4 rounded bg-[var(--danger-light)] px-4 py-2 text-sm text-[var(--danger)]">
+        <div className="mb-4 rounded bg-[var(--error-light)] px-4 py-2 text-sm text-[var(--error)]">
           {error}
         </div>
       )}

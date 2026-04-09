@@ -110,7 +110,7 @@ function severityBadge(severity: string) {
     case "critical":
       return <span className={`${base} bg-[var(--danger-light)] text-[var(--danger)]`}>CRITICAL</span>;
     case "high":
-      return <span className={`${base} bg-orange-100 text-orange-700`}>HIGH</span>;
+      return <span className={`${base} bg-[var(--error-light)] text-[var(--error)]`}>HIGH</span>;
     case "medium":
       return <span className={`${base} bg-[var(--warning-light)] text-[var(--warning)]`}>MEDIUM</span>;
     case "low":
@@ -255,7 +255,7 @@ export default function AuditPage() {
     <>
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
         {error && (
-          <div className="mb-6 rounded-md bg-[var(--danger-light)] px-4 py-3 text-sm text-[var(--danger)]">{error}</div>
+          <div className="mb-6 rounded-md bg-[var(--error-light)] px-4 py-3 text-sm text-[var(--error)]">{error}</div>
         )}
 
         {/* Toolbar */}
