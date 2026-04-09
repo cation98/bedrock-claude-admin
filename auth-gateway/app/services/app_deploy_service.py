@@ -336,32 +336,15 @@ class AppDeployService:
                     "nginx.ingress.kubernetes.io/force-ssl-redirect": "true",
                     "nginx.ingress.kubernetes.io/ssl-redirect": "true",
 
-                    # ── A03: Injection + A07: XSS ──
-                    # 보안 응답 헤더 (CSP, XSS Protection, Content-Type 스니핑 방지)
-                    "nginx.ingress.kubernetes.io/configuration-snippet": (
-                        "more_set_headers \"X-Content-Type-Options: nosniff\";\n"
-                        "more_set_headers \"X-Frame-Options: SAMEORIGIN\";\n"
-                        "more_set_headers \"X-XSS-Protection: 1; mode=block\";\n"
-                        "more_set_headers \"Referrer-Policy: strict-origin-when-cross-origin\";\n"
-                        "more_set_headers \"Permissions-Policy: camera=(), microphone=(), geolocation=()\";\n"
-                        "more_set_headers \"Content-Security-Policy: default-src 'self'; "
-                        "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
-                        "style-src 'self' 'unsafe-inline'; "
-                        "img-src 'self' data: blob:; "
-                        "font-src 'self' data:; "
-                        "connect-src 'self'; "
-                        "frame-ancestors 'self'\";\n"
-                    ),
+                    # ── A03/A07: Security headers ──
+                    # NOTE: configuration-snippet / server-snippet are blocked by
+                    # ingress-nginx admission webhook.  Security response headers
+                    # (CSP, X-Frame-Options, etc.) are set by the app's own
+                    # security_middleware.py at runtime instead.
 
                     # ── A04: Insecure Design — Rate Limiting ──
                     "nginx.ingress.kubernetes.io/limit-rps": "30",
                     "nginx.ingress.kubernetes.io/limit-connections": "10",
-
-                    # ── A05: Security Misconfiguration ──
-                    # 서버 정보 헤더 숨김
-                    "nginx.ingress.kubernetes.io/server-snippet": (
-                        "server_tokens off;"
-                    ),
 
                     # ── A06: Vulnerable Components — 업로드 크기 제한 ──
                     "nginx.ingress.kubernetes.io/proxy-body-size": "50m",

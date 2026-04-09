@@ -674,6 +674,49 @@ async def deploy_app(
     app_url = AppDeployService._app_url(slug, request.app_name)
     pod_name = AppDeployService._app_pod_name(slug, request.app_name)
 
+    # soft-deleted 앱 확인 (재활성화 대상) — UNIQUE constraint 충돌 방지
+    deleted_app = (
+        db.query(DeployedApp)
+        .filter(
+            DeployedApp.owner_username == username,
+            DeployedApp.app_name == request.app_name,
+            DeployedApp.status == "deleted",
+        )
+        .first()
+    )
+    if deleted_app:
+        # 기존 soft-deleted 레코드를 재활성화
+        deleted_app.status = "running"
+        deleted_app.version = request.version
+        deleted_app.visibility = request.visibility
+        deleted_app.app_port = request.app_port
+        deleted_app.app_url = app_url
+        deleted_app.pod_name = pod_name
+        deleted_app.updated_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(deleted_app)
+        # 재활성화: K8s 리소스 생성
+        try:
+            deploy_svc = AppDeployService(settings)
+            deploy_svc._create_app_pod(
+                pod_name,
+                username,
+                request.app_name,
+                request.version or "v1",
+                user.security_policy,
+                request.app_port,
+            )
+            deploy_svc._create_app_service(pod_name, username, request.app_name, request.app_port)
+            deploy_svc._create_app_ingress(pod_name, slug, request.app_name, request.app_port)
+            logger.info(f"K8s resources created for reactivated app {pod_name}")
+        except Exception as e:
+            logger.error(f"K8s deploy failed for reactivated {request.app_name}: {e}")
+            deleted_app.status = "inactive"
+            db.commit()
+
+        logger.info(f"App reactivated: {username}/{request.app_name} v={request.version}")
+        return DeployedAppResponse.model_validate(deleted_app)
+
     new_app = DeployedApp(
         owner_username=username,
         app_name=request.app_name,
