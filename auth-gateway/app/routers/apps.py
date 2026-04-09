@@ -181,8 +181,8 @@ async def auth_check(
             detail="유효하지 않은 토큰입니다",
         )
 
-    # 2. X-Original-URI에서 앱 소유자/이름 파싱
-    # 형식: /apps/{owner_username}/{app_name}/...
+    # 2. X-Original-URI에서 앱 slug/이름 파싱
+    # 형식: /apps/{slug}/{app_name}/...
     original_uri = request.headers.get("X-Original-URI", "")
     if not original_uri:
         raise HTTPException(
@@ -190,7 +190,7 @@ async def auth_check(
             detail="X-Original-URI 헤더가 없습니다",
         )
 
-    # URI 경로 파싱: /apps/{owner}/{app-name} 또는 /apps/{owner}/{app-name}/...
+    # URI 경로 파싱: /apps/{slug}/{app-name} 또는 /apps/{slug}/{app-name}/...
     uri_match = re.match(r"^/apps/([^/]+)/([^/?]+)", original_uri)
     if not uri_match:
         raise HTTPException(
@@ -198,8 +198,17 @@ async def auth_check(
             detail="잘못된 앱 경로 형식입니다",
         )
 
-    owner_username = uri_match.group(1).upper()  # 사번은 대문자로 정규화
+    slug = uri_match.group(1)  # slug (8자 hex, 사번 비노출)
     app_name = uri_match.group(2)
+
+    # slug로 앱 소유자 조회
+    owner = db.query(User).filter(User.app_slug == slug).first()
+    if not owner:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="앱을 찾을 수 없습니다",
+        )
+    owner_username = owner.username
 
     # 3. 관리자는 모든 앱에 접근 가능
     requesting_role = user_payload.get("role", "user")
@@ -208,7 +217,7 @@ async def auth_check(
         return _auth_check_success(requesting_username)
 
     # 4. 앱 소유자는 자신의 앱에 접근 가능
-    if requesting_username.upper() == owner_username:
+    if requesting_username.upper() == owner_username.upper():
         await _maybe_record_view(original_uri, None, requesting_username)
         return _auth_check_success(requesting_username)
 
@@ -583,6 +592,18 @@ async def deploy_app(
     """
     username = current_user["sub"]
 
+    # 사용자 조회 + slug 확인 (사번 비노출 URL용)
+    user = db.query(User).filter(User.username == username).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
+    slug = user.app_slug
+    if not slug:
+        # Auto-generate if missing
+        from app.core.security import generate_app_slug
+        slug = generate_app_slug(username)
+        user.app_slug = slug
+        db.commit()
+
     # 배포 권한 확인
     _require_deploy_permission(username, db)
 
@@ -626,18 +647,18 @@ async def deploy_app(
             from app.services.app_deploy_service import AppDeployService
 
             deploy_svc = AppDeployService(settings)
-            pod_name = f"app-{username.lower()}-{request.app_name}"
+            pod_name = AppDeployService._app_pod_name(slug, request.app_name)
             deploy_svc._delete_app_resources(pod_name)
-            user = db.query(User).filter(User.username == username).first()
             deploy_svc._create_app_pod(
                 pod_name,
                 username,
                 request.app_name,
                 request.version or "v1",
-                user.security_policy if user else None,
+                user.security_policy,
+                request.app_port,
             )
-            deploy_svc._create_app_service(pod_name, username, request.app_name)
-            deploy_svc._create_app_ingress(pod_name, username, request.app_name)
+            deploy_svc._create_app_service(pod_name, username, request.app_name, request.app_port)
+            deploy_svc._create_app_ingress(pod_name, slug, request.app_name, request.app_port)
             logger.info(f"K8s resources recreated for {pod_name}")
         except Exception as e:
             logger.error(f"K8s redeploy failed for {request.app_name}: {e}")
@@ -649,8 +670,9 @@ async def deploy_app(
         return DeployedAppResponse.model_validate(existing_app)
 
     # 신규 배포
-    app_url = f"/apps/{username}/{request.app_name}/"
-    pod_name = f"app-{username.lower()}-{request.app_name}"
+    from app.services.app_deploy_service import AppDeployService
+    app_url = AppDeployService._app_url(slug, request.app_name)
+    pod_name = AppDeployService._app_pod_name(slug, request.app_name)
 
     new_app = DeployedApp(
         owner_username=username,
@@ -691,20 +713,17 @@ async def deploy_app(
 
     # K8s 리소스 생성 (신규 배포만 — 재배포는 위에서 처리)
     try:
-        from app.services.app_deploy_service import AppDeployService
-
         deploy_svc = AppDeployService(settings)
-        user = db.query(User).filter(User.username == username).first()
-        security_policy = user.security_policy if user else None
         deploy_svc._create_app_pod(
             pod_name,
             username,
             request.app_name,
             request.version or "v1",
-            security_policy,
+            user.security_policy,
+            request.app_port,
         )
-        deploy_svc._create_app_service(pod_name, username, request.app_name)
-        deploy_svc._create_app_ingress(pod_name, username, request.app_name)
+        deploy_svc._create_app_service(pod_name, username, request.app_name, request.app_port)
+        deploy_svc._create_app_ingress(pod_name, slug, request.app_name, request.app_port)
         logger.info(f"K8s resources created for {pod_name}")
     except Exception as e:
         logger.error(f"K8s deploy failed for {request.app_name}: {e}")
@@ -720,15 +739,26 @@ async def deploy_app(
 async def undeploy_app(
     app_name: str,
     current_user: dict = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
     db: Session = Depends(get_db),
 ):
-    """앱 삭제 (소유자만 가능). 상태를 deleted로 변경하여 소프트 삭제."""
+    """앱 삭제 (소유자만 가능). 상태를 deleted로 변경하여 소프트 삭제 + K8s 리소스 삭제."""
     username = current_user["sub"]
     app = _get_owned_app(app_name, username, db)
 
     app.status = "deleted"
     app.updated_at = datetime.now(timezone.utc)
     db.commit()
+
+    # K8s 리소스 삭제 (Pod + Service + Ingress)
+    try:
+        from app.services.app_deploy_service import AppDeployService
+
+        deploy_svc = AppDeployService(settings)
+        deploy_svc._delete_app_resources(app.pod_name)
+        logger.info(f"K8s resources deleted for {app.pod_name}")
+    except Exception as e:
+        logger.error(f"K8s undeploy failed for {app.pod_name}: {e}")
 
     logger.info(f"App undeployed: {username}/{app_name}")
     return {"deleted": True, "app_name": app_name}

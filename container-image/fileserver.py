@@ -89,6 +89,9 @@ class FileServerHandler(SimpleHTTPRequestHandler):
         if parsed.path == '/api/apps/delete-project':
             self._handle_apps_delete_project()
             return
+        if parsed.path == '/api/apps/prepare-deploy':
+            self._handle_apps_prepare_deploy()
+            return
         if parsed.path.startswith('/api/apps/versions/') and parsed.path.endswith('/label'):
             self._handle_apps_version_label(parsed)
             return
@@ -886,6 +889,56 @@ class FileServerHandler(SimpleHTTPRequestHandler):
             pass
 
         self._send_json(200, {"deleted": True, "name": app_name})
+
+    def _handle_apps_prepare_deploy(self):
+        """POST /api/apps/prepare-deploy — 앱 코드를 deployed 경로로 복사."""
+        body = self._read_body()
+        data = json.loads(body)
+        app_name = data.get('name', '')
+        app_path = data.get('path', '')
+
+        # app_name 안전성 검사 (path traversal 방지)
+        if not app_name or '..' in app_name or '/' in app_name or '\\' in app_name:
+            self._send_json(400, {"error": "유효하지 않은 앱 이름입니다"})
+            return
+
+        if not app_path:
+            self._send_json(400, {"error": "앱 이름과 경로가 필요합니다"})
+            return
+
+        # 소스 검증
+        real_path = os.path.realpath(app_path)
+        real_workspace = os.path.realpath(self.directory)
+        if not real_path.startswith(real_workspace + os.sep):
+            self._send_json(403, {"error": "workspace 외부 경로는 배포할 수 없습니다"})
+            return
+        if not os.path.isdir(app_path):
+            self._send_json(404, {"error": f"앱 디렉토리를 찾을 수 없습니다"})
+            return
+
+        # 대상 경로: ~/workspace/deployed/{app_name}/current/
+        deploy_base = os.path.join(self.directory, 'deployed', app_name)
+        deploy_current = os.path.join(deploy_base, 'current')
+
+        try:
+            if os.path.exists(deploy_current):
+                shutil.rmtree(deploy_current)
+            os.makedirs(deploy_current, exist_ok=True)
+
+            skip_dirs = {'node_modules', '__pycache__', '.git', '.venv', 'venv', '.cache'}
+            for item in os.listdir(app_path):
+                if item in skip_dirs:
+                    continue
+                src = os.path.join(app_path, item)
+                dst = os.path.join(deploy_current, item)
+                if os.path.isdir(src):
+                    shutil.copytree(src, dst, ignore=shutil.ignore_patterns(*skip_dirs))
+                else:
+                    shutil.copy2(src, dst)
+
+            self._send_json(200, {"prepared": True, "name": app_name, "deploy_path": deploy_current})
+        except Exception as e:
+            self._send_json(500, {"error": f"코드 복사 실패: {str(e)}"})
 
     def _handle_apps_version_label(self, parsed):
         """POST /api/apps/versions/{app}/label — Update version label."""
@@ -2093,32 +2146,48 @@ function renderDeploySelected() {{
 }}
 
 function executeDeploy() {{
-  var visibility = document.querySelector('input[name="deployVisibility"]:checked').value;
   var t = document.getElementById('hubToast');
-  t.textContent = '\ubc30\ud3ec \uc911: ' + deployAppNameVal;
+  t.textContent = '\ubc30\ud3ec \uc900\ube44 \uc911: ' + deployAppNameVal;
   t.style.display = 'block';
-  apiFetch('/apps/deploy', {{
+
+  // 1단계: 앱 코드 복사 (fileserver)
+  localFetch('/api/apps/prepare-deploy', {{
     method: 'POST',
     headers: {{'Content-Type': 'application/json'}},
-    body: JSON.stringify({{
-      app_name: deployAppNameVal,
-      visibility: visibility,
-      app_port: 3000,
-      acl_usernames: visibility === 'company' ? [] : deploySelectedUsernames
-    }})
+    body: JSON.stringify({{name: deployAppNameVal, path: deployAppPathVal}})
+  }}).then(function(data) {{
+    if (!data.prepared) {{
+      t.textContent = '\ubc30\ud3ec \uc900\ube44 \uc2e4\ud328: ' + (data.error || '');
+      t.style.background = '#da3633';
+      setTimeout(function() {{ t.style.display = 'none'; t.style.background = ''; }}, 4000);
+      return Promise.reject('prepare failed');
+    }}
+    // 2단계: 플랫폼 배포 API 호출
+    t.textContent = '\ubc30\ud3ec \uc911: ' + deployAppNameVal;
+    var visibility = document.querySelector('input[name="deployVisibility"]:checked').value;
+    return apiFetch('/apps/deploy', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{
+        app_name: deployAppNameVal,
+        version: 'v-' + new Date().toISOString().slice(0,16).replace(/[-T:]/g, ''),
+        visibility: visibility,
+        app_port: 3000,
+        acl_usernames: visibility === 'company' ? [] : deploySelectedUsernames
+      }})
+    }});
   }}).then(function(data) {{
     closeDeployModal();
-    if (data.app_url) {{
-      t.textContent = '\ubc30\ud3ec \uc644\ub8cc! URL: ' + data.app_url;
-    }} else if (data.detail) {{
+    if (data && data.app_url) {{
+      t.textContent = '\ubc30\ud3ec \uc644\ub8cc! URL: https://claude.skons.net' + data.app_url;
+    }} else if (data && data.detail) {{
       t.textContent = '\ubc30\ud3ec \uc2e4\ud328: ' + data.detail;
       t.style.background = '#da3633';
-    }} else {{
-      t.textContent = '\ubc30\ud3ec \uc644\ub8cc!';
     }}
-    setTimeout(function() {{ t.style.display = 'none'; t.style.background = ''; }}, 4000);
+    setTimeout(function() {{ t.style.display = 'none'; t.style.background = ''; }}, 5000);
     loadMyApps();
   }}).catch(function(err) {{
+    if (err === 'prepare failed') return;
     t.textContent = '\ubc30\ud3ec \uc624\ub958: ' + (err.message || err);
     t.style.background = '#da3633';
     setTimeout(function() {{ t.style.display = 'none'; t.style.background = ''; }}, 5000);

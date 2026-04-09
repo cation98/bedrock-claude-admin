@@ -66,16 +66,15 @@ class AppDeployService:
     # ------------------------------------------------------------------ #
 
     @staticmethod
-    def _app_pod_name(username: str, app_name: str) -> str:
-        """앱 Pod 이름 생성. K8s 네이밍 규칙(소문자, 하이픈)에 맞춤."""
-        safe_user = username.lower().replace("_", "-")
+    def _app_pod_name(slug: str, app_name: str) -> str:
+        """앱 Pod 이름 생성. K8s 네이밍 규칙(소문자, 하이픈)에 맞춤. slug 기반."""
         safe_app = app_name.lower().replace("_", "-")
-        return f"app-{safe_user}-{safe_app}"
+        return f"app-{slug}-{safe_app}"
 
     @staticmethod
-    def _app_url(username: str, app_name: str) -> str:
-        """앱 접근 URL 경로 생성."""
-        return f"/apps/{username.lower()}/{app_name.lower()}/"
+    def _app_url(slug: str, app_name: str) -> str:
+        """앱 접근 URL 경로 생성. slug 기반 (사번 비노출)."""
+        return f"/apps/{slug}/{app_name.lower()}/"
 
     # ------------------------------------------------------------------ #
     #  환경변수 빌드
@@ -141,6 +140,7 @@ class AppDeployService:
         app_name: str,
         version: str,
         security_policy: dict | None,
+        app_port: int = 3000,
     ) -> None:
         """App Pod 생성.
 
@@ -202,7 +202,7 @@ class AppDeployService:
                     client.V1Container(
                         name="app",
                         image=APP_RUNTIME_IMAGE,
-                        ports=[client.V1ContainerPort(container_port=3000, name="http")],
+                        ports=[client.V1ContainerPort(container_port=app_port, name="http")],
                         env=self._build_app_env_vars(
                             username, app_name, version, security_policy,
                         ),
@@ -219,12 +219,12 @@ class AppDeployService:
                             limits={"cpu": "500m", "memory": "1Gi"},
                         ),
                         readiness_probe=client.V1Probe(
-                            http_get=client.V1HTTPGetAction(path="/", port=3000),
+                            http_get=client.V1HTTPGetAction(path="/", port=app_port),
                             initial_delay_seconds=5,
                             period_seconds=10,
                         ),
                         liveness_probe=client.V1Probe(
-                            http_get=client.V1HTTPGetAction(path="/", port=3000),
+                            http_get=client.V1HTTPGetAction(path="/", port=app_port),
                             initial_delay_seconds=10,
                             period_seconds=30,
                         ),
@@ -276,8 +276,8 @@ class AppDeployService:
             logger.error(f"Failed to create App Pod {pod_name}: {e}")
             raise AppDeployError(f"App Pod 생성 실패: {e.reason}")
 
-    def _create_app_service(self, pod_name: str, username: str, app_name: str) -> None:
-        """App Pod를 위한 K8s Service 생성 (port 3000)."""
+    def _create_app_service(self, pod_name: str, username: str, app_name: str, app_port: int = 3000) -> None:
+        """App Pod를 위한 K8s Service 생성."""
         svc = client.V1Service(
             metadata=client.V1ObjectMeta(
                 name=pod_name,
@@ -295,7 +295,7 @@ class AppDeployService:
                     "app-name": app_name.lower(),
                 },
                 ports=[
-                    client.V1ServicePort(name="http", port=3000, target_port=3000),
+                    client.V1ServicePort(name="http", port=app_port, target_port=app_port),
                 ],
             ),
         )
@@ -306,10 +306,10 @@ class AppDeployService:
             if e.status != 409:
                 logger.error(f"Failed to create App Service: {e}")
 
-    def _create_app_ingress(self, pod_name: str, username: str, app_name: str) -> None:
+    def _create_app_ingress(self, pod_name: str, slug: str, app_name: str, app_port: int = 3000) -> None:
         """App Pod를 위한 Ingress 생성 (auth-url ACL 검증 포함).
 
-        경로: /apps/{username}/{app_name}(/|$)(.*)
+        경로: /apps/{slug}/{app_name}(/|$)(.*)
         nginx auth-url: 매 요청마다 auth-gateway에 ACL 확인 위임.
         auth-response-headers: 인증된 사용자명을 앱에 전달.
         """
@@ -385,12 +385,12 @@ class AppDeployService:
                         http=client.V1HTTPIngressRuleValue(
                             paths=[
                                 client.V1HTTPIngressPath(
-                                    path=f"/apps/{username.lower()}/{app_name.lower()}(/|$)(.*)",
+                                    path=f"/apps/{slug}/{app_name.lower()}(/|$)(.*)",
                                     path_type="ImplementationSpecific",
                                     backend=client.V1IngressBackend(
                                         service=client.V1IngressServiceBackend(
                                             name=pod_name,
-                                            port=client.V1ServiceBackendPort(number=3000),
+                                            port=client.V1ServiceBackendPort(number=app_port),
                                         ),
                                     ),
                                 ),
@@ -481,8 +481,16 @@ class AppDeployService:
                 f"배포 권한이 없습니다. 관리자에게 can_deploy_apps 승인을 요청하세요."
             )
 
-        pod_name = self._app_pod_name(username, app_name)
-        app_url = self._app_url(username, app_name)
+        # slug 확인/생성 (사번 비노출 URL용)
+        slug = user.app_slug
+        if not slug:
+            from app.core.security import generate_app_slug
+            slug = generate_app_slug(username)
+            user.app_slug = slug
+            db.flush()
+
+        pod_name = self._app_pod_name(slug, app_name)
+        app_url = self._app_url(slug, app_name)
 
         # 2) 기존 배포가 running이면 K8s 리소스 교체 (재배포)
         existing = (
@@ -505,7 +513,7 @@ class AppDeployService:
         security_policy = user.security_policy
         self._create_app_pod(pod_name, username, app_name, version, security_policy)
         self._create_app_service(pod_name, username, app_name)
-        self._create_app_ingress(pod_name, username, app_name)
+        self._create_app_ingress(pod_name, slug, app_name)
 
         # 4) DB 배포 레코드 저장
         deployed_app = DeployedApp(
@@ -566,7 +574,10 @@ class AppDeployService:
         if not deployed:
             raise AppDeployError(f"실행 중인 앱을 찾을 수 없습니다: {app_name}")
 
-        pod_name = self._app_pod_name(username, app_name)
+        # slug 조회 (pod_name 생성에 필요)
+        user = db.query(User).filter(User.username == username).first()
+        slug = user.app_slug if user else username.lower()
+        pod_name = self._app_pod_name(slug, app_name)
 
         # 1) K8s 리소스 삭제
         self._delete_app_resources(pod_name)
@@ -652,7 +663,11 @@ class AppDeployService:
         if not deployed:
             raise AppDeployError(f"실행 중인 앱을 찾을 수 없습니다: {app_name}")
 
-        pod_name = self._app_pod_name(username, app_name)
+        # 사용자 조회 + slug 확인 (pod_name 생성에 필요)
+        user = db.query(User).filter(User.username == username).first()
+        slug = user.app_slug if user else username.lower()
+        security_policy = user.security_policy if user else None
+        pod_name = self._app_pod_name(slug, app_name)
 
         # Pod만 삭제 → restart_policy=Always이므로... 아니다,
         # restart_policy는 Pod 레벨이라 Pod 자체를 재생성해야 함.
@@ -665,10 +680,6 @@ class AppDeployService:
         except ApiException as e:
             if e.status != 404:
                 raise AppDeployError(f"App Pod 삭제 실패: {e.reason}")
-
-        # 사용자 보안 정책 조회 (DB 접근 자격증명 주입용)
-        user = db.query(User).filter(User.username == username).first()
-        security_policy = user.security_policy if user else None
 
         # Pod 재생성 (current symlink가 이미 롤백 버전을 가리킴)
         self._create_app_pod(pod_name, username, app_name, version, security_policy)

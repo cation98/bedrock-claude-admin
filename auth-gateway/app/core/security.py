@@ -19,6 +19,17 @@ security_scheme_optional = HTTPBearer(auto_error=False)
 logger = logging.getLogger(__name__)
 
 
+def generate_app_slug(username: str, attempt: int = 0) -> str:
+    """사번에서 8자리 해시 slug 생성 (URL/K8s 리소스명용). attempt로 충돌 회피.
+
+    사번(e.g. N1102359)을 SHA-256 해시하여 앞 8자를 반환한다.
+    URL에서 사번이 노출되지 않도록 비식별화하는 용도.
+    attempt > 0이면 입력에 attempt를 포함하여 다른 slug을 생성한다.
+    """
+    data = f"{username.lower()}:{attempt}" if attempt > 0 else username.lower()
+    return hashlib.sha256(data.encode()).hexdigest()[:8]
+
+
 def encode_password(password: str, salt: str) -> str:
     """SSO 비밀번호 인코딩 (O-Guard 패턴 재사용).
 

@@ -203,6 +203,11 @@ def _upsert_user(
         user.is_approved = True
         user.approved_at = datetime.now(timezone.utc)
 
+    # Auto-generate app_slug if missing (approved users only)
+    if user.is_approved and not user.app_slug:
+        from app.core.security import generate_app_slug
+        user.app_slug = generate_app_slug(user.username)
+
     db.commit()
     db.refresh(user)
     return user, is_new

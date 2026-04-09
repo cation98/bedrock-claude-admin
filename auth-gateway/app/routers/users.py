@@ -93,6 +93,11 @@ async def approve_user(
     user.pod_ttl = request.pod_ttl
     user.approved_at = datetime.now(timezone.utc)
 
+    # Auto-generate app_slug for URL privacy (사번 비식별화)
+    if not user.app_slug:
+        from app.core.security import generate_app_slug
+        user.app_slug = generate_app_slug(user.username)
+
     # Auto-fill phone number from phone_lookup if not already set
     if not user.phone_number:
         try:
@@ -318,6 +323,9 @@ async def add_member_directly(
         existing.is_approved = True
         existing.pod_ttl = req.pod_ttl
         existing.approved_at = datetime.now(timezone.utc)
+        if not existing.app_slug:
+            from app.core.security import generate_app_slug
+            existing.app_slug = generate_app_slug(existing.username)
         if req.phone_number:
             existing.phone_number = req.phone_number
         db.commit()
@@ -346,6 +354,8 @@ async def add_member_directly(
         except Exception as e:
             logger.warning(f"O-Guard profile fetch failed: {e}")
 
+    from app.core.security import generate_app_slug
+
     user = User(
         username=req.username.upper(),
         name=profile.get("first_name"),
@@ -357,6 +367,7 @@ async def add_member_directly(
         is_approved=True,
         pod_ttl=req.pod_ttl,
         approved_at=datetime.now(timezone.utc),
+        app_slug=generate_app_slug(req.username.upper()),
     )
     db.add(user)
     db.commit()
