@@ -151,7 +151,8 @@ async def stream_file(
         raise HTTPException(status_code=400, detail="Invalid file path")
 
     pod_ip = _get_pod_ip(username, settings.k8s_namespace)
-    download_url = f"http://{pod_ip}:8080/api/download?path={file_path}"
+    import urllib.parse
+    download_url = f"http://{pod_ip}:8080/api/download?path={urllib.parse.quote(file_path, safe='/')}"
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as http:
@@ -302,7 +303,8 @@ async def markdown_viewer(
         raise HTTPException(status_code=400, detail="Invalid file path")
 
     pod_ip = _get_pod_ip(username, settings.k8s_namespace)
-    download_url = f"http://{pod_ip}:8080/api/download?path={file_path}"
+    import urllib.parse
+    download_url = f"http://{pod_ip}:8080/api/download?path={urllib.parse.quote(file_path, safe='/')}"
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as http:
