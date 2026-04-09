@@ -2407,15 +2407,47 @@ function initFileExplorer() {{
     rowDblClick:function(e,row){{
       var d=row.getData();
       if(d.type==='dir') {{ loadDirectory(d.path); return; }}
-      var ext=getFileExt(d.name);
-      var username='{user_id}';
-      if(MARKDOWN_EXTENSIONS[ext]) window.open('/api/v1/viewers/markdown/'+encodeURIComponent(username)+'/'+encodeURIComponent(d.path),'_blank');
-      else if(OFFICE_EXTENSIONS[ext]) window.open('/api/v1/viewers/office/'+encodeURIComponent(username)+'/'+encodeURIComponent(d.path),'_blank');
-      else if(PREVIEW_EXTENSIONS[ext]) window.open('/api/v1/viewers/file/'+encodeURIComponent(username)+'/'+encodeURIComponent(d.path),'_blank');
+      openPreview(d);
     }},
     rowContext:function(e,row){{ e.preventDefault(); feContextTarget=row.getData(); row.select(); showContextMenu(e.pageX,e.pageY); }}
   }});
+
+  // DOM 레벨 이벤트 보강 — Tabulator 이벤트가 브라우저에서 동작하지 않는 경우 대비
+  var tableEl = document.getElementById('file-table');
+  if (tableEl) {{
+    tableEl.addEventListener('contextmenu', function(e) {{
+      var row = feTable.getRow(e.target.closest('.tabulator-row'));
+      if (row) {{
+        e.preventDefault();
+        e.stopPropagation();
+        feContextTarget = row.getData();
+        row.select();
+        showContextMenu(e.pageX, e.pageY);
+      }}
+    }});
+    tableEl.addEventListener('dblclick', function(e) {{
+      var row = feTable.getRow(e.target.closest('.tabulator-row'));
+      if (row) {{
+        var d = row.getData();
+        if (d.type === 'dir') {{ loadDirectory(d.path); return; }}
+        openPreview(d);
+      }}
+    }});
+  }}
+
   loadDirectory('');
+}}
+
+function openPreview(d) {{
+  var ext = getFileExt(d.name);
+  var username = '{user_id}';
+  if (MARKDOWN_EXTENSIONS[ext]) {{
+    window.open('/api/v1/viewers/markdown/' + encodeURIComponent(username) + '/' + encodeURIComponent(d.path), '_blank');
+  }} else if (OFFICE_EXTENSIONS[ext]) {{
+    window.open('/api/v1/viewers/office/' + encodeURIComponent(username) + '/' + encodeURIComponent(d.path), '_blank');
+  }} else if (PREVIEW_EXTENSIONS[ext]) {{
+    window.open('/api/v1/viewers/file/' + encodeURIComponent(username) + '/' + encodeURIComponent(d.path), '_blank');
+  }}
 }}
 
 function loadDirectory(path) {{
@@ -2523,14 +2555,8 @@ function getFileExt(name) {{
 function ctxPreview() {{
   if (!feContextTarget) return;
   var ext = getFileExt(feContextTarget.name);
-  var username = '{user_id}';
-  var path = feContextTarget.path;
-  if (MARKDOWN_EXTENSIONS[ext]) {{
-    window.open('/api/v1/viewers/markdown/' + encodeURIComponent(username) + '/' + encodeURIComponent(path), '_blank');
-  }} else if (OFFICE_EXTENSIONS[ext]) {{
-    window.open('/api/v1/viewers/office/' + encodeURIComponent(username) + '/' + encodeURIComponent(path), '_blank');
-  }} else if (PREVIEW_EXTENSIONS[ext]) {{
-    window.open('/api/v1/viewers/file/' + encodeURIComponent(username) + '/' + encodeURIComponent(path), '_blank');
+  if (MARKDOWN_EXTENSIONS[ext] || OFFICE_EXTENSIONS[ext] || PREVIEW_EXTENSIONS[ext]) {{
+    openPreview(feContextTarget);
   }} else {{
     alert('이 파일 형식은 미리보기를 지원하지 않습니다.');
   }}
