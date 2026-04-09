@@ -2762,14 +2762,34 @@ function stopAllApps() {{
 }}
 
 function startApp(path, type) {{
+  var t = document.getElementById('hubToast');
+  t.textContent = '앱 시작 중: ' + path.split('/').pop();
+  t.style.display = 'block';
   localFetch('/api/apps/start', {{
     method: 'POST',
     headers: {{'Content-Type': 'application/json'}},
     body: JSON.stringify({{path: path, type: type || 'node'}})
-  }}).then(function() {{
+  }}).then(function(data) {{
+    if (data.started) {{
+      var hostname = window.location.pathname.split('/')[2] || '';
+      var appUrl = '/app/' + hostname + '/';
+      if (data.port && data.port !== 3000) appUrl += '?_port=' + data.port;
+      t.textContent = '앱 시작됨 (포트 ' + data.port + ') — 새 탭에서 열기 중...';
+      setTimeout(function() {{
+        window.open(appUrl, '_blank');
+        t.style.display = 'none';
+      }}, 1500);
+    }} else {{
+      t.textContent = '시작 실패: ' + (data.error || '알 수 없는 오류');
+      setTimeout(function() {{ t.style.display = 'none'; }}, 3000);
+    }}
     loadMyApps();
     loadAppStatus();
-  }}).catch(function() {{}});
+  }}).catch(function(err) {{
+    t.textContent = '앱 시작 오류: ' + (err.message || err);
+    t.style.background = '#da3633';
+    setTimeout(function() {{ t.style.display = 'none'; t.style.background = ''; }}, 5000);
+  }});
 }}
 
 function stopApp(port) {{
