@@ -2778,13 +2778,13 @@ function startApp(path, type) {{
       setTimeout(function() {{
         window.open(appUrl, '_blank');
         t.style.display = 'none';
-      }}, 1500);
+        loadMyApps();
+        loadAppStatus();
+      }}, 2000);
     }} else {{
       t.textContent = '시작 실패: ' + (data.error || '알 수 없는 오류');
       setTimeout(function() {{ t.style.display = 'none'; }}, 3000);
     }}
-    loadMyApps();
-    loadAppStatus();
   }}).catch(function(err) {{
     t.textContent = '앱 시작 오류: ' + (err.message || err);
     t.style.background = '#da3633';
@@ -2793,15 +2793,19 @@ function startApp(path, type) {{
 }}
 
 function stopApp(port) {{
-  if (!confirm('포트 ' + port + ' 앱을 중지합니다.')) return;
+  var t = document.getElementById('hubToast');
+  t.textContent = '앱 종료 중 (포트 ' + port + ')...';
+  t.style.display = 'block';
   localFetch('/api/apps/stop', {{
     method: 'POST',
     headers: {{'Content-Type': 'application/json'}},
     body: JSON.stringify({{port: port}})
   }}).then(function() {{
+    t.textContent = '앱 종료됨 (포트 ' + port + ')';
+    setTimeout(function() {{ t.style.display = 'none'; }}, 2000);
     loadMyApps();
     loadAppStatus();
-  }}).catch(function() {{}});
+  }}).catch(function() {{ t.style.display = 'none'; }});
 }}
 
 function renameApp(oldName) {{
