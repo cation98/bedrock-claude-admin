@@ -317,8 +317,19 @@ async def _run_file_ttl_cleanup() -> None:
     """만료된 GovernedFile의 status를 'expired'로 업데이트하고 감사 로그를 기록한다.
 
     실제 파일 삭제는 Pod 에이전트에게 위임한다 (auth-gateway는 EFS에 직접 접근 불가).
+
+    Issue #10: Redis 분산 락으로 멀티 레플리카 환경에서도 단일 실행을 보장.
+    Redis 없으면 인메모리 fallback으로 자동 전환.
     """
-    if not acquire_scheduler_lock("file_ttl_cleanup", 300):
+    from app.core.redis_client import (
+        acquire_scheduler_lock_redis,
+        get_owner_id,
+        release_scheduler_lock_redis,
+    )
+
+    owner_id = get_owner_id()
+
+    if not acquire_scheduler_lock_redis("file_ttl_cleanup", owner_id, 300):
         logger.debug("file_ttl_cleanup 락 획득 실패 — 이미 실행 중")
         return
 
@@ -375,4 +386,5 @@ async def _run_file_ttl_cleanup() -> None:
         db.rollback()
     finally:
         db.close()
-        release_scheduler_lock("file_ttl_cleanup")
+        # Issue #10: Lua 스크립트로 소유자 확인 후 해제 — 다른 레플리카의 락을 삭제하지 않음
+        release_scheduler_lock_redis("file_ttl_cleanup", owner_id)
