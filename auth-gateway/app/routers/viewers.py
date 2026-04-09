@@ -9,15 +9,37 @@ import logging
 import os
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from kubernetes import client
 
 from app.core.config import Settings, get_settings
-from app.core.security import get_current_user
+from app.core.security import decode_token
 
 router = APIRouter(prefix="/api/v1/viewers", tags=["viewers"])
 logger = logging.getLogger(__name__)
+
+
+async def _get_viewer_user(request: Request, settings: Settings = Depends(get_settings)) -> dict:
+    """뷰어 전용 인증 — Bearer 토큰 + claude_token 쿠키 둘 다 지원.
+
+    window.open()으로 열리는 뷰어는 Authorization 헤더가 없으므로 쿠키 필수.
+    """
+    # 1. Authorization Bearer 토큰
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        payload = decode_token(auth_header.split(" ", 1)[1], settings)
+        if payload:
+            return payload
+
+    # 2. claude_token 쿠키
+    token = request.cookies.get("claude_token", "")
+    if token:
+        payload = decode_token(token, settings)
+        if payload:
+            return payload
+
+    raise HTTPException(status_code=401, detail="Not authenticated")
 
 MIME_MAP = {
     ".pdf": "application/pdf",
@@ -52,7 +74,7 @@ def _get_pod_ip(username: str, namespace: str = "claude-sessions") -> str:
 async def stream_file(
     username: str,
     file_path: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(_get_viewer_user),
     settings: Settings = Depends(get_settings),
 ):
     """Pod fileserver에서 파일을 프록시하여 인라인 스트리밍.
@@ -99,7 +121,7 @@ async def stream_file(
 async def office_viewer(
     username: str,
     file_path: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(_get_viewer_user),
     settings: Settings = Depends(get_settings),
 ):
     """OnlyOffice DocumentServer iframe 뷰어 HTML 반환."""
@@ -170,7 +192,7 @@ new DocsAPI.DocEditor("placeholder", config);
 async def markdown_viewer(
     username: str,
     file_path: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(_get_viewer_user),
     settings: Settings = Depends(get_settings),
 ):
     """Markdown 파일을 HTML로 렌더링하여 표시."""
