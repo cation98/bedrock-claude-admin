@@ -1,4 +1,5 @@
 """Admin-only API: token usage analytics + infrastructure status + token usage daily tracking."""
+import base64
 import logging
 import re
 from datetime import datetime, timezone, date as date_type, timedelta
@@ -2004,3 +2005,108 @@ async def get_proxy_logs(
             for log in logs
         ],
     }
+
+
+# ==================== Admin Broadcast (MMS + WebSocket) ====================
+
+
+class BroadcastRequest(BaseModel):
+    message: str
+    subject: str = "[Otto AI] 공지"
+    targets: list[str] = []  # empty = all active users, or list of usernames
+    channels: list[str] = ["mms"]  # "mms", "websocket", or both
+
+
+class BroadcastResponse(BaseModel):
+    mms_sent: int = 0
+    mms_failed: int = 0
+    ws_sent: int = 0
+    targets: list[str] = []
+
+
+@router.post("/broadcast", response_model=BroadcastResponse)
+async def admin_broadcast(
+    request: BroadcastRequest,
+    _admin: dict = Depends(_require_admin),
+    settings: Settings = Depends(get_settings),
+    db: Session = Depends(get_db),
+):
+    """관리자 공지 발송 (MMS + WebSocket).
+
+    targets가 비어있으면 현재 활성 세션의 모든 사용자에게 발송.
+    """
+    from app.models.session import TerminalSession
+    from app.models.user import User
+
+    # Determine target users
+    if request.targets:
+        users = db.query(User).filter(User.username.in_([u.upper() for u in request.targets])).all()
+    else:
+        # All users with active sessions
+        active_sessions = db.query(TerminalSession).filter(TerminalSession.pod_status == "running").all()
+        active_usernames = [s.username for s in active_sessions]
+        users = db.query(User).filter(User.username.in_(active_usernames)).all() if active_usernames else []
+
+    result = BroadcastResponse(targets=[u.username for u in users])
+
+    # MMS channel
+    if "mms" in request.channels:
+        sms_url = settings.sms_gateway_url
+        sms_auth = settings.sms_auth_string
+        if sms_url and sms_auth:
+            pw_base64 = base64.b64encode(sms_auth.encode()).decode()
+            import httpx
+            async with httpx.AsyncClient(timeout=10.0) as http:
+                for user in users:
+                    phone = user.phone_number
+                    if not phone or phone == "None":
+                        continue
+                    # Normalize phone number
+                    cleaned = re.sub(r"[\s\-\.]", "", phone)
+                    if len(cleaned) == 11:
+                        formatted = f"{cleaned[:3]}-{cleaned[3:7]}-{cleaned[7:]}"
+                    else:
+                        formatted = phone
+
+                    payload = {
+                        "TranType": "6",  # MMS (no character limit)
+                        "TranPhone": formatted,
+                        "TranCallBack": settings.sms_callback_number,
+                        "TranMsg": f"{request.subject}\n\n{request.message}",
+                        "SysPw": pw_base64,
+                    }
+                    try:
+                        resp = await http.post(sms_url, json=payload)
+                        data = resp.json()
+                        if data.get("d", {}).get("Result", {}).get("ResultCode") == "1":
+                            result.mms_sent += 1
+                        else:
+                            result.mms_failed += 1
+                    except Exception:
+                        result.mms_failed += 1
+
+    # WebSocket channel — push message to Pod's ttyd terminals via /dev/pts
+    if "websocket" in request.channels:
+        v1 = client.CoreV1Api()
+        namespace = settings.k8s_namespace
+        for user in users:
+            pod_name = f"claude-terminal-{user.username.lower()}"
+            try:
+                msg = "\\n  \\U0001F4E2 [관리자 공지] {subj}\\n  {body}\\n".format(
+                    subj=request.subject, body=request.message,
+                )
+                stream(
+                    v1.connect_get_namespaced_pod_exec,
+                    pod_name,
+                    namespace,
+                    container="terminal",
+                    command=["bash", "-c", f'for pts in /dev/pts/[0-9]*; do echo -e "{msg}" > "$pts" 2>/dev/null; done'],
+                    stderr=True,
+                    stdout=True,
+                )
+                result.ws_sent += 1
+            except Exception:
+                pass
+
+    logger.info(f"Admin broadcast by {_admin['sub']}: mms={result.mms_sent}, ws={result.ws_sent}, targets={len(users)}")
+    return result

@@ -17,6 +17,7 @@ const NAV_ITEMS = [
   { href: "/infra", label: "인프라", icon: "⚙" },
   { href: "/network", label: "네트워크", icon: "🌐" },
   { href: "/surveys", label: "현장 수집", icon: "📝" },
+  { href: "/broadcast", label: "공지 발송", icon: "📢" },
 ];
 
 export default function Sidebar() {

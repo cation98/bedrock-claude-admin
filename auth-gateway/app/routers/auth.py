@@ -14,7 +14,7 @@ from typing import Union
 import httpx
 import psycopg2
 import psycopg2.extras
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
@@ -221,8 +221,20 @@ def _check_approval(user: User) -> None:
         )
 
 
-def _issue_jwt(user: User, settings: Settings) -> LoginResponse:
-    """JWT 토큰 발급 + LoginResponse 반환."""
+def _issue_jwt(user: User, settings: Settings, request: Request | None = None) -> LoginResponse:
+    """JWT 토큰 발급 + LoginResponse 반환.
+
+    Admin dashboard(claude-admin.skons.net)에서 요청 시 admin role 필수.
+    """
+    # Admin dashboard Origin 체크: admin이 아니면 로그인 거부
+    if request:
+        origin = request.headers.get("Origin", "") or request.headers.get("Referer", "")
+        if "claude-admin" in origin and user.role != "admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="관리자 계정만 Admin Dashboard에 로그인할 수 있습니다.",
+            )
+
     token_data = {
         "sub": user.username,
         "user_id": user.id,
@@ -244,6 +256,7 @@ def _issue_jwt(user: User, settings: Settings) -> LoginResponse:
 @router.post("/login", response_model=Union[LoginStep1Response, LoginResponse])
 async def login(
     request: LoginRequest,
+    http_request: Request,
     settings: Settings = Depends(get_settings),
     db: Session = Depends(get_db),
 ):
@@ -263,18 +276,29 @@ async def login(
             log_audit(db, user.username, AuditAction.LOGIN_BYPASS, detail="test account SSO+2FA skip")
             db.commit()
             logger.info(f"Test account login bypass: {user.username}")
-            return _issue_jwt(user, settings)
+            return _issue_jwt(user, settings, http_request)
+
+    # ── Admin 계정 SSO 매핑 ──
+    # ADMIN001 → N1102359 SSO 인증, JWT는 ADMIN001로 발급
+    ADMIN_SSO_MAP = {"ADMIN001": "N1102359"}
+    login_username = request.username.upper()
+    sso_username = ADMIN_SSO_MAP.get(login_username, request.username)
 
     sso_service = SSOService(settings)
     try:
         sso_user = await sso_service.authenticate(
-            request.username, request.password
+            sso_username, request.password
         )
     except SSOAuthError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"SSO authentication failed: {e.message}",
         )
+
+    # Admin 매핑인 경우 SSO 결과를 admin username으로 덮어쓰기
+    if login_username in ADMIN_SSO_MAP:
+        sso_user["username"] = login_username
+        logger.info(f"Admin SSO mapping: {login_username} → {sso_username}")
 
     # ── O-Guard 프로필 조회 + DB 등록/업데이트 ──
     profile = _fetch_oguard_profile(sso_user["username"], settings)
@@ -294,7 +318,7 @@ async def login(
             f"Direct JWT issued (2fa_enabled={settings.two_factor_enabled}): "
             f"{user.username}"
         )
-        return _issue_jwt(user, settings)
+        return _issue_jwt(user, settings, http_request)
 
     # ── 테스트 계정 2FA 우회 ──
     # SECURITY: allow_test_users=True (기본값 False)일 때만 활성화됩니다.
@@ -303,7 +327,7 @@ async def login(
         log_audit(db, user.username, AuditAction.LOGIN_BYPASS, detail="test account 2FA skip")
         db.commit()
         logger.info(f"Test account 2FA bypass: {user.username}")
-        return _issue_jwt(user, settings)
+        return _issue_jwt(user, settings, http_request)
 
     # ── 2FA 흐름 ──
 
@@ -369,6 +393,7 @@ async def login(
 @router.post("/verify-2fa", response_model=LoginResponse)
 async def verify_2fa(
     request: Verify2faRequest,
+    http_request: Request,
     settings: Settings = Depends(get_settings),
     db: Session = Depends(get_db),
 ):
@@ -427,7 +452,7 @@ async def verify_2fa(
     db.commit()
 
     logger.info(f"2FA verified, JWT issued: {username}")
-    return _issue_jwt(user, settings)
+    return _issue_jwt(user, settings, http_request)
 
 
 @router.get("/me", response_model=UserInfo)

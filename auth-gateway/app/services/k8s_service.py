@@ -569,13 +569,20 @@ class K8sService:
             if e.status != 409:
                 logger.error(f"Failed to create ingress: {e}")
 
-        # 2) 허브 포탈 Ingress (rewrite → /portal)
+        # 2) 허브 포탈 Ingress (auth-url 보호: 본인 + admin만)
+        # /hub/{pod_name}/ → /portal (Hub 페이지)
+        # /hub/{pod_name}/static/* → /static/* (Tabulator 등 정적 파일)
         hub_ingress = client.V1Ingress(
             metadata=client.V1ObjectMeta(
                 name=f"{pod_name}-hub",
                 namespace=self.namespace,
                 annotations={
-                    "nginx.ingress.kubernetes.io/rewrite-target": "/portal",
+                    "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
+                    "nginx.ingress.kubernetes.io/auth-url": (
+                        "http://auth-gateway.platform.svc.cluster.local"
+                        "/api/v1/files/files-auth-check"
+                    ),
+                    "nginx.ingress.kubernetes.io/auth-response-headers": "X-Auth-Username",
                 },
             ),
             spec=client.V1IngressSpec(
@@ -586,8 +593,8 @@ class K8sService:
                         http=client.V1HTTPIngressRuleValue(
                             paths=[
                                 client.V1HTTPIngressPath(
-                                    path=f"/hub/{pod_name}",
-                                    path_type="Prefix",
+                                    path=f"/hub/{pod_name}(/|$)(.*)",
+                                    path_type="ImplementationSpecific",
                                     backend=client.V1IngressBackend(
                                         service=client.V1IngressServiceBackend(
                                             name=pod_name,
@@ -617,7 +624,7 @@ class K8sService:
                     "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
                     "nginx.ingress.kubernetes.io/proxy-body-size": "100m",
                     "nginx.ingress.kubernetes.io/auth-url": (
-                        "http://auth-gateway.platform.svc.cluster.local:8000"
+                        "http://auth-gateway.platform.svc.cluster.local"
                         "/api/v1/files/files-auth-check"
                     ),
                     "nginx.ingress.kubernetes.io/auth-response-headers": "X-Auth-Username",

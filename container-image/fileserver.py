@@ -180,6 +180,10 @@ class FileServerHandler(SimpleHTTPRequestHandler):
     def do_GET(self):
         """디렉토리 리스팅 시 업로드 UI 포함, /portal은 허브 페이지, /api/files는 JSON."""
         parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == "/" or parsed.path == "":
+            # Hub Ingress rewrite: /hub/{pod_name}/ → / → portal로 리다이렉트
+            self._send_portal_page()
+            return
         if parsed.path == "/portal" or parsed.path == "/portal/":
             self._send_portal_page()
             return
@@ -928,8 +932,8 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Claude Code — {user_name}</title>
-<link rel="stylesheet" href="/files/{pod_name}/static/tabulator_midnight.min.css">
-<script src="/files/{pod_name}/static/tabulator.min.js"></script>
+<link rel="stylesheet" href="/hub/{pod_name}/static/tabulator_midnight.min.css">
+<script src="/hub/{pod_name}/static/tabulator.min.js"></script>
 <style>
   * {{ margin: 0; padding: 0; box-sizing: border-box; }}
   body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;

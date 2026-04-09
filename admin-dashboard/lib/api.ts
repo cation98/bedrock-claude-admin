@@ -1025,3 +1025,26 @@ export function getProxyLogs(params?: { skip?: number; limit?: number; user_id?:
   const q = searchParams.toString();
   return request<ProxyLogsResponse>(`/api/v1/admin/proxy-logs${q ? "?" + q : ""}`);
 }
+
+// ---------- Broadcast ----------
+
+export interface BroadcastRequest {
+  message: string;
+  subject?: string;
+  targets?: string[];
+  channels?: string[];
+}
+
+export interface BroadcastResponse {
+  mms_sent: number;
+  mms_failed: number;
+  ws_sent: number;
+  targets: string[];
+}
+
+export function sendBroadcast(data: BroadcastRequest): Promise<BroadcastResponse> {
+  return request<BroadcastResponse>("/api/v1/admin/broadcast", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
