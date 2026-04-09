@@ -155,13 +155,16 @@ async def stream_file(
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as http:
-            # NFC→NFD 변환: macOS/EFS에서 한글 파일명이 NFD로 저장됨
-            import unicodedata
-            path_nfd = unicodedata.normalize("NFD", file_path)
-            resp = await http.get(download_url, params={"path": path_nfd})
+            import unicodedata, urllib.parse
+            # 공백은 %20으로 인코딩 (+ 아님 — SimpleHTTPRequestHandler 호환)
+            encoded = urllib.parse.quote(file_path, safe="/")
+            resp = await http.get(f"{download_url}?path={encoded}")
             if resp.status_code == 404:
-                # NFD 실패 시 NFC로 재시도
-                resp = await http.get(download_url, params={"path": file_path})
+                # NFC/NFD 변환 재시도
+                alt_form = "NFD" if file_path == unicodedata.normalize("NFC", file_path) else "NFC"
+                alt_path = unicodedata.normalize(alt_form, file_path)
+                alt_encoded = urllib.parse.quote(alt_path, safe="/")
+                resp = await http.get(f"{download_url}?path={alt_encoded}")
             if resp.status_code != 200:
                 raise HTTPException(status_code=resp.status_code, detail="File not accessible")
 
@@ -312,13 +315,16 @@ async def markdown_viewer(
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as http:
-            # NFC→NFD 변환: macOS/EFS에서 한글 파일명이 NFD로 저장됨
-            import unicodedata
-            path_nfd = unicodedata.normalize("NFD", file_path)
-            resp = await http.get(download_url, params={"path": path_nfd})
+            import unicodedata, urllib.parse
+            # 공백은 %20으로 인코딩 (+ 아님 — SimpleHTTPRequestHandler 호환)
+            encoded = urllib.parse.quote(file_path, safe="/")
+            resp = await http.get(f"{download_url}?path={encoded}")
             if resp.status_code == 404:
-                # NFD 실패 시 NFC로 재시도
-                resp = await http.get(download_url, params={"path": file_path})
+                # NFC/NFD 변환 재시도
+                alt_form = "NFD" if file_path == unicodedata.normalize("NFC", file_path) else "NFC"
+                alt_path = unicodedata.normalize(alt_form, file_path)
+                alt_encoded = urllib.parse.quote(alt_path, safe="/")
+                resp = await http.get(f"{download_url}?path={alt_encoded}")
             if resp.status_code != 200:
                 raise HTTPException(status_code=resp.status_code, detail="File not accessible")
 
