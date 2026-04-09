@@ -1529,6 +1529,7 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
 
 <!-- 파일 탐색기 우클릭 메뉴 -->
 <div class="fe-context-menu" id="fe-context-menu">
+  <div class="ctx-item" onclick="ctxPreview()"><span class="ctx-icon">&#128065;</span> 미리보기</div>
   <div class="ctx-item" onclick="ctxOpen()"><span class="ctx-icon">&#128194;</span> 열기</div>
   <div class="ctx-item" onclick="ctxDownload()"><span class="ctx-icon">&#128190;</span> 다운로드</div>
   <div class="ctx-sep"></div>
@@ -2399,7 +2400,14 @@ function initFileExplorer() {{
          }}
       }}
     ],
-    rowDblClick:function(e,row){{ var d=row.getData(); if(d.type==='dir') loadDirectory(d.path); }},
+    rowDblClick:function(e,row){{
+      var d=row.getData();
+      if(d.type==='dir') {{ loadDirectory(d.path); return; }}
+      var ext=getFileExt(d.name);
+      var username='{user_id}';
+      if(OFFICE_EXTENSIONS[ext]) window.open('/api/v1/viewers/office/'+encodeURIComponent(username)+'/'+encodeURIComponent(d.path),'_blank');
+      else if(PREVIEW_EXTENSIONS[ext]) window.open('/api/v1/viewers/file/'+encodeURIComponent(username)+'/'+encodeURIComponent(d.path),'_blank');
+    }},
     rowContext:function(e,row){{ e.preventDefault(); feContextTarget=row.getData(); row.select(); showContextMenu(e.pageX,e.pageY); }}
   }});
   loadDirectory('');
@@ -2498,6 +2506,29 @@ function hideContextMenu() {{
 }}
 document.addEventListener('click', function(){{ hideContextMenu(); }});
 document.addEventListener('keydown', function(e){{ if(e.key==='Escape') hideContextMenu(); }});
+var PREVIEW_EXTENSIONS = {{'pdf':1,'png':1,'jpg':1,'jpeg':1,'gif':1,'svg':1,'txt':1,'md':1}};
+var OFFICE_EXTENSIONS = {{'xlsx':1,'xls':1,'csv':1,'docx':1,'doc':1,'pptx':1,'ppt':1}};
+
+function getFileExt(name) {{
+  var parts = name.split('.');
+  return parts.length > 1 ? parts.pop().toLowerCase() : '';
+}}
+
+function ctxPreview() {{
+  if (!feContextTarget) return;
+  var ext = getFileExt(feContextTarget.name);
+  var username = '{user_id}';
+  var path = feContextTarget.path;
+  if (OFFICE_EXTENSIONS[ext]) {{
+    window.open('/api/v1/viewers/office/' + encodeURIComponent(username) + '/' + encodeURIComponent(path), '_blank');
+  }} else if (PREVIEW_EXTENSIONS[ext]) {{
+    window.open('/api/v1/viewers/file/' + encodeURIComponent(username) + '/' + encodeURIComponent(path), '_blank');
+  }} else {{
+    alert('이 파일 형식은 미리보기를 지원하지 않습니다.');
+  }}
+  hideContextMenu();
+}}
+
 function ctxOpen() {{
   if(!feContextTarget) return;
   if(feContextTarget.type==='dir') loadDirectory(feContextTarget.path);

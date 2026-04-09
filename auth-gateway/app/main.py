@@ -31,6 +31,7 @@ from app.models.file_audit import FileAuditLog  # noqa: F401 — create_all이 f
 from app.routers import admin, apps, auth, bots, file_share, sessions, users, sms, skills, telegram, security, scheduling, infra_policy, surveys, app_proxy, portal
 from app.routers.file_governance import router as governance_router
 from app.routers.secure_files import router as secure_files_router
+from app.routers.viewers import router as viewers_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -316,6 +317,7 @@ app.include_router(surveys.router)
 app.include_router(portal.router)
 app.include_router(governance_router)
 app.include_router(secure_files_router)
+app.include_router(viewers_router)
 # app_proxy는 catch-all 경로이므로 반드시 마지막에 등록
 app.include_router(app_proxy.router)
 
