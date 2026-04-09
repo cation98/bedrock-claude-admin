@@ -445,21 +445,31 @@ class FileServerHandler(SimpleHTTPRequestHandler):
     def _kill_port(port):
         """포트를 사용하는 프로세스를 /proc에서 찾아서 종료."""
         import signal
+        # 1단계: /proc/net/tcp에서 포트의 소켓 inode 찾기
+        target_inode = None
+        port_hex = f':{port:04X}'
+        try:
+            with open('/proc/net/tcp') as f:
+                for line in f:
+                    parts = line.strip().split()
+                    if len(parts) > 9 and parts[1].endswith(port_hex) and parts[3] == '0A':
+                        target_inode = parts[9]
+                        break
+        except Exception:
+            return False
+        if not target_inode:
+            return False
+        # 2단계: 해당 inode를 가진 PID 찾기
+        socket_ref = f'socket:[{target_inode}]'
         for pid_dir in os.listdir('/proc'):
             if not pid_dir.isdigit():
                 continue
             try:
-                fd_dir = f'/proc/{pid_dir}/fd'
-                for fd in os.listdir(fd_dir):
+                for fd in os.listdir(f'/proc/{pid_dir}/fd'):
                     try:
-                        link = os.readlink(f'{fd_dir}/{fd}')
-                        if 'socket' in link:
-                            with open(f'/proc/{pid_dir}/net/tcp') as f:
-                                for line in f:
-                                    parts = line.strip().split()
-                                    if len(parts) > 1 and parts[1].endswith(f':{port:04X}') and parts[3] == '0A':
-                                        os.kill(int(pid_dir), signal.SIGTERM)
-                                        return True
+                        if os.readlink(f'/proc/{pid_dir}/fd/{fd}') == socket_ref:
+                            os.kill(int(pid_dir), signal.SIGTERM)
+                            return True
                     except Exception:
                         continue
             except Exception:
