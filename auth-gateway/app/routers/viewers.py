@@ -5,16 +5,22 @@ Endpoints:
   GET /api/v1/viewers/office/{username}/{file_path:path} -- OnlyOffice iframe 뷰어 HTML
 """
 
+import hashlib
 import logging
 import os
+import secrets
+import time
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from kubernetes import client
 
 from app.core.config import Settings, get_settings
 from app.core.security import decode_token
+
+# 임시 파일 토큰 저장 (메모리 — TTL 5분)
+_file_tokens: dict[str, dict] = {}  # token → {"username", "file_path", "expires"}
 
 router = APIRouter(prefix="/api/v1/viewers", tags=["viewers"])
 logger = logging.getLogger(__name__)
@@ -40,6 +46,25 @@ async def _get_viewer_user(request: Request, settings: Settings = Depends(get_se
             return payload
 
     raise HTTPException(status_code=401, detail="Not authenticated")
+
+def _create_file_token(username: str, file_path: str, ttl_seconds: int = 300) -> str:
+    """OnlyOffice 서버용 임시 파일 접근 토큰 생성 (5분 TTL)."""
+    token = secrets.token_urlsafe(32)
+    _file_tokens[token] = {
+        "username": username,
+        "file_path": file_path,
+        "expires": time.time() + ttl_seconds,
+    }
+    return token
+
+
+def _cleanup_expired_tokens():
+    """만료된 토큰 정리."""
+    now = time.time()
+    expired = [k for k, v in _file_tokens.items() if v["expires"] < now]
+    for k in expired:
+        _file_tokens.pop(k, None)
+
 
 MIME_MAP = {
     ".pdf": "application/pdf",
@@ -74,17 +99,31 @@ def _get_pod_ip(username: str, namespace: str = "claude-sessions") -> str:
 async def stream_file(
     username: str,
     file_path: str,
-    current_user: dict = Depends(_get_viewer_user),
+    request: Request,
+    token: str = Query(default=None),
     settings: Settings = Depends(get_settings),
 ):
     """Pod fileserver에서 파일을 프록시하여 인라인 스트리밍.
 
-    접근 제어: 본인 Pod 또는 admin만 허용.
+    접근 제어:
+    - 일반: Bearer/cookie 인증 (본인 Pod 또는 admin)
+    - OnlyOffice: ?token= 임시 토큰 (서버 측 파일 다운로드용, 5분 TTL)
     """
-    requesting = current_user.get("sub", "")
-    is_admin = current_user.get("role") == "admin"
-    if not is_admin and requesting.upper() != username.upper():
-        raise HTTPException(status_code=403, detail="접근 권한이 없습니다")
+    # 임시 토큰 인증 (OnlyOffice 서버 → 파일 다운로드용)
+    if token:
+        _cleanup_expired_tokens()
+        token_data = _file_tokens.pop(token, None)
+        if not token_data:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        if token_data["username"].upper() != username.upper() or token_data["file_path"] != file_path:
+            raise HTTPException(status_code=403, detail="Token mismatch")
+    else:
+        # 일반 인증
+        current_user = await _get_viewer_user(request, settings)
+        requesting = current_user.get("sub", "")
+        is_admin = current_user.get("role") == "admin"
+        if not is_admin and requesting.upper() != username.upper():
+            raise HTTPException(status_code=403, detail="접근 권한이 없습니다")
 
     normalized = os.path.normpath(file_path)
     if ".." in normalized or normalized.startswith("/"):
@@ -143,7 +182,9 @@ async def office_viewer(
     doc_type = "cell" if ext in {".xlsx", ".xls", ".csv", ".ods"} else \
                "slide" if ext in {".pptx", ".ppt", ".odp"} else "word"
 
-    file_url = f"https://claude.skons.net/api/v1/viewers/file/{username}/{file_path}"
+    # OnlyOffice 서버가 파일을 다운로드할 수 있도록 임시 토큰 발급
+    file_token = _create_file_token(username, file_path)
+    file_url = f"https://claude.skons.net/api/v1/viewers/file/{username}/{file_path}?token={file_token}"
     onlyoffice_url = "https://claude.skons.net/onlyoffice"
 
     html = f"""<!DOCTYPE html>
