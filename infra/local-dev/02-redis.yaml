@@ -1,0 +1,40 @@
+# 로컬 Redis — ElastiCache 대체
+# 세션 캐시, 토큰 저장 등에 사용
+# 프로덕션에서는 AWS ElastiCache(Redis)를 사용하지만
+# 로컬 개발에서는 단일 Redis Pod으로 대체
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+---
+# Redis Service — auth-gateway에서 redis.platform.svc.cluster.local:6379 로 접근
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: platform
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379

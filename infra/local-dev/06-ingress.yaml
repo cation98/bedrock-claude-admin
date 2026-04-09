@@ -1,0 +1,110 @@
+# 로컬 Ingress — AWS ALB Ingress 대체
+#
+# Docker Desktop에서는 Nginx Ingress Controller 사용
+# 사전 설치 필요:
+#   kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.0/deploy/static/provider/cloud/deploy.yaml
+#
+# 설치 후 http://localhost 로 접근 가능
+# 프로덕션에서는 AWS ALB Ingress Controller가 이 역할을 수행
+#
+# 라우팅 구조:
+#   /api/v1/*       → auth-gateway (FastAPI 백엔드)
+#   /hub/*          → 사용자 Pod의 파일 브라우저 (8080)
+#   /files/*        → 사용자 Pod의 파일 서버 (8080)
+#   /terminal/*     → 사용자 Pod의 웹 터미널 ttyd (7681)
+#   /onlyoffice/*   → OnlyOffice Document Server (80)
+#   /               → auth-gateway (로그인 페이지)
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: local-ingress
+  namespace: platform
+  annotations:
+    # Nginx Ingress Controller 사용 명시
+    kubernetes.io/ingress.class: nginx
+    # WebSocket 지원 — ttyd 웹 터미널에 필수
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    # 요청 본문 크기 제한 — 파일 업로드 허용
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          # API 라우팅 — auth-gateway의 FastAPI 엔드포인트
+          - path: /api/v1
+            pathType: Prefix
+            backend:
+              service:
+                name: auth-gateway
+                port:
+                  number: 80
+          # 기본 경로 — 로그인 페이지 (auth-gateway에서 서빙)
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: auth-gateway
+                port:
+                  number: 80
+---
+# 테스트 사용자 Pod 라우팅 — claude-sessions 네임스페이스
+# 프로덕션에서는 auth-gateway가 사용자 로그인 시 동적으로 Ingress를 생성하지만
+# 로컬 개발에서는 테스트용 Pod에 대한 고정 Ingress를 미리 생성
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: test-user-ingress
+  namespace: claude-sessions
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    # URL rewrite — /hub/claude-terminal-test001/xxx → /xxx
+    # regex 캡처 그룹을 사용하여 prefix를 제거
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    # WebSocket 업그레이드 — ttyd 터미널 연결에 필수
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection "upgrade";
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          # 파일 브라우저 (Hub UI) — fileserver 8080 포트
+          - path: /hub/claude-terminal-test001(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: claude-terminal-test001
+                port:
+                  number: 8080
+          # 파일 서버 — fileserver 8080 포트 (직접 파일 접근)
+          - path: /files/claude-terminal-test001(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: claude-terminal-test001
+                port:
+                  number: 8080
+          # 웹 터미널 (ttyd) — 7681 포트, WebSocket 사용
+          - path: /terminal/claude-terminal-test001(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: claude-terminal-test001
+                port:
+                  number: 7681
+          # OnlyOffice Document Server — 문서 편집기
+          - path: /onlyoffice(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: onlyoffice
+                port:
+                  number: 80

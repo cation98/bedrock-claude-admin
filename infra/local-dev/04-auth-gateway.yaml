@@ -1,4 +1,13 @@
-# 로컬 auth-gateway — EKS와 동일 구조, 로컬 DB 사용
+# 로컬 auth-gateway — EKS와 동일 구조, 로컬 DB/Redis 사용
+#
+# 프로덕션과의 차이:
+#   - imagePullPolicy: Never (로컬 Docker 이미지 사용, ECR 불필요)
+#   - ALLOW_TEST_USERS: true (SSO 없이 테스트 로그인 가능)
+#   - REDIS_URL: 로컬 Redis Pod (ElastiCache 대체)
+#   - AWS STS/IRSA 관련 설정 없음 (로컬에서는 AWS 자격증명 별도 관리)
+#
+# 이미지 빌드:
+#   docker build -t bedrock-claude/auth-gateway:local auth-gateway/
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -17,11 +26,13 @@ spec:
       serviceAccountName: platform-admin-sa
       containers:
         - name: auth-gateway
+          # 로컬 빌드 이미지 — ECR 대신 Docker Desktop 로컬 레지스트리 사용
           image: bedrock-claude/auth-gateway:local
           imagePullPolicy: Never
           ports:
             - containerPort: 8000
           env:
+            # === Secret에서 로드하는 환경변수 ===
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -32,6 +43,19 @@ spec:
                 secretKeyRef:
                   name: auth-gateway-secrets
                   key: JWT_SECRET_KEY
+            # Redis — 세션 캐시, 토큰 저장
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-secrets
+                  key: REDIS_URL
+            # 테스트 사용자 허용 — SSO 우회하여 로컬 테스트 가능
+            - name: ALLOW_TEST_USERS
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-secrets
+                  key: ALLOW_TEST_USERS
+            # SSO 인증 정보 — 로컬에서는 placeholder (ALLOW_TEST_USERS로 우회)
             - name: SSO_AUTH_URL
               valueFrom:
                 secretKeyRef:
@@ -57,22 +81,30 @@ spec:
                 secretKeyRef:
                   name: auth-gateway-secrets
                   key: PW_ENCODING_SALT
+            # === 직접 설정하는 환경변수 ===
+            # SSO 프로토콜 설정
             - name: SSO_AUTH_METHOD
               value: "4302010"
             - name: SSO_SCOPES
               value: NeosOAuth
             - name: SSO_TOKEN_KEY
               value: RequestTokenResult
+            # K8s 클러스터 내부 실행 — Pod/Service 관리에 in-cluster config 사용
             - name: K8S_IN_CLUSTER
               value: "true"
+            # 사용자 Pod이 생성되는 네임스페이스
             - name: K8S_NAMESPACE
               value: claude-sessions
+            # 사용자 Pod에 사용할 컨테이너 이미지 (로컬 빌드)
             - name: K8S_POD_IMAGE
-              value: bedrock-claude/claude-terminal:local
+              value: bedrock-claude/claude-code-terminal:local
+            # 사용자 Pod의 ServiceAccount
             - name: K8S_SERVICE_ACCOUNT
               value: claude-terminal-sa
+            # Bedrock API 호출 리전
             - name: BEDROCK_REGION
               value: ap-northeast-2
+            # Bedrock 모델 ID
             - name: BEDROCK_SONNET_MODEL
               value: global.anthropic.claude-sonnet-4-6
             - name: BEDROCK_HAIKU_MODEL
@@ -88,6 +120,8 @@ spec:
               cpu: 250m
               memory: 256Mi
 ---
+# auth-gateway Service — Ingress에서 auth-gateway.platform.svc.cluster.local:80 로 접근
+# targetPort: 8000 (FastAPI uvicorn 포트) → port: 80 (외부 노출 포트)
 apiVersion: v1
 kind: Service
 metadata:

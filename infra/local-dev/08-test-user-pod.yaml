@@ -1,0 +1,90 @@
+# 테스트 사용자 Pod — 로컬 개발용
+#
+# 프로덕션에서는 auth-gateway가 사용자 로그인 시 동적으로 Pod을 생성하지만
+# 로컬 개발에서는 테스트용 Pod을 수동으로 생성하여 UI/터미널 기능 검증
+#
+# 사전 준비:
+#   docker build -t bedrock-claude/claude-code-terminal:local container-image/
+#
+# imagePullPolicy: Never — Docker Desktop의 로컬 이미지 레지스트리 사용
+# (EKS에서는 ECR에서 pull하지만, 로컬에서는 docker build한 이미지를 직접 사용)
+#
+# 접근 방법 (06-ingress.yaml 적용 후):
+#   터미널: http://localhost/terminal/claude-terminal-test001/
+#   파일:   http://localhost/hub/claude-terminal-test001/
+apiVersion: v1
+kind: Pod
+metadata:
+  name: claude-terminal-test001
+  namespace: claude-sessions
+  labels:
+    app: claude-terminal
+    # auth-gateway가 사용자 Pod을 식별하는 레이블
+    user-id: test001
+spec:
+  serviceAccountName: claude-terminal-sa
+  containers:
+    - name: terminal
+      image: bedrock-claude/claude-code-terminal:local
+      imagePullPolicy: Never
+      ports:
+        - containerPort: 7681
+          name: ttyd
+        - containerPort: 8080
+          name: fileserver
+        - containerPort: 3000
+          name: webapp
+      env:
+        # 사용자 식별 정보 — auth-gateway가 Pod 생성 시 주입하는 값과 동일
+        - name: USER_ID
+          value: "TEST001"
+        - name: USER_DISPLAY_NAME
+          value: "테스트사용자"
+        # Bedrock 설정 — 실제 AWS 자격증명이 있어야 Claude Code 동작
+        - name: CLAUDE_CODE_USE_BEDROCK
+          value: "1"
+        - name: AWS_REGION
+          value: "us-east-1"
+        - name: ANTHROPIC_DEFAULT_SONNET_MODEL
+          value: "us.anthropic.claude-sonnet-4-6"
+      volumeMounts:
+        # workspace — 사용자 작업 디렉토리 (호스트에 영구 저장)
+        - name: workspace
+          mountPath: /home/node/workspace
+        # AWS 자격증명 — Secret으로 마운트 (optional: 없으면 무시)
+        - name: aws-credentials
+          mountPath: /home/node/.aws
+          readOnly: true
+  volumes:
+    # hostPath — Docker Desktop에서 macOS 파일시스템 마운트
+    # EKS에서는 EFS(Elastic File System) PVC를 사용하지만
+    # 로컬에서는 호스트 디렉토리를 직접 마운트
+    - name: workspace
+      hostPath:
+        path: /Users/cation98/.bedrock-local-data/test001
+        type: DirectoryOrCreate
+    # AWS 자격증명 Secret — 없으면 Pod 시작에 영향 없음 (optional: true)
+    - name: aws-credentials
+      secret:
+        secretName: aws-credentials
+        optional: true
+  restartPolicy: Never
+---
+# 테스트 사용자 Service — Ingress에서 Pod로 트래픽 전달
+# 프로덕션에서는 auth-gateway가 Pod과 함께 Service도 동적으로 생성
+apiVersion: v1
+kind: Service
+metadata:
+  name: claude-terminal-test001
+  namespace: claude-sessions
+spec:
+  selector:
+    # Pod의 labels와 일치해야 트래픽이 전달됨
+    app: claude-terminal
+  ports:
+    - name: ttyd
+      port: 7681
+    - name: fileserver
+      port: 8080
+    - name: webapp
+      port: 3000
