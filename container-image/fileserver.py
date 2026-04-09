@@ -564,17 +564,38 @@ class FileServerHandler(SimpleHTTPRequestHandler):
         with open(reg_path, 'w') as f:
             json.dump(registry, f, indent=2, default=str)
 
-        # Build response
+        # Build response: CWD 기반으로 실행 중인 앱 매칭
+        # running 프로세스의 cwd → port 매핑
+        cwd_to_port = {}
+        for r in running:
+            if r.get('cwd'):
+                cwd_to_port[r['cwd']] = r['port']
+
         apps = []
+        registry_changed = False
         for name, info in registry.items():
-            port = info.get('port')
-            is_running = any(r['port'] == port for r in running) if port else False
+            app_path = info.get('path', '')
+            # CWD 매칭으로 실제 실행 중인지 확인
+            matched_port = cwd_to_port.get(app_path)
+            is_running = matched_port is not None
+            actual_port = matched_port if is_running else None
+            # 레지스트리 포트를 실제 상태와 동기화
+            if is_running and info.get('port') != matched_port:
+                info['port'] = matched_port
+                registry_changed = True
+            elif not is_running and info.get('port') is not None:
+                info['port'] = None
+                registry_changed = True
             app_entry = {
-                "name": name, "path": info.get('path', ''),
-                "type": info.get('type', 'unknown'), "port": port,
+                "name": name, "path": app_path,
+                "type": info.get('type', 'unknown'), "port": actual_port,
                 "running": is_running, "auto_detected": info.get('auto_detected', False)
             }
             apps.append(app_entry)
+
+        if registry_changed:
+            with open(reg_path, 'w') as f:
+                json.dump(registry, f, indent=2, default=str)
 
         self._send_json(200, {"apps": apps, "running_ports": running, "projects": projects})
 
