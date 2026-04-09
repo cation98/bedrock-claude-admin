@@ -68,9 +68,8 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-body-size: "50m"
     # WebSocket 업그레이드 — ttyd 터미널 연결에 필수
     nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      proxy_set_header Upgrade $http_upgrade;
-      proxy_set_header Connection "upgrade";
+    # WebSocket은 nginx ingress가 enable-websocket annotation으로 처리
+    nginx.ingress.kubernetes.io/enable-websocket: "true"
 spec:
   ingressClassName: nginx
   rules:
