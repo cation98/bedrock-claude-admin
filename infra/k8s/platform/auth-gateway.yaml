@@ -36,19 +36,27 @@ spec:
           operator: "Equal"
           value: "system"
           effect: "NoSchedule"
-      # 같은 app의 Pod을 가능한 한 다른 노드에 분산
-      # preferred: 분산 불가 시(CPU 부족 등) 같은 노드도 허용
+      # auth-gateway HA: 서로 다른 노드 + ingress-nginx와 같은 노드 페어링
       affinity:
         podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                      - auth-gateway
+              topologyKey: kubernetes.io/hostname
+        podAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
             - weight: 100
               podAffinityTerm:
                 labelSelector:
                   matchExpressions:
-                    - key: app
+                    - key: app.kubernetes.io/name
                       operator: In
                       values:
-                        - auth-gateway
+                        - ingress-nginx
                 topologyKey: kubernetes.io/hostname
       containers:
         - name: auth-gateway

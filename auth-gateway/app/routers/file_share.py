@@ -23,13 +23,13 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.core.database import get_db
-from app.core.security import create_access_token, get_current_user, get_current_user_or_pod
+from app.core.security import create_access_token, decode_token, get_current_user, get_current_user_or_pod
 from app.models.file_governance import GovernedFile
 from app.models.file_share import FileShareACL, SharedDataset
 from app.models.user import User
@@ -657,3 +657,55 @@ def _get_shared_mounts_for_user(db: Session, username: str) -> list[dict]:
             })
 
     return results
+
+
+# ── /files/ Ingress auth-url: 본인 Pod + admin만 접근 허용 ──
+
+@router.get("/files-auth-check", include_in_schema=False)
+async def files_auth_check(
+    request: Request,
+    settings: Settings = Depends(get_settings),
+    db: Session = Depends(get_db),
+):
+    """Ingress auth-url: /files/{pod_name}/ 요청의 인증·인가 검증.
+
+    - admin 역할: 모든 Pod의 /files/ 접근 허용
+    - 일반 사용자: 본인 Pod의 /files/ 접근만 허용 (Hub 파일 탐색기 API용)
+    - 미인증: 401 → 로그인 페이지로 리다이렉트
+    """
+    # JWT 추출 (Authorization 헤더 → claude_token 쿠키)
+    user_payload = None
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        user_payload = decode_token(auth_header.split(" ", 1)[1], settings)
+    if user_payload is None:
+        token = request.cookies.get("claude_token", "")
+        if token:
+            user_payload = decode_token(token, settings)
+    if user_payload is None:
+        raise HTTPException(status_code=401, detail="인증이 필요합니다")
+
+    requesting_username = user_payload.get("sub", "")
+    if not requesting_username:
+        raise HTTPException(status_code=401, detail="유효하지 않은 토큰")
+
+    # 역할 확인
+    user = db.query(User).filter(User.username == requesting_username).first()
+    is_admin = user and user.role == "admin"
+
+    # X-Original-URI에서 pod_name 추출: /files/claude-terminal-{username}/...
+    original_uri = request.headers.get("X-Original-URI", "")
+    # /files/claude-terminal-n1102359/api/browse → claude-terminal-n1102359
+    parts = original_uri.strip("/").split("/")
+    pod_name = parts[1] if len(parts) >= 2 else ""
+
+    # pod_name에서 username 추출: claude-terminal-n1102359 → N1102359
+    pod_owner = pod_name.replace("claude-terminal-", "").upper() if pod_name.startswith("claude-terminal-") else ""
+
+    if is_admin:
+        return {"status": "ok", "user": requesting_username, "access": "admin"}
+
+    if pod_owner == requesting_username.upper():
+        return {"status": "ok", "user": requesting_username, "access": "owner"}
+
+    raise HTTPException(status_code=403, detail="접근 권한이 없습니다")

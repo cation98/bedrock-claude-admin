@@ -1221,12 +1221,12 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
       <p id="terminalDesc">Claude Code AI 코딩 어시스턴트<br>웹 터미널에서 바로 실행</p>
       <span class="badge badge-blue" id="terminalBadge">탭에서 열기</span>
     </a>
-    <a class="card" href="/files/{pod_name}/" target="_blank">
+    <div class="card" style="cursor:pointer" onclick="switchHubTab('files')">
       <div class="icon">&#128228;</div>
       <h2>파일 관리</h2>
       <p>파일 업로드 (드래그&amp;드롭)<br>결과물 다운로드</p>
-      <span class="badge badge-green">새 탭에서 열기</span>
-    </a>
+      <span class="badge badge-green">파일 탐색기</span>
+    </div>
     <div class="card" style="cursor:pointer" onclick="document.getElementById('myAppsSection').scrollIntoView({{behavior:'smooth'}})">
       <div class="icon">&#127760;</div>
       <h2>웹앱</h2>

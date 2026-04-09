@@ -497,16 +497,7 @@ class K8sService:
                                         )
                                     ),
                                 ),
-                                client.V1HTTPIngressPath(
-                                    path=f"/files/{pod_name}(/|$)(.*)",
-                                    path_type="ImplementationSpecific",
-                                    backend=client.V1IngressBackend(
-                                        service=client.V1IngressServiceBackend(
-                                            name=pod_name,
-                                            port=client.V1ServiceBackendPort(number=8080),
-                                        )
-                                    ),
-                                ),
+                                # /files/ 경로는 별도 auth-url 보호 Ingress로 분리 (아래 참조)
                                 # 사용자 웹앱 → port 3000
                                 client.V1HTTPIngressPath(
                                     path=f"/app/{pod_name}(/|$)(.*)",
@@ -570,6 +561,51 @@ class K8sService:
             if e.status != 409:
                 logger.error(f"Failed to create hub ingress: {e}")
 
+        # 3) /files/ Ingress (auth-url 보호: 본인 Pod + admin만 접근)
+        files_ingress = client.V1Ingress(
+            metadata=client.V1ObjectMeta(
+                name=f"{pod_name}-files",
+                namespace=self.namespace,
+                annotations={
+                    "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
+                    "nginx.ingress.kubernetes.io/proxy-body-size": "100m",
+                    "nginx.ingress.kubernetes.io/auth-url": (
+                        "http://auth-gateway.platform.svc.cluster.local:8000"
+                        "/api/v1/files/files-auth-check"
+                    ),
+                    "nginx.ingress.kubernetes.io/auth-response-headers": "X-Auth-Username",
+                },
+            ),
+            spec=client.V1IngressSpec(
+                ingress_class_name="nginx",
+                rules=[
+                    client.V1IngressRule(
+                        host="claude.skons.net",
+                        http=client.V1HTTPIngressRuleValue(
+                            paths=[
+                                client.V1HTTPIngressPath(
+                                    path=f"/files/{pod_name}(/|$)(.*)",
+                                    path_type="ImplementationSpecific",
+                                    backend=client.V1IngressBackend(
+                                        service=client.V1IngressServiceBackend(
+                                            name=pod_name,
+                                            port=client.V1ServiceBackendPort(number=8080),
+                                        )
+                                    ),
+                                ),
+                            ]
+                        ),
+                    )
+                ],
+            ),
+        )
+        try:
+            self.networking.create_namespaced_ingress(namespace=self.namespace, body=files_ingress)
+            logger.info(f"Files ingress {pod_name}-files created (auth-url protected)")
+        except ApiException as e:
+            if e.status != 409:
+                logger.error(f"Failed to create files ingress: {e}")
+
     def delete_pod(self, pod_name: str, username: str | None = None) -> bool:
         """Pod + Service + Ingress + Token Secret 삭제.
 
@@ -601,6 +637,12 @@ class K8sService:
         # Hub Ingress 삭제
         try:
             self.networking.delete_namespaced_ingress(name=f"{pod_name}-hub", namespace=self.namespace)
+        except ApiException:
+            pass
+
+        # Files Ingress 삭제
+        try:
+            self.networking.delete_namespaced_ingress(name=f"{pod_name}-files", namespace=self.namespace)
         except ApiException:
             pass
 
