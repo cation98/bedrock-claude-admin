@@ -1673,17 +1673,48 @@ function buildAppItem(a, isOwner) {{
 }}
 
 function loadMyApps() {{
-  apiFetch('/apps/my').then(function(data) {{
-    var apps = data.apps || [];
+  var platformApps = [];
+  var localApps = [];
+  var done = 0;
+
+  function render() {{
+    done++;
+    if (done < 2) return;
     var section = document.getElementById('myAppsSection');
     var list = document.getElementById('myAppsList');
     var count = document.getElementById('myAppsCount');
-    if (apps.length === 0) {{ return; }}
+    // 플랫폼 배포 앱 이름 세트 (중복 방지)
+    var deployedNames = {{}};
+    platformApps.forEach(function(a) {{ deployedNames[a.app_name] = true; }});
+    // 로컬 전용 앱 (플랫폼에 없는 것만)
+    var localOnly = localApps.filter(function(a) {{ return !deployedNames[a.name]; }});
+    var total = platformApps.length + localOnly.length;
+    if (total === 0) {{ return; }}
     section.style.display = 'block';
-    count.textContent = '(' + apps.length + ')';
+    count.textContent = '(' + total + ')';
     list.replaceChildren();
-    apps.forEach(function(a) {{ list.appendChild(buildAppItem(a, true)); }});
-  }}).catch(function() {{}});
+    platformApps.forEach(function(a) {{ list.appendChild(buildAppItem(a, true)); }});
+    localOnly.forEach(function(a) {{
+      var status = a.running ? 'running' : 'stopped';
+      var hostname = window.location.pathname.split('/')[2] || '';
+      var appUrl = '/app/' + hostname + '/';
+      if (a.port && a.port !== 3000) appUrl = '/app/' + hostname + ':' + a.port + '/';
+      list.appendChild(buildUnifiedAppItem({{
+        name: a.name, path: a.path, type: a.type, port: a.port,
+        status: status, app_url: a.running ? appUrl : null
+      }}));
+    }});
+  }}
+
+  apiFetch('/apps/my').then(function(data) {{
+    platformApps = data.apps || [];
+    render();
+  }}).catch(function() {{ render(); }});
+
+  localFetch('/api/apps/status').then(function(data) {{
+    localApps = data.apps || [];
+    render();
+  }}).catch(function() {{ render(); }});
 }}
 
 function loadSharedApps() {{
