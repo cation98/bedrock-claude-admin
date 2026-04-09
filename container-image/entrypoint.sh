@@ -489,7 +489,12 @@ echo "  Claude Code를 시작합니다..."
 echo ""
 
 # Run Claude Code
-claude --dangerously-skip-permissions --continue \
+# --continue: 이전 대화가 있으면 이어서 시작. 없으면(신규 사용자) 새 대화 시작.
+CLAUDE_ARGS="--dangerously-skip-permissions"
+if [ -d "/home/node/.claude/projects" ] && [ "$(find /home/node/.claude/projects -name '*.jsonl' 2>/dev/null | head -1)" ]; then
+    CLAUDE_ARGS="${CLAUDE_ARGS} --continue"
+fi
+claude ${CLAUDE_ARGS} \
     --append-system-prompt "항상 한국어로 응답하세요. 사용자의 이름을 인지하고 존칭을 사용하세요."
 
 # Claude exited — backup conversations to EFS
