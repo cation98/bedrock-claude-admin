@@ -622,10 +622,14 @@ class FileServerHandler(SimpleHTTPRequestHandler):
             if name != app_name and info.get('port'):
                 used_ports.add(info['port'])
 
-        # 이 앱이 이미 할당된 포트가 있고 사용 가능하면 재사용
+        # 이 앱이 이미 실행 중이면 기존 프로세스 종료 후 같은 포트 재사용
         port = None
-        if app_name in registry and registry[app_name].get('port') and registry[app_name]['port'] not in used_ports:
-            port = registry[app_name]['port']
+        existing_port = registry.get(app_name, {}).get('port')
+        if existing_port and existing_port in used_ports:
+            subprocess.run(['fuser', '-k', f'{existing_port}/tcp'], capture_output=True, timeout=5)
+            port = existing_port
+        elif existing_port and existing_port not in used_ports:
+            port = existing_port
         else:
             for p in range(3000, 3101):
                 if p not in used_ports:
