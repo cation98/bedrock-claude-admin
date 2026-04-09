@@ -598,7 +598,7 @@ class FileServerHandler(SimpleHTTPRequestHandler):
             self._send_json(403, {"error": "workspace 외부 경로에서는 실행할 수 없습니다"})
             return
 
-        # Find used ports
+        # Find used ports: 리스닝 포트 + 레지스트리에 할당된 포트 모두 확인
         used_ports = set()
         try:
             result = subprocess.run(['ss', '-tlnp'], capture_output=True, text=True, timeout=5)
@@ -611,13 +611,19 @@ class FileServerHandler(SimpleHTTPRequestHandler):
         except Exception:
             pass
 
-        # Check registry for preferred port
-        port = None
         reg_path = os.path.join(self.directory, '.webapp-registry.json')
         registry = {}
         if os.path.exists(reg_path):
             with open(reg_path) as f:
                 registry = json.load(f)
+
+        # 레지스트리에 포트가 할당된 다른 앱의 포트도 사용 중으로 간주
+        for name, info in registry.items():
+            if name != app_name and info.get('port'):
+                used_ports.add(info['port'])
+
+        # 이 앱이 이미 할당된 포트가 있고 사용 가능하면 재사용
+        port = None
         if app_name in registry and registry[app_name].get('port') and registry[app_name]['port'] not in used_ports:
             port = registry[app_name]['port']
         else:
@@ -650,16 +656,18 @@ class FileServerHandler(SimpleHTTPRequestHandler):
             self._send_json(400, {"error": f"지원하지 않는 앱 유형: {app_type}"})
             return
 
-        subprocess.Popen(cmd, cwd=app_path, env=env,
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-        # Update registry
+        # 프로세스 시작 전에 레지스트리 업데이트 (동시 요청 시 포트 충돌 방지)
+        old_entry = registry.get(app_name, {})
         registry[app_name] = {
             "port": port, "path": app_path, "type": app_type,
-            "auto_detected": registry.get(app_name, {}).get('auto_detected', True)
+            "entrypoint": old_entry.get('entrypoint', entrypoint if app_type == 'python' else None),
+            "auto_detected": old_entry.get('auto_detected', True)
         }
         with open(reg_path, 'w') as f:
             json.dump(registry, f, indent=2, default=str)
+
+        subprocess.Popen(cmd, cwd=app_path, env=env,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         self._send_json(200, {"started": True, "name": app_name, "port": port})
 
