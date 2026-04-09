@@ -2972,12 +2972,36 @@ function renameApp(oldName) {{
 }}
 
 function deleteProject(path) {{
-  if (!confirm('프로젝트를 삭제합니다: ' + path + '\\n이 작업은 되돌릴 수 없습니다.')) return;
+  var appName = path.split('/').pop();
+  var msg = '⚠️ 경고: 코드 파일이 영구 삭제됩니다!\\n\\n';
+  msg += '삭제 대상: ' + path + '\\n';
+  msg += '이 작업은 되돌릴 수 없습니다.\\n\\n';
+  msg += '삭제하려면 앱 이름을 정확히 입력하세요:';
+  var input = prompt(msg);
+  if (input !== appName) {{
+    if (input !== null) {{
+      var t = document.getElementById('hubToast');
+      t.textContent = '앱 이름이 일치하지 않습니다: "' + appName + '"을 입력해야 합니다.';
+      t.style.background = '#da3633';
+      t.style.display = 'block';
+      setTimeout(function() {{ t.style.display = 'none'; t.style.background = ''; }}, 3000);
+    }}
+    return;
+  }}
   localFetch('/api/apps/delete-project', {{
     method: 'POST',
     headers: {{'Content-Type': 'application/json'}},
     body: JSON.stringify({{path: path}})
-  }}).then(function() {{
+  }}).then(function(data) {{
+    var t = document.getElementById('hubToast');
+    if (data.error) {{
+      t.textContent = '삭제 실패: ' + data.error;
+      t.style.background = '#da3633';
+    }} else {{
+      t.textContent = appName + ' 삭제 완료';
+    }}
+    t.style.display = 'block';
+    setTimeout(function() {{ t.style.display = 'none'; t.style.background = ''; }}, 3000);
     loadMyApps();
   }}).catch(function() {{}});
 }}
