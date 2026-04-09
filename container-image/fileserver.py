@@ -68,6 +68,11 @@ class FileServerHandler(SimpleHTTPRequestHandler):
         """파일 업로드 및 웹앱 관리 API (POST)."""
         parsed = urllib.parse.urlparse(self.path)
 
+        # --- Webapp reverse proxy ---
+        if parsed.path.startswith('/webapp/'):
+            self._handle_webapp_proxy(parsed)
+            return
+
         # --- Webapp management API (POST) ---
         if parsed.path == '/api/apps/start':
             self._handle_apps_start()
@@ -196,6 +201,11 @@ class FileServerHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path.startswith("/static/"):
             self._serve_static(parsed.path)
+            return
+
+        # --- Webapp reverse proxy ---
+        if parsed.path.startswith('/webapp/'):
+            self._handle_webapp_proxy(parsed)
             return
 
         # --- Webapp management API (GET) ---
@@ -522,6 +532,56 @@ class FileServerHandler(SimpleHTTPRequestHandler):
             pass
         return ports
 
+    # ── Webapp Reverse Proxy ───────────────────────────────────────
+
+    def _handle_webapp_proxy(self, parsed):
+        """GET/POST /webapp/{port}/* → localhost:{port}/* 리버스 프록시."""
+        import http.client
+
+        parts = parsed.path.split('/', 3)  # ['', 'webapp', '{port}', '{path}']
+        if len(parts) < 3 or not parts[2].isdigit():
+            self._send_json(400, {"error": "잘못된 웹앱 경로입니다. /webapp/{port}/ 형식을 사용하세요."})
+            return
+
+        port = int(parts[2])
+        if not (3000 <= port <= 3100):
+            self._send_json(400, {"error": "포트는 3000-3100 범위만 허용됩니다."})
+            return
+
+        target_path = '/' + parts[3] if len(parts) > 3 else '/'
+        if parsed.query:
+            target_path += '?' + parsed.query
+
+        content_length = int(self.headers.get('Content-Length', 0))
+        body = self.rfile.read(content_length) if content_length > 0 else None
+
+        headers = {k: v for k, v in self.headers.items()
+                   if k.lower() not in ('host', 'connection')}
+        headers['Host'] = f'localhost:{port}'
+
+        try:
+            conn = http.client.HTTPConnection('localhost', port, timeout=30)
+            conn.request(self.command, target_path, body=body, headers=headers)
+            resp = conn.getresponse()
+
+            self.send_response(resp.status)
+            for key, val in resp.getheaders():
+                if key.lower() not in ('transfer-encoding', 'connection'):
+                    self.send_header(key, val)
+            self.end_headers()
+
+            while True:
+                chunk = resp.read(8192)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+
+            conn.close()
+        except ConnectionRefusedError:
+            self._send_json(503, {"error": f"포트 {port}에서 실행 중인 앱이 없습니다."})
+        except Exception as e:
+            self._send_json(502, {"error": f"프록시 오류: {str(e)}"})
+
     # ── Webapp Management API Handlers ──────────────────────────────
 
     def _handle_apps_status(self):
@@ -673,7 +733,7 @@ class FileServerHandler(SimpleHTTPRequestHandler):
             self._send_json(400, {"error": "앱 이름 또는 경로가 필요합니다"})
             return
         app_path = data.get('path', os.path.join(self.directory, app_name))
-        app_type = data.get('type', 'node')
+        app_type = data.get('type', 'python')
 
         # Safety: only allow execution within workspace
         real_app_path = os.path.realpath(app_path)
@@ -682,39 +742,38 @@ class FileServerHandler(SimpleHTTPRequestHandler):
             self._send_json(403, {"error": "workspace 외부 경로에서는 실행할 수 없습니다"})
             return
 
-        # Find used ports: /proc/net/tcp에서 리스닝 포트 확인
-        used_ports = set(self._scan_listening_ports().keys())
-
         reg_path = os.path.join(self.directory, '.webapp-registry.json')
         registry = {}
         if os.path.exists(reg_path):
             with open(reg_path) as f:
                 registry = json.load(f)
 
-        # 레지스트리에 포트가 할당된 다른 앱의 포트도 사용 중으로 간주
-        for name, info in registry.items():
-            if name != app_name and info.get('port'):
-                used_ports.add(info['port'])
+        # _scan_listening_ports() + CWD matching = single source of truth
+        port_map = self._scan_listening_ports()
+        listening_ports = set(port_map.keys())
+        cwd_to_port = {v['cwd']: v['port'] for v in port_map.values() if v.get('cwd')}
 
-        # 이 앱이 이미 실행 중이면 기존 프로세스 종료 후 같은 포트 재사용
-        port = None
-        existing_port = registry.get(app_name, {}).get('port')
-        if existing_port and existing_port in used_ports:
-            self._kill_port(existing_port)
-            port = existing_port
-        elif existing_port and existing_port not in used_ports:
-            port = existing_port
+        # If app is already running (CWD match), kill it and reuse the same port
+        existing_running_port = cwd_to_port.get(app_path)
+        if existing_running_port:
+            self._kill_port(existing_running_port)
+            port = existing_running_port
         else:
+            # Find first available port — only check actually listening ports
+            used = set(listening_ports)
+            port = None
             for p in range(3000, 3101):
-                if p not in used_ports:
+                if p not in used:
                     port = p
                     break
+            if port is None:
+                self._send_json(503, {"error": "사용 가능한 포트가 없습니다"})
+                return
 
-        if port is None:
-            self._send_json(503, {"error": "사용 가능한 포트가 없습니다 (3000-3100 모두 사용 중)"})
-            return
+        entrypoint = registry.get(app_name, {}).get('entrypoint')
+        if not entrypoint:
+            entrypoint = 'main:app' if os.path.isfile(os.path.join(app_path, 'main.py')) else 'app:app'
 
-        # Start process
         env = os.environ.copy()
         env['PORT'] = str(port)
         if app_type == 'node':
@@ -726,20 +785,16 @@ class FileServerHandler(SimpleHTTPRequestHandler):
                 if 'dev' in pkg.get('scripts', {}):
                     cmd = ['npm', 'run', 'dev']
         elif app_type == 'python':
-            entrypoint = registry.get(app_name, {}).get('entrypoint')
-            if not entrypoint:
-                entrypoint = 'main:app' if os.path.isfile(os.path.join(app_path, 'main.py')) else 'app:app'
             cmd = ['python3', '-m', 'uvicorn', entrypoint, '--host', '0.0.0.0', '--port', str(port)]
         else:
             self._send_json(400, {"error": f"지원하지 않는 앱 유형: {app_type}"})
             return
 
-        # 프로세스 시작 전에 레지스트리 업데이트 (동시 요청 시 포트 충돌 방지)
-        old_entry = registry.get(app_name, {})
+        old = registry.get(app_name, {})
         registry[app_name] = {
             "port": port, "path": app_path, "type": app_type,
-            "entrypoint": old_entry.get('entrypoint', entrypoint if app_type == 'python' else None),
-            "auto_detected": old_entry.get('auto_detected', True)
+            "entrypoint": entrypoint if app_type == 'python' else old.get('entrypoint'),
+            "auto_detected": old.get('auto_detected', False)
         }
         with open(reg_path, 'w') as f:
             json.dump(registry, f, indent=2, default=str)
@@ -1781,9 +1836,7 @@ function loadMyApps() {{
     platformApps.forEach(function(a) {{ list.appendChild(buildAppItem(a, true)); }});
     localOnly.forEach(function(a) {{
       var status = a.running ? 'running' : 'stopped';
-      var hostname = window.location.pathname.split('/')[2] || '';
-      var appUrl = '/app/' + hostname + '/';
-      if (a.port && a.port !== 3000) appUrl = '/app/' + hostname + '/?_port=' + a.port;
+      var appUrl = fileserverBase + '/webapp/' + a.port + '/';
       list.appendChild(buildUnifiedAppItem({{
         name: a.name, path: a.path, type: a.type, port: a.port,
         status: status, app_url: a.running ? appUrl : null
@@ -2856,9 +2909,7 @@ function startApp(path, type) {{
     body: JSON.stringify({{path: path, type: type || 'node'}})
   }}).then(function(data) {{
     if (data.started) {{
-      var hostname = window.location.pathname.split('/')[2] || '';
-      var appUrl = '/app/' + hostname + '/';
-      if (data.port && data.port !== 3000) appUrl += '?_port=' + data.port;
+      var appUrl = fileserverBase + '/webapp/' + data.port + '/';
       t.textContent = '앱 시작됨 (포트 ' + data.port + ') — 새 탭에서 열기 중...';
       setTimeout(function() {{
         window.open(appUrl, '_blank');
