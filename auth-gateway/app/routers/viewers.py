@@ -212,8 +212,13 @@ async def office_viewer(
         raise HTTPException(status_code=400, detail=f"Unsupported format: {ext}")
 
     basename = os.path.basename(file_path)
-    file_token = _create_file_token(username, file_path)
-    file_url = f"/api/v1/viewers/file/{username}/{file_path}?token={file_token}"
+    # 브라우저에서 Pod fileserver로 직접 다운로드 (auth-gateway 프록시 우회)
+    # /files/{pod_name}/ 경로는 nginx Ingress → Pod:8080 직접 라우팅
+    # 한글 파일명 인코딩 문제를 브라우저-nginx가 자연스럽게 처리
+    import urllib.parse
+    pod_name = f"claude-terminal-{username.lower()}"
+    encoded_path = urllib.parse.quote(file_path, safe="/")
+    file_url = f"/files/{pod_name}/api/download?path={encoded_path}"
 
     # SheetJS CDN — 브라우저에서 로드 (auth-gateway가 아닌 사용자 브라우저가 접근)
     sheetjs_cdn = "https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"
