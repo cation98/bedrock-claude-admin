@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>앱 갤러리 — Bedrock AI Platform</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-sans/style.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-mono/style.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+    <style>
+        :root {
+            --bg: #F9FAFB;
+            --surface: #FFFFFF;
+            --surface-hover: #F3F4F6;
+            --border: #E5E7EB;
+            --border-strong: #D1D5DB;
+            --text-primary: #111827;
+            --text-secondary: #6B7280;
+            --text-muted: #9CA3AF;
+            --primary: #2563EB;
+            --primary-hover: #1D4ED8;
+            --primary-light: #DBEAFE;
+            --danger: #DC2626;
+            --danger-light: #FEE2E2;
+            --warning: #D97706;
+            --warning-light: #FEF3C7;
+            --success: #059669;
+            --success-light: #D1FAE5;
+            --info: #0891B2;
+            --info-light: #CFFAFE;
+            --error: #9333EA;
+            --error-light: #F3E8FF;
+            --radius-sm: 4px;
+            --radius-md: 6px;
+            --radius-lg: 8px;
+            --font-sans: 'Geist', 'Pretendard Variable', -apple-system, BlinkMacSystemFont, sans-serif;
+            --font-mono: 'Geist Mono', monospace;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: var(--font-sans);
+            background: var(--bg);
+            color: var(--text-primary);
+            min-height: 100vh;
+            font-size: 14px;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* ── Header ── */
+        .header {
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            height: 52px;
+            display: flex;
+            align-items: center;
+            padding: 0 24px;
+            gap: 16px;
+        }
+
+        .header-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--text-primary);
+            flex: 1;
+        }
+
+        .header-nav {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .header-link {
+            display: inline-flex;
+            align-items: center;
+            padding: 6px 12px;
+            font-size: 13px;
+            color: var(--text-secondary);
+            text-decoration: none;
+            border-radius: var(--radius-md);
+            transition: background 75ms, color 75ms;
+        }
+
+        .header-link:hover {
+            background: var(--surface-hover);
+            color: var(--text-primary);
+        }
+
+        /* ── Main content ── */
+        .main {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 24px;
+        }
+
+        /* ── Sort tabs ── */
+        .sort-tabs {
+            display: flex;
+            align-items: center;
+            gap: 0;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 24px;
+        }
+
+        .sort-tab {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 10px 16px;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            cursor: pointer;
+            border: none;
+            background: none;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -1px;
+            transition: color 75ms;
+            font-family: var(--font-sans);
+        }
+
+        .sort-tab:hover {
+            color: var(--text-primary);
+        }
+
+        .sort-tab.active {
+            color: var(--primary);
+            border-bottom-color: var(--primary);
+        }
+
+        /* ── App grid ── */
+        .app-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 12px;
+        }
+
+        @media (min-width: 640px) {
+            .app-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+
+        @media (min-width: 1024px) {
+            .app-grid { grid-template-columns: repeat(3, 1fr); }
+        }
+
+        /* ── App card ── */
+        .app-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            transition: border-color 75ms;
+        }
+
+        .app-card:hover {
+            border-color: var(--border-strong);
+        }
+
+        .card-top {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 8px;
+        }
+
+        .app-name {
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--text-primary);
+            text-decoration: none;
+            line-height: 1.3;
+        }
+
+        .app-name:hover {
+            color: var(--primary);
+        }
+
+        .status-badge {
+            flex-shrink: 0;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 8px;
+            border-radius: 9999px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+
+        .status-badge.running {
+            background: var(--success-light);
+            color: var(--success);
+        }
+
+        .status-badge.stopped {
+            background: var(--surface-hover);
+            color: var(--text-muted);
+        }
+
+        .status-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 9999px;
+            background: currentColor;
+        }
+
+        .app-author {
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        .card-stats {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 12px;
+            color: var(--text-muted);
+            flex-wrap: wrap;
+        }
+
+        .stat-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .card-footer {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            margin-top: 2px;
+        }
+
+        /* ── Like button ── */
+        .like-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 5px 10px;
+            font-size: 13px;
+            font-family: var(--font-sans);
+            color: var(--text-secondary);
+            background: none;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            cursor: pointer;
+            transition: background 75ms, border-color 75ms, color 75ms;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .like-btn:hover {
+            background: var(--surface-hover);
+            border-color: var(--border-strong);
+        }
+
+        .like-btn.liked {
+            color: var(--danger);
+            border-color: #FECACA;
+            background: var(--danger-light);
+        }
+
+        .like-btn.liked:hover {
+            background: #FECACA;
+        }
+
+        .like-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .heart-icon {
+            font-size: 14px;
+            line-height: 1;
+        }
+
+        /* ── Skeleton ── */
+        .skeleton-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 12px;
+        }
+
+        @media (min-width: 640px) {
+            .skeleton-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+
+        @media (min-width: 1024px) {
+            .skeleton-grid { grid-template-columns: repeat(3, 1fr); }
+        }
+
+        .skeleton-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .skeleton-line {
+            background: var(--surface-hover);
+            border-radius: var(--radius-sm);
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* ── Empty state ── */
+        .empty-state {
+            grid-column: 1 / -1;
+            text-align: center;
+            padding: 64px 24px;
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+
+        .empty-icon {
+            display: block;
+            font-size: 32px;
+            margin-bottom: 12px;
+            opacity: 0.4;
+        }
+
+        /* ── Error state ── */
+        .error-banner {
+            background: var(--error-light);
+            border: 1px solid #E9D5FF;
+            border-radius: var(--radius-md);
+            padding: 12px 16px;
+            font-size: 13px;
+            color: var(--error);
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .error-banner.visible {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Header -->
+    <header class="header">
+        <span class="header-title">앱 갤러리</span>
+        <nav class="header-nav">
+            <a href="/portal/" class="header-link">내 앱 관리</a>
+            <a href="/" class="header-link">터미널</a>
+        </nav>
+    </header>
+
+    <!-- Main -->
+    <main class="main">
+
+        <!-- Error banner -->
+        <div class="error-banner" id="error-banner" role="alert"></div>
+
+        <!-- Sort tabs -->
+        <div class="sort-tabs" role="tablist" aria-label="정렬 기준">
+            <button class="sort-tab active" data-sort="hot" role="tab" aria-selected="true">🔥 인기</button>
+            <button class="sort-tab" data-sort="latest" role="tab" aria-selected="false">📅 최신</button>
+            <button class="sort-tab" data-sort="most_viewed" role="tab" aria-selected="false">👀 조회순</button>
+            <button class="sort-tab" data-sort="most_liked" role="tab" aria-selected="false">❤️ 추천순</button>
+        </div>
+
+        <!-- App grid (populated by JS) -->
+        <div id="app-grid-container"></div>
+
+    </main>
+
+    <script>
+        'use strict';
+
+        // ── State ──────────────────────────────────────────────────────────────
+        var currentSort = 'hot';
+        var isLoading = false;
+
+        // ── Auth ───────────────────────────────────────────────────────────────
+        function getToken() {
+            var pairs = document.cookie.split('; ');
+            for (var i = 0; i < pairs.length; i++) {
+                if (pairs[i].startsWith('claude_token=')) {
+                    return pairs[i].slice('claude_token='.length);
+                }
+            }
+            return null;
+        }
+
+        function apiFetch(url, opts) {
+            opts = opts || {};
+            var token = getToken();
+            if (!token) {
+                location.href = '/webapp-login?return_url=/gallery/';
+                return Promise.reject(new Error('unauthenticated'));
+            }
+            var headers = Object.assign(
+                { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                opts.headers || {}
+            );
+            return fetch(url, Object.assign({}, opts, { headers: headers }))
+                .then(function(r) {
+                    if (r.status === 401) {
+                        location.href = '/webapp-login?return_url=/gallery/';
+                        return Promise.reject(new Error('unauthenticated'));
+                    }
+                    if (!r.ok) {
+                        return r.json().then(function(body) {
+                            return Promise.reject(new Error(body.detail || 'API 오류가 발생했습니다'));
+                        });
+                    }
+                    return r.json();
+                });
+        }
+
+        // ── Utilities ──────────────────────────────────────────────────────────
+        function fmt(n) {
+            if (n == null) return '0';
+            return Number(n).toLocaleString('ko-KR');
+        }
+
+        function showError(msg) {
+            var banner = document.getElementById('error-banner');
+            banner.textContent = msg;
+            banner.classList.add('visible');
+        }
+
+        function clearError() {
+            var banner = document.getElementById('error-banner');
+            banner.classList.remove('visible');
+            banner.textContent = '';
+        }
+
+        // ── DOM builders (XSS-safe: textContent only for user data) ────────────
+
+        function makeStatusBadge(status) {
+            var badge = document.createElement('span');
+            badge.className = 'status-badge ' + (status === 'running' ? 'running' : 'stopped');
+
+            var dot = document.createElement('span');
+            dot.className = 'status-dot';
+
+            var label = document.createTextNode(status === 'running' ? '실행 중' : '중지됨');
+
+            badge.appendChild(dot);
+            badge.appendChild(label);
+            return badge;
+        }
+
+        function makeLikeButton(app) {
+            var btn = document.createElement('button');
+            btn.className = 'like-btn' + (app.liked_by_me ? ' liked' : '');
+            btn.dataset.app = app.app_name;
+            btn.dataset.liked = app.liked_by_me ? '1' : '0';
+            btn.setAttribute('aria-label', '추천');
+            btn.setAttribute('aria-pressed', app.liked_by_me ? 'true' : 'false');
+
+            var heart = document.createElement('span');
+            heart.className = 'heart-icon';
+            heart.textContent = app.liked_by_me ? '❤️' : '🤍';
+
+            var count = document.createElement('span');
+            count.className = 'like-count';
+            count.textContent = fmt(app.like_count);
+
+            btn.appendChild(heart);
+            btn.appendChild(count);
+            btn.addEventListener('click', handleLike);
+            return btn;
+        }
+
+        function makeAppCard(app) {
+            var authorParts = [app.author_name];
+            if (app.author_team) authorParts.push(app.author_team);
+
+            // card
+            var card = document.createElement('div');
+            card.className = 'app-card';
+
+            // card-top
+            var cardTop = document.createElement('div');
+            cardTop.className = 'card-top';
+
+            var nameLink = document.createElement('a');
+            nameLink.className = 'app-name';
+            nameLink.href = app.app_url || '#';
+            nameLink.target = '_blank';
+            nameLink.rel = 'noopener noreferrer';
+            nameLink.textContent = app.app_name;
+
+            cardTop.appendChild(nameLink);
+            cardTop.appendChild(makeStatusBadge(app.status));
+
+            // author
+            var author = document.createElement('div');
+            author.className = 'app-author';
+            author.textContent = authorParts.join(' · ');
+
+            // stats
+            var stats = document.createElement('div');
+            stats.className = 'card-stats';
+
+            var viewStat = document.createElement('span');
+            viewStat.className = 'stat-item';
+            viewStat.textContent = '👀 조회 ' + fmt(app.view_count);
+
+            var dauStat = document.createElement('span');
+            dauStat.className = 'stat-item';
+            dauStat.textContent = '👤 방문자 ' + fmt(app.dau) + ' 오늘';
+
+            stats.appendChild(viewStat);
+            stats.appendChild(dauStat);
+
+            // footer
+            var footer = document.createElement('div');
+            footer.className = 'card-footer';
+            footer.appendChild(makeLikeButton(app));
+
+            card.appendChild(cardTop);
+            card.appendChild(author);
+            card.appendChild(stats);
+            card.appendChild(footer);
+
+            return card;
+        }
+
+        function makeSkeletonGrid() {
+            var grid = document.createElement('div');
+            grid.className = 'skeleton-grid';
+            for (var i = 0; i < 6; i++) {
+                var skCard = document.createElement('div');
+                skCard.className = 'skeleton-card';
+
+                var heights = ['18px', '13px', '12px'];
+                var widths  = ['60%',  '45%',  '75%'];
+                for (var j = 0; j < 3; j++) {
+                    var line = document.createElement('div');
+                    line.className = 'skeleton-line';
+                    line.style.height = heights[j];
+                    line.style.width  = widths[j];
+                    skCard.appendChild(line);
+                }
+                grid.appendChild(skCard);
+            }
+            return grid;
+        }
+
+        function makeEmptyState() {
+            var grid = document.createElement('div');
+            grid.className = 'app-grid';
+
+            var el = document.createElement('div');
+            el.className = 'empty-state';
+
+            var icon = document.createElement('span');
+            icon.className = 'empty-icon';
+            icon.textContent = '🗂️';
+
+            var msg = document.createTextNode('아직 공개된 앱이 없습니다');
+
+            el.appendChild(icon);
+            el.appendChild(msg);
+            grid.appendChild(el);
+            return grid;
+        }
+
+        // ── Render ──────────────────────────────────────────────────────────────
+        function renderSkeleton() {
+            var container = document.getElementById('app-grid-container');
+            container.textContent = '';
+            container.appendChild(makeSkeletonGrid());
+        }
+
+        function renderCards(apps) {
+            var container = document.getElementById('app-grid-container');
+            container.textContent = '';
+
+            if (!apps || apps.length === 0) {
+                container.appendChild(makeEmptyState());
+                return;
+            }
+
+            var grid = document.createElement('div');
+            grid.className = 'app-grid';
+
+            apps.forEach(function(app) {
+                grid.appendChild(makeAppCard(app));
+            });
+
+            container.appendChild(grid);
+        }
+
+        // ── Load apps ───────────────────────────────────────────────────────────
+        function loadApps(sort) {
+            if (isLoading) return;
+            isLoading = true;
+            clearError();
+            renderSkeleton();
+
+            apiFetch('/api/v1/apps/gallery?sort=' + encodeURIComponent(sort))
+                .then(function(data) {
+                    if (!data) return;
+                    renderCards(data.apps || []);
+                })
+                .catch(function(err) {
+                    if (err.message === 'unauthenticated') return;
+                    showError('앱 목록을 불러오는 데 실패했습니다. 잠시 후 다시 시도해 주세요.');
+                    renderCards([]);
+                })
+                .finally(function() {
+                    isLoading = false;
+                });
+        }
+
+        // ── Like toggle ─────────────────────────────────────────────────────────
+        function handleLike(e) {
+            var btn = e.currentTarget;
+            if (btn.disabled) return;
+
+            var appName = btn.dataset.app;
+            var wasLiked = btn.dataset.liked === '1';
+            var countEl = btn.querySelector('.like-count');
+            var currentCount = parseInt(countEl.textContent.replace(/,/g, ''), 10) || 0;
+
+            btn.disabled = true;
+            // Optimistic UI update
+            applyLikeUI(btn, !wasLiked, currentCount + (wasLiked ? -1 : 1));
+
+            apiFetch('/api/v1/apps/' + encodeURIComponent(appName) + '/like', { method: 'POST' })
+                .then(function(data) {
+                    if (!data) return;
+                    applyLikeUI(btn, data.liked, data.like_count);
+                })
+                .catch(function(err) {
+                    if (err.message === 'unauthenticated') return;
+                    // Revert optimistic update
+                    applyLikeUI(btn, wasLiked, currentCount);
+                })
+                .finally(function() {
+                    btn.disabled = false;
+                });
+        }
+
+        function applyLikeUI(btn, liked, count) {
+            btn.dataset.liked = liked ? '1' : '0';
+            btn.setAttribute('aria-pressed', liked ? 'true' : 'false');
+            btn.querySelector('.heart-icon').textContent = liked ? '❤️' : '🤍';
+            btn.querySelector('.like-count').textContent = fmt(count);
+            if (liked) {
+                btn.classList.add('liked');
+            } else {
+                btn.classList.remove('liked');
+            }
+        }
+
+        // ── Sort tabs ────────────────────────────────────────────────────────────
+        document.querySelectorAll('.sort-tab').forEach(function(tab) {
+            tab.addEventListener('click', function() {
+                if (tab.dataset.sort === currentSort) return;
+
+                document.querySelectorAll('.sort-tab').forEach(function(t) {
+                    t.classList.remove('active');
+                    t.setAttribute('aria-selected', 'false');
+                });
+                tab.classList.add('active');
+                tab.setAttribute('aria-selected', 'true');
+
+                currentSort = tab.dataset.sort;
+                loadApps(currentSort);
+            });
+        });
+
+        // ── Init ─────────────────────────────────────────────────────────────────
+        loadApps(currentSort);
+    </script>
+
+</body>
+</html>

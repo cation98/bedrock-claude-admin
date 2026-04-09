@@ -39,6 +39,16 @@ async def serve_portal():
     return FileResponse(html_path, media_type="text/html")
 
 
+@router.get("/gallery")
+@router.get("/gallery/")
+async def serve_gallery():
+    """공개 앱 갤러리 HTML 반환."""
+    html_path = STATIC_DIR / "gallery.html"
+    if not html_path.exists():
+        raise HTTPException(status_code=404, detail="Gallery page not found")
+    return FileResponse(html_path, media_type="text/html")
+
+
 @router.get("/api/v1/portal/my-apps")
 async def portal_my_apps(
     current_user: dict = Depends(get_current_user),

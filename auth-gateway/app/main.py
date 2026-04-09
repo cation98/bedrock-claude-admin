@@ -17,7 +17,7 @@ from sqlalchemy import text
 from app.core.config import get_settings
 from app.core.database import Base, engine
 from app.core.scheduler import idle_checker_loop, token_snapshot_loop, prompt_audit_loop, storage_cleanup_loop
-from app.models.app import DeployedApp, AppACL, AppView  # noqa: F401 — create_all이 테이블 생성하도록 import
+from app.models.app import DeployedApp, AppACL, AppView, AppLike  # noqa: F401 — create_all이 테이블 생성하도록 import
 from app.models.survey import SurveyTemplate, SurveyAssignment, SurveyResponse  # noqa: F401
 from app.models.file_share import SharedDataset, FileShareACL  # noqa: F401 — create_all이 테이블 생성하도록 import
 from app.models.token_usage import TokenUsageHourly  # noqa: F401 — create_all이 테이블 생성하도록 import

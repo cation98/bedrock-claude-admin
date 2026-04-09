@@ -48,6 +48,20 @@ class AppView(Base):
     viewed_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
+class AppLike(Base):
+    """앱 추천(좋아요) — 사용자당 앱 1회만 가능."""
+
+    __tablename__ = "app_likes"
+    __table_args__ = (
+        Index("ix_app_likes_app_user", "app_id", "user_id", unique=True),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    app_id = Column(Integer, ForeignKey("deployed_apps.id"), nullable=False)  # composite index가 커버
+    user_id = Column(String(50), nullable=False)  # 추천한 사용자 사번
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
 class AppACL(Base):
     """앱별 접근 제어 목록 (revoked_at이 NULL이면 활성 상태).
 

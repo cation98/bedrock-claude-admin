@@ -22,17 +22,18 @@ Endpoints:
 import asyncio
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, date, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import func, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.core.database import SessionLocal, get_db
 from app.core.security import decode_token, get_current_user, get_current_user_or_pod
-from app.models.app import AppACL, AppView, DeployedApp
+from app.models.app import AppACL, AppLike, AppView, DeployedApp
 from app.models.user import User
 from app.schemas.app import (
     AppACLDetailResponse,
@@ -420,32 +421,45 @@ async def list_shared_apps(
 
 @router.get("/gallery")
 async def list_gallery_apps(
+    sort: str = Query(default="hot", description="정렬 기준: hot | latest | most_viewed | most_liked"),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """공개(company) 앱 목록 + 뷰 통계.
+    """공개(company) 앱 목록 + 뷰/좋아요 통계.
 
     일반 사용자에게는 visibility='company' 앱만 표시.
     관리자(admin)는 모든 앱을 볼 수 있다.
-    view_count와 unique_viewers는 app_views 테이블에서 집계한다.
+
+    sort 옵션:
+      hot         — like_count*3 + dau*2 + unique_viewers (기본값)
+      latest      — 최근 배포순
+      most_viewed — 총 조회수 DESC
+      most_liked  — 좋아요 수 DESC
     """
     requesting_role = current_user.get("role", "user")
     username = current_user["sub"]
 
-    # 관리자: 전체, 일반 사용자: company 앱 + 본인 앱
-    query = db.query(DeployedApp).filter(DeployedApp.status != "deleted")
+    # ── 앱 목록 조회 (User JOIN으로 author 정보 포함) ──────────────────────
+    query = (
+        db.query(DeployedApp, User)
+        .outerjoin(User, DeployedApp.owner_username == User.username)
+        .filter(DeployedApp.status != "deleted")
+    )
     if requesting_role != "admin":
         query = query.filter(
             (DeployedApp.visibility == "company")
             | (DeployedApp.owner_username == username)
         )
-    apps = query.order_by(DeployedApp.created_at.desc()).all()
+    rows = query.all()
 
-    if not apps:
+    if not rows:
         return {"apps": []}
 
-    # 뷰 통계 일괄 집계 (N+1 방지)
+    apps = [row[0] for row in rows]
+    user_by_app: dict[int, User] = {row[0].id: row[1] for row in rows}
     app_ids = [a.id for a in apps]
+
+    # ── 뷰 통계 일괄 집계 (N+1 방지) ─────────────────────────────────────
     view_stats = (
         db.query(
             AppView.app_id,
@@ -456,17 +470,141 @@ async def list_gallery_apps(
         .group_by(AppView.app_id)
         .all()
     )
-    stats_map = {row.app_id: (row.view_count, row.unique_viewers) for row in view_stats}
+    view_map: dict[int, tuple[int, int]] = {
+        row.app_id: (row.view_count, row.unique_viewers) for row in view_stats
+    }
 
+    # ── DAU: 오늘 날짜 기준 고유 조회자 수 ──────────────────────────────
+    today_start = datetime.combine(date.today(), datetime.min.time()).replace(tzinfo=timezone.utc)
+    dau_stats = (
+        db.query(
+            AppView.app_id,
+            func.count(func.distinct(AppView.viewer_user_id)).label("dau"),
+        )
+        .filter(AppView.app_id.in_(app_ids), AppView.viewed_at >= today_start)
+        .group_by(AppView.app_id)
+        .all()
+    )
+    dau_map: dict[int, int] = {row.app_id: row.dau for row in dau_stats}
+
+    # ── 좋아요 집계 (N+1 방지) ───────────────────────────────────────────
+    like_stats = (
+        db.query(
+            AppLike.app_id,
+            func.count(AppLike.id).label("like_count"),
+        )
+        .filter(AppLike.app_id.in_(app_ids))
+        .group_by(AppLike.app_id)
+        .all()
+    )
+    like_map: dict[int, int] = {row.app_id: row.like_count for row in like_stats}
+
+    # ── 현재 사용자의 좋아요 여부 일괄 조회 ─────────────────────────────
+    my_likes = (
+        db.query(AppLike.app_id)
+        .filter(AppLike.app_id.in_(app_ids), AppLike.user_id == username)
+        .all()
+    )
+    liked_app_ids: set[int] = {row.app_id for row in my_likes}
+
+    # ── 결과 조립 ────────────────────────────────────────────────────────
     results = []
     for app in apps:
-        vc, uv = stats_map.get(app.id, (0, 0))
-        resp = DeployedAppResponse.model_validate(app)
-        resp.view_count = vc
-        resp.unique_viewers = uv
-        results.append(resp)
+        vc, uv = view_map.get(app.id, (0, 0))
+        dau = dau_map.get(app.id, 0)
+        like_count = like_map.get(app.id, 0)
+        liked_by_me = app.id in liked_app_ids
+        author: User | None = user_by_app.get(app.id)
+
+        results.append({
+            "id": app.id,
+            "app_name": app.app_name,
+            "app_url": app.app_url,
+            "status": app.status,
+            "visibility": app.visibility,
+            "owner_username": app.owner_username,
+            "author_name": author.name if author else None,
+            "author_team": author.team_name if author else None,
+            "author_region": author.region_name if author else None,
+            "view_count": vc,
+            "unique_viewers": uv,
+            "dau": dau,
+            "like_count": like_count,
+            "liked_by_me": liked_by_me,
+            "created_at": app.created_at.isoformat() if app.created_at else None,
+            "updated_at": app.updated_at.isoformat() if app.updated_at else None,
+        })
+
+    # ── 정렬 ─────────────────────────────────────────────────────────────
+    if sort == "hot":
+        results.sort(
+            key=lambda x: x["like_count"] * 3 + x["dau"] * 2 + x["unique_viewers"],
+            reverse=True,
+        )
+    elif sort == "latest":
+        results.sort(key=lambda x: x["created_at"] or "", reverse=True)
+    elif sort == "most_viewed":
+        results.sort(key=lambda x: x["view_count"], reverse=True)
+    elif sort == "most_liked":
+        results.sort(key=lambda x: x["like_count"], reverse=True)
+    else:
+        # 알 수 없는 sort 값은 hot과 동일하게 처리
+        results.sort(
+            key=lambda x: x["like_count"] * 3 + x["dau"] * 2 + x["unique_viewers"],
+            reverse=True,
+        )
 
     return {"apps": results}
+
+
+# ==================== 좋아요 ====================
+
+
+@router.post("/{app_name}/like")
+async def toggle_app_like(
+    app_name: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """앱 좋아요 토글. 이미 좋아요한 경우 취소, 아닌 경우 추가."""
+    username = current_user["sub"]
+
+    # 1. 앱 조회 (삭제되지 않은 것만)
+    app = (
+        db.query(DeployedApp)
+        .filter(DeployedApp.app_name == app_name, DeployedApp.status != "deleted")
+        .first()
+    )
+    if not app:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="앱을 찾을 수 없습니다")
+
+    # 2. 기존 좋아요 여부 확인
+    existing_like = (
+        db.query(AppLike)
+        .filter(AppLike.app_id == app.id, AppLike.user_id == username)
+        .first()
+    )
+
+    if existing_like:
+        # 3a. 이미 좋아요 → 취소 (unlike)
+        db.delete(existing_like)
+        db.commit()
+        liked = False
+    else:
+        # 3b. 좋아요 없음 → 추가 (동시 요청 시 IntegrityError 안전 처리)
+        try:
+            new_like = AppLike(app_id=app.id, user_id=username)
+            db.add(new_like)
+            db.commit()
+            liked = True
+        except IntegrityError:
+            db.rollback()
+            liked = True  # 이미 다른 요청에서 추가됨
+
+    # 4. 총 좋아요 수 집계
+    like_count = db.query(func.count(AppLike.id)).filter(AppLike.app_id == app.id).scalar()
+
+    return {"liked": liked, "like_count": like_count}
 
 
 # ==================== 공유 관리 (통합 조회/일괄 회수) ====================
