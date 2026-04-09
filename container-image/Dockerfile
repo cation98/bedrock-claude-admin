@@ -149,6 +149,15 @@ RUN mkdir -p /opt/static && \
     curl -fsSL "https://unpkg.com/tabulator-tables@6.3.0/dist/css/tabulator_midnight.min.css" \
       -o /opt/static/tabulator_midnight.min.css
 
+# Secure CLI (민감 파일 S3 Vault 관리)
+COPY --chown=node:node secure-cli/secure-get /usr/local/bin/secure-get
+COPY --chown=node:node secure-cli/secure-put /usr/local/bin/secure-put
+COPY --chown=node:node secure-cli/secure-cleanup /usr/local/bin/secure-cleanup
+RUN chmod +x /usr/local/bin/secure-get /usr/local/bin/secure-put /usr/local/bin/secure-cleanup
+
+# 파일 스캐너 에이전트 (업로드 파일 자동 분류)
+COPY scripts/file-scanner-agent.py /usr/local/bin/file-scanner-agent.py
+
 # 파일 업로드/다운로드 서버
 COPY fileserver.py /usr/local/bin/fileserver.py
 
