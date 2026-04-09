@@ -25,6 +25,7 @@ import cgi
 import datetime
 import functools
 import mimetypes
+import unicodedata
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 
@@ -263,6 +264,14 @@ class FileServerHandler(SimpleHTTPRequestHandler):
         if not real_target.startswith(os.path.realpath(self.directory)):
             self._send_json(403, {"error": "access denied"})
             return
+
+        # 한글 파일명 NFC/NFD 호환: 파일이 없으면 다른 정규화 형식으로 재시도
+        if not os.path.exists(real_target):
+            for form in ("NFC", "NFD"):
+                alt = os.path.realpath(os.path.join(self.directory, unicodedata.normalize(form, rel_path)))
+                if os.path.exists(alt) and alt.startswith(os.path.realpath(self.directory)):
+                    real_target = alt
+                    break
 
         if not os.path.isfile(real_target):
             self._send_json(404, {"error": "file not found"})

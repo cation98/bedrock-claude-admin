@@ -155,7 +155,13 @@ async def stream_file(
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as http:
-            resp = await http.get(download_url, params={"path": file_path})
+            # NFC→NFD 변환: macOS/EFS에서 한글 파일명이 NFD로 저장됨
+            import unicodedata
+            path_nfd = unicodedata.normalize("NFD", file_path)
+            resp = await http.get(download_url, params={"path": path_nfd})
+            if resp.status_code == 404:
+                # NFD 실패 시 NFC로 재시도
+                resp = await http.get(download_url, params={"path": file_path})
             if resp.status_code != 200:
                 raise HTTPException(status_code=resp.status_code, detail="File not accessible")
 
@@ -306,7 +312,13 @@ async def markdown_viewer(
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as http:
-            resp = await http.get(download_url, params={"path": file_path})
+            # NFC→NFD 변환: macOS/EFS에서 한글 파일명이 NFD로 저장됨
+            import unicodedata
+            path_nfd = unicodedata.normalize("NFD", file_path)
+            resp = await http.get(download_url, params={"path": path_nfd})
+            if resp.status_code == 404:
+                # NFD 실패 시 NFC로 재시도
+                resp = await http.get(download_url, params={"path": file_path})
             if resp.status_code != 200:
                 raise HTTPException(status_code=resp.status_code, detail="File not accessible")
 
