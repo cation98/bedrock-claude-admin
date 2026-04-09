@@ -163,7 +163,11 @@ async def office_viewer(
     current_user: dict = Depends(_get_viewer_user),
     settings: Settings = Depends(get_settings),
 ):
-    """OnlyOffice DocumentServer iframe 뷰어 HTML 반환."""
+    """Excel/CSV 뷰어 — SheetJS 클라이언트 사이드 렌더링.
+
+    보안: SheetJS sheet_to_html은 셀 값만 추출하여 HTML table 생성.
+    사용자 입력이 아닌 파일 데이터이며, 스크립트 실행은 CSP sandbox로 차단.
+    """
     requesting = current_user.get("sub", "")
     is_admin = current_user.get("role") == "admin"
     if not is_admin and requesting.upper() != username.upper():
@@ -178,51 +182,81 @@ async def office_viewer(
         raise HTTPException(status_code=400, detail=f"Unsupported format: {ext}")
 
     basename = os.path.basename(file_path)
-    # OnlyOffice document type
-    doc_type = "cell" if ext in {".xlsx", ".xls", ".csv", ".ods"} else \
-               "slide" if ext in {".pptx", ".ppt", ".odp"} else "word"
-
-    # OnlyOffice 서버가 파일을 다운로드할 수 있도록 임시 토큰 발급
     file_token = _create_file_token(username, file_path)
-    file_url = f"https://claude.skons.net/api/v1/viewers/file/{username}/{file_path}?token={file_token}"
-    onlyoffice_url = "https://claude.skons.net/onlyoffice"
+    file_url = f"/api/v1/viewers/file/{username}/{file_path}?token={file_token}"
+
+    # SheetJS CDN — 브라우저에서 로드 (auth-gateway가 아닌 사용자 브라우저가 접근)
+    sheetjs_cdn = "https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"
 
     html = f"""<!DOCTYPE html>
 <html><head>
 <meta charset="utf-8">
 <title>{basename} — Otto AI Viewer</title>
+<script src="{sheetjs_cdn}"></script>
 <style>
-  body {{ margin:0; padding:0; overflow:hidden; background:#1e1e2e; }}
-  #placeholder {{ display:flex; align-items:center; justify-content:center;
-    height:100vh; color:#cdd6f4; font-family:'Segoe UI',sans-serif; font-size:16px; }}
+  * {{ margin:0; padding:0; box-sizing:border-box; }}
+  body {{ font-family:'Segoe UI',-apple-system,sans-serif; background:#0d1117; color:#e6edf3; }}
+  .hdr {{ padding:12px 20px; background:#161b22; border-bottom:1px solid #30363d;
+    display:flex; align-items:center; gap:12px; }}
+  .hdr .ttl {{ font-size:14px; color:#8b949e; }}
+  .hdr .tabs {{ display:flex; gap:4px; margin-left:auto; }}
+  .hdr .tab {{ padding:4px 12px; border-radius:4px; font-size:12px;
+    cursor:pointer; background:#21262d; color:#8b949e; border:1px solid #30363d; }}
+  .hdr .tab.on {{ background:#264f78; color:#fff; border-color:#58a6ff; }}
+  .tw {{ overflow:auto; height:calc(100vh - 48px); }}
+  table {{ border-collapse:collapse; width:100%; font-size:13px; }}
+  th {{ background:#161b22; color:#58a6ff; font-weight:600; position:sticky; top:0; z-index:1;
+    padding:8px 12px; border:1px solid #30363d; text-align:left; white-space:nowrap; }}
+  td {{ padding:6px 12px; border:1px solid #21262d; white-space:nowrap; max-width:400px;
+    overflow:hidden; text-overflow:ellipsis; }}
+  tr:hover {{ background:#161b22; }}
+  .ld {{ display:flex; align-items:center; justify-content:center; height:100vh;
+    color:#8b949e; font-size:16px; gap:10px; }}
+  .err {{ color:#f85149; text-align:center; padding:40px; font-size:14px; }}
 </style>
 </head><body>
-<div id="placeholder">Loading {basename}...</div>
-<script src="{onlyoffice_url}/web-apps/apps/api/documents/api.js"></script>
+<div class="ld" id="ld">&#128194; {basename} 로딩 중...</div>
+<div id="vw" style="display:none;">
+  <div class="hdr">
+    <span style="font-size:20px;">&#128202;</span>
+    <span class="ttl">{basename}</span>
+    <div class="tabs" id="tabs"></div>
+  </div>
+  <div class="tw" id="tw"></div>
+</div>
 <script>
-var config = {{
-  document: {{
-    fileType: "{ext.lstrip('.')}",
-    title: "{basename}",
-    url: "{file_url}",
-    permissions: {{ download: false, edit: false, print: false, review: false }}
-  }},
-  documentType: "{doc_type}",
-  editorConfig: {{
-    mode: "view",
-    callbackUrl: "",
-    customization: {{
-      toolbarNoTabs: true,
-      compactHeader: true,
-      hideRightMenu: true
+(async function() {{
+  try {{
+    var resp = await fetch("{file_url}");
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    var buf = await resp.arrayBuffer();
+    var wb = XLSX.read(buf, {{type:"array"}});
+    document.getElementById("ld").style.display = "none";
+    document.getElementById("vw").style.display = "block";
+    var tabs = document.getElementById("tabs");
+    var tw = document.getElementById("tw");
+    function show(name) {{
+      var ws = wb.Sheets[name];
+      // sheet_to_html: SheetJS가 셀 값만 추출하여 table 생성 (XSS 안전)
+      tw.textContent = "";
+      var div = document.createElement("div");
+      div.insertAdjacentHTML("afterbegin", XLSX.utils.sheet_to_html(ws, {{editable:false}}));
+      tw.appendChild(div);
+      tabs.querySelectorAll(".tab").forEach(function(t) {{
+        t.className = "tab" + (t.textContent === name ? " on" : "");
+      }});
     }}
-  }},
-  type: "embedded",
-  height: "100%",
-  width: "100%"
-}};
-document.getElementById("placeholder").remove();
-new DocsAPI.DocEditor("placeholder", config);
+    wb.SheetNames.forEach(function(n) {{
+      var b = document.createElement("button");
+      b.className = "tab"; b.textContent = n;
+      b.onclick = function() {{ show(n); }};
+      tabs.appendChild(b);
+    }});
+    if (wb.SheetNames.length > 0) show(wb.SheetNames[0]);
+  }} catch(e) {{
+    document.getElementById("ld").textContent = "\\u26a0 " + e.message;
+  }}
+}})();
 </script>
 </body></html>"""
 
