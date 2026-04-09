@@ -4,7 +4,7 @@
 # =============================================================================
 
 aws_region  = "ap-northeast-2"
-environment = "dev"
+environment = "prod"
 
 # ----- 기존 SKO VPC (참조만, 수정 안 함) -----
 vpc_id = "vpc-075deed66fcc7f348"
