@@ -1461,6 +1461,18 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
       <button class="btn-stop-all" id="stopAllBtn" style="display:none" onclick="event.stopPropagation();stopAllApps()">모두 실행중지</button>
       <div class="resource-warning" id="resourceWarning" style="display:none">⚠️ 실행 중인 앱이 많으면 AI 에이전트 성능이 저하됩니다. 지금은 개발목적이니, 최소한의 앱만 구동하기를 권장드립니다.</div>
     </div>
+    <a class="card" href="/gallery/" target="_blank" style="text-decoration:none;color:inherit">
+      <div class="icon">&#127981;</div>
+      <h2>앱 갤러리</h2>
+      <p>전사 공개 앱 둘러보기<br>인기앱 추천 &amp; 조회</p>
+      <span class="badge badge-blue">새 탭에서 열기</span>
+    </a>
+    <a class="card" href="/portal/" target="_blank" style="text-decoration:none;color:inherit">
+      <div class="icon">&#128202;</div>
+      <h2>내 앱 관리</h2>
+      <p>배포 앱 통계 확인<br>접근 권한(ACL) 설정</p>
+      <span class="badge badge-blue">새 탭에서 열기</span>
+    </a>
   </div>
 
   <!-- 탭 바 -->
