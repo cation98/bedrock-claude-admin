@@ -95,11 +95,19 @@ async def proxy_to_webapp(
     ).first()
     app_port = app_row.app_port if app_row and app_row.app_port else 3000
 
+    # _port 쿼리 파라미터로 포트 오버라이드 (3000-3100 범위만 허용)
+    port_param = request.query_params.get("_port")
+    if port_param and port_param.isdigit() and 3000 <= int(port_param) <= 3100:
+        app_port = int(port_param)
+
     # 대상 Pod 서비스 URL 구성
     # K8s 내부 DNS: {pod_name}.{namespace}.svc.cluster.local
     target_url = f"http://{pod_name}.claude-sessions:{app_port}/{path}"
-    if request.url.query:
-        target_url += f"?{request.url.query}"
+    # _port 파라미터를 제거한 쿼리스트링 전달
+    query_pairs = [(k, v) for k, v in request.query_params.items() if k != "_port"]
+    if query_pairs:
+        qs = "&".join(f"{k}={v}" for k, v in query_pairs)
+        target_url += f"?{qs}"
 
     # 원본 헤더 복사 + 인증 헤더 주입
     headers = dict(request.headers)

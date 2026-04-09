@@ -1698,7 +1698,7 @@ function loadMyApps() {{
       var status = a.running ? 'running' : 'stopped';
       var hostname = window.location.pathname.split('/')[2] || '';
       var appUrl = '/app/' + hostname + '/';
-      if (a.port && a.port !== 3000) appUrl = '/app/' + hostname + ':' + a.port + '/';
+      if (a.port && a.port !== 3000) appUrl = '/app/' + hostname + '/?_port=' + a.port;
       list.appendChild(buildUnifiedAppItem({{
         name: a.name, path: a.path, type: a.type, port: a.port,
         status: status, app_url: a.running ? appUrl : null
@@ -2700,8 +2700,8 @@ function buildUnifiedAppItem(app) {{
   var meta = document.createElement('div'); meta.className = 'app-meta';
   var parts = [];
   if (app.version) parts.push(app.version);
-  if (app.port) parts.push('포트 ' + app.port);
-  if (app.path) parts.push(app.path);
+  if (status === 'running' && app.port) parts.push('포트 ' + app.port);
+  if (app.path) parts.push(app.path.replace('/home/node/workspace/', '~/'));
   meta.textContent = parts.join(' \u00b7 ');
   info.appendChild(meta);
   li.appendChild(info);
