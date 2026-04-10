@@ -786,7 +786,7 @@
             if (token) headers['Authorization'] = 'Bearer ' + token;
 
             return fetch(url, Object.assign({}, options, { headers: headers })).then(function(res) {
-                if (res.status === 401) {
+                if (res.status === 401 || res.status === 403) {
                     var returnUrl = encodeURIComponent(window.location.pathname);
                     window.location.href = '/webapp-login?return_url=' + returnUrl;
                     return Promise.reject(new Error('Unauthorized'));
