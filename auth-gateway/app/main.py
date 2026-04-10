@@ -355,6 +355,20 @@ async def error_page():
     return FileResponse(str(static_dir / "error.html"), media_type="text/html")
 
 
+@app.get("/hub/{path:path}")
+@app.get("/terminal/{path:path}")
+@app.get("/files/{path:path}")
+async def session_fallback(request: Request, path: str):
+    """Pod가 없을 때 main ingress를 통해 auth-gateway에 도달하는 요청 처리.
+
+    정상 상태: per-pod ingress가 직접 Pod로 라우팅 (이 핸들러 미도달)
+    비정상 상태: Pod/ingress 삭제됨 → main ingress → auth-gateway → 이 핸들러
+    """
+    from starlette.responses import RedirectResponse
+    original_uri = str(request.url.path)
+    return RedirectResponse(url=f"/error?code=503&uri={original_uri}", status_code=302)
+
+
 @app.get("/webapp-login")
 async def webapp_login():
     """경량 로그인 페이지 — SSO+2FA 인증만, Pod 미생성."""
