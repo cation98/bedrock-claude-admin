@@ -243,6 +243,13 @@ async def auth_check(
             detail="앱을 찾을 수 없거나 접근 권한이 없습니다",
         )
 
+    # 5-1. 회수된 앱 차단
+    if app.status == "suspended":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="이 앱은 소유자에 의해 회수되어 접근할 수 없습니다",
+        )
+
     # 5-2. ACL 검사 (5-type grant)
     # 요청자의 프로필 조회
     requesting_user = db.query(User).filter(User.username == requesting_username.upper()).first()
@@ -443,7 +450,7 @@ async def list_gallery_apps(
     query = (
         db.query(DeployedApp, User)
         .outerjoin(User, DeployedApp.owner_username == User.username)
-        .filter(DeployedApp.status != "deleted")
+        .filter(DeployedApp.status.notin_(["deleted", "suspended"]))
     )
     if requesting_role != "admin":
         query = query.filter(
@@ -948,6 +955,59 @@ async def undeploy_app(
 
     logger.info(f"App undeployed: {username}/{app_name}")
     return {"deleted": True, "app_name": app_name}
+
+
+@router.post("/{app_name}/suspend")
+async def suspend_app(
+    app_name: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """앱 회수 (소유자만 가능). 서비스 중단 + 비공개 전환. ACL은 유지."""
+    username = current_user["sub"]
+    app = _get_owned_app(app_name, username, db)
+
+    if app.status == "suspended":
+        raise HTTPException(status_code=400, detail="이미 회수된 앱입니다")
+
+    app.status = "suspended"
+    app.updated_at = datetime.now(timezone.utc)
+    db.commit()
+
+    logger.info(f"App suspended: {username}/{app_name} (ACL retained)")
+    return {"suspended": True, "app_name": app_name}
+
+
+@router.post("/{app_name}/resume", response_model=DeployedAppResponse)
+async def resume_app(
+    app_name: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """앱 재배포 (소유자만 가능). 회수된 앱을 다시 서비스."""
+    username = current_user["sub"]
+
+    # suspended 상태만 허용 (_get_owned_app은 deleted 제외)
+    app = (
+        db.query(DeployedApp)
+        .filter(
+            DeployedApp.app_name == app_name,
+            DeployedApp.status == "suspended",
+        )
+        .first()
+    )
+    if not app:
+        raise HTTPException(status_code=404, detail="회수된 앱을 찾을 수 없습니다")
+    if app.owner_username != username:
+        raise HTTPException(status_code=403, detail="앱 소유자만 이 작업을 수행할 수 있습니다")
+
+    app.status = "deployed"
+    app.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(app)
+
+    logger.info(f"App resumed: {username}/{app_name}")
+    return DeployedAppResponse.model_validate(app)
 
 
 @router.post("/{app_name}/rollback", response_model=DeployedAppResponse)

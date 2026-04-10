@@ -1324,6 +1324,7 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
   .badge-yellow {{ background: #3d2e00; color: #d29922; }}
   .status-badge {{ display:inline-block; padding:2px 8px; border-radius:10px; font-size:0.7rem; font-weight:600; }}
   .status-deployed {{ background:#1a3a2a; color:#3fb950; }}
+  .status-suspended {{ background:#3d2e00; color:#d29922; }}
   .status-running {{ background:#1f3a5f; color:#58a6ff; }}
   .status-stopped {{ background:#21262d; color:#8b949e; }}
   .status-deleted {{ background:#3d1f1f; color:#f85149; opacity:0.6; }}
@@ -2101,7 +2102,7 @@ function loadMyApps() {{
     list.replaceChildren();
     platformApps.forEach(function(a) {{
       list.appendChild(buildUnifiedAppItem({{
-        name: a.app_name, app_name: a.app_name, status: 'deployed',
+        name: a.app_name, app_name: a.app_name, status: a.status || 'deployed',
         app_url: a.app_url, version: a.version, visibility: a.visibility,
         dau: a.dau, mau: a.mau, acl_count: a.acl_count,
         is_platform: true
@@ -2307,6 +2308,33 @@ function undeployApp(appName) {{
   if (!confirm(appName + ' \uc571\uc744 \uc0ad\uc81c\ud569\ub2c8\ub2e4. \uc774 \uc791\uc5c5\uc740 \ub418\ub3cc\ub9b4 \uc218 \uc5c6\uc2b5\ub2c8\ub2e4.')) return;
   apiFetch('/apps/' + appName, {{ method: 'DELETE' }})
     .then(function() {{ loadMyApps(); }});
+}}
+
+function suspendApp(appName) {{
+  if (!confirm(appName + ' \uc571\uc744 \ud68c\uc218\ud569\ub2c8\ub2e4. \uc11c\ube44\uc2a4\uac00 \uc911\ub2e8\ub418\uace0 \uc811\uadfc\uc774 \ucc28\ub2e8\ub429\ub2c8\ub2e4.\nACL\uc740 \uc720\uc9c0\ub418\uba70, \uc7ac\ubc30\ud3ec\ub85c \ubcf5\uc6d0\ud560 \uc218 \uc788\uc2b5\ub2c8\ub2e4.')) return;
+  apiFetch('/apps/' + appName + '/suspend', {{ method: 'POST' }})
+    .then(function(data) {{
+      if (data && data.suspended) {{
+        var t = document.getElementById('hubToast');
+        t.textContent = appName + ' \uc571\uc774 \ud68c\uc218\ub418\uc5c8\uc2b5\ub2c8\ub2e4.';
+        t.style.display = 'block';
+        setTimeout(function() {{ t.style.display = 'none'; }}, 2500);
+      }}
+      loadMyApps();
+    }}).catch(function() {{}});
+}}
+
+function resumeApp(appName) {{
+  apiFetch('/apps/' + appName + '/resume', {{ method: 'POST' }})
+    .then(function(data) {{
+      if (data && data.app_name) {{
+        var t = document.getElementById('hubToast');
+        t.textContent = appName + ' \uc571\uc774 \uc7ac\ubc30\ud3ec\ub418\uc5c8\uc2b5\ub2c8\ub2e4.';
+        t.style.display = 'block';
+        setTimeout(function() {{ t.style.display = 'none'; }}, 2500);
+      }}
+      loadMyApps();
+    }}).catch(function() {{}});
 }}
 
 // ── 통계 모달 ──
@@ -3532,6 +3560,7 @@ function buildUnifiedAppItem(app) {{
   var badge = document.createElement('span'); badge.className = 'status-badge';
   var status = app.status || 'stopped';
   if (status === 'deployed') {{ badge.className += ' status-deployed'; badge.textContent = '배포됨'; }}
+  else if (status === 'suspended') {{ badge.className += ' status-suspended'; badge.textContent = '회수됨'; }}
   else if (status === 'running') {{ badge.className += ' status-running'; badge.textContent = '실행중'; }}
   else if (status === 'deleted') {{ badge.className += ' status-deleted'; badge.textContent = '삭제됨'; }}
   else {{ badge.className += ' status-stopped'; badge.textContent = '미실행'; }}
@@ -3580,11 +3609,30 @@ function buildUnifiedAppItem(app) {{
       mmsBtn.textContent = 'MMS';
       mmsBtn.onclick = function() {{ openMmsModal(app.app_name); }};
       actions.appendChild(mmsBtn);
+      var suspendBtn = document.createElement('button'); suspendBtn.className = 'btn-sm';
+      suspendBtn.style.borderColor = '#d29922'; suspendBtn.style.color = '#d29922';
+      suspendBtn.textContent = '회수';
+      suspendBtn.onclick = function() {{ suspendApp(app.app_name); }};
+      actions.appendChild(suspendBtn);
       var delBtn = document.createElement('button'); delBtn.className = 'btn-sm danger';
       delBtn.textContent = '삭제';
       delBtn.onclick = function() {{ undeployApp(app.app_name); }};
       actions.appendChild(delBtn);
     }}
+  }} else if (status === 'suspended' && app.is_platform) {{
+    var resumeBtn = document.createElement('button'); resumeBtn.className = 'btn-sm';
+    resumeBtn.style.borderColor = '#238636'; resumeBtn.style.color = '#3fb950';
+    resumeBtn.textContent = '재배포';
+    resumeBtn.onclick = function() {{ resumeApp(app.app_name); }};
+    actions.appendChild(resumeBtn);
+    var aclBtn2 = document.createElement('button'); aclBtn2.className = 'btn-sm';
+    aclBtn2.textContent = '접근 관리';
+    aclBtn2.onclick = function() {{ openAclModal(app.app_name); }};
+    actions.appendChild(aclBtn2);
+    var delBtn2 = document.createElement('button'); delBtn2.className = 'btn-sm danger';
+    delBtn2.textContent = '삭제';
+    delBtn2.onclick = function() {{ undeployApp(app.app_name); }};
+    actions.appendChild(delBtn2);
   }} else if (status === 'running') {{
     var openBtn = document.createElement('a'); openBtn.className = 'btn-sm';
     openBtn.href = app.app_url || '#'; openBtn.target = '_blank'; openBtn.textContent = '열기';
