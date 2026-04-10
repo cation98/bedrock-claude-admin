@@ -525,8 +525,6 @@ class K8sService:
                     "nginx.ingress.kubernetes.io/enable-websocket": "true",
                     "nginx.ingress.kubernetes.io/proxy-body-size": "100m",
                     "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
-                    "nginx.ingress.kubernetes.io/custom-http-errors": "502,503,504",
-                    "nginx.ingress.kubernetes.io/default-backend": "platform/auth-gateway",
                 },
             ),
             spec=client.V1IngressSpec(
@@ -570,6 +568,7 @@ class K8sService:
         except ApiException as e:
             if e.status != 409:
                 logger.error(f"Failed to create ingress: {e}")
+                raise K8sServiceError(f"Failed to create ingress {pod_name}: {e.reason}")
 
         # 2) 허브 포탈 Ingress (auth-url 보호: 본인 + admin만)
         # /hub/{pod_name}/ → /portal (Hub 페이지)
@@ -585,8 +584,6 @@ class K8sService:
                         "/api/v1/files/files-auth-check"
                     ),
                     "nginx.ingress.kubernetes.io/auth-response-headers": "X-Auth-Username",
-                    "nginx.ingress.kubernetes.io/custom-http-errors": "502,503,504",
-                    "nginx.ingress.kubernetes.io/default-backend": "platform/auth-gateway",
                 },
             ),
             spec=client.V1IngressSpec(
@@ -618,6 +615,7 @@ class K8sService:
         except ApiException as e:
             if e.status != 409:
                 logger.error(f"Failed to create hub ingress: {e}")
+                raise K8sServiceError(f"Failed to create hub ingress {pod_name}: {e.reason}")
 
         # 3) /files/ Ingress (auth-url 보호: 본인 Pod + admin만 접근)
         files_ingress = client.V1Ingress(
@@ -635,8 +633,6 @@ class K8sService:
                     "nginx.ingress.kubernetes.io/auth-signin": (
                         "https://claude.skons.net/api/v1/files/files-unauthorized"
                     ),
-                    "nginx.ingress.kubernetes.io/custom-http-errors": "502,503,504",
-                    "nginx.ingress.kubernetes.io/default-backend": "platform/auth-gateway",
                 },
             ),
             spec=client.V1IngressSpec(
@@ -668,6 +664,7 @@ class K8sService:
         except ApiException as e:
             if e.status != 409:
                 logger.error(f"Failed to create files ingress: {e}")
+                raise K8sServiceError(f"Failed to create files ingress {pod_name}: {e.reason}")
 
     def delete_pod(self, pod_name: str, username: str | None = None) -> bool:
         """Pod + Service + Ingress + Token Secret 삭제.
