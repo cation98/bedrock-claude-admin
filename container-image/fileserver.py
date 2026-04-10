@@ -2311,7 +2311,7 @@ function undeployApp(appName) {{
 }}
 
 function suspendApp(appName) {{
-  if (!confirm(appName + ' \uc571\uc744 \ud68c\uc218\ud569\ub2c8\ub2e4. \uc11c\ube44\uc2a4\uac00 \uc911\ub2e8\ub418\uace0 \uc811\uadfc\uc774 \ucc28\ub2e8\ub429\ub2c8\ub2e4.\nACL\uc740 \uc720\uc9c0\ub418\uba70, \uc7ac\ubc30\ud3ec\ub85c \ubcf5\uc6d0\ud560 \uc218 \uc788\uc2b5\ub2c8\ub2e4.')) return;
+  if (!confirm(appName + ' \uc571\uc744 \ud68c\uc218\ud569\ub2c8\ub2e4. \uc11c\ube44\uc2a4\uac00 \uc911\ub2e8\ub418\uace0 \uc811\uadfc\uc774 \ucc28\ub2e8\ub429\ub2c8\ub2e4.\\nACL\uc740 \uc720\uc9c0\ub418\uba70, \uc7ac\ubc30\ud3ec\ub85c \ubcf5\uc6d0\ud560 \uc218 \uc788\uc2b5\ub2c8\ub2e4.')) return;
   apiFetch('/apps/' + appName + '/suspend', {{ method: 'POST' }})
     .then(function(data) {{
       if (data && data.suspended) {{
