@@ -1333,6 +1333,32 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
   .app-list.scrollable::-webkit-scrollbar-track {{ background: #30363d; border-radius: 3px; }}
   .app-list.scrollable::-webkit-scrollbar-thumb {{ background: #484f58; border-radius: 3px; }}
   .app-list.scrollable::-webkit-scrollbar-thumb:hover {{ background: #6e7681; }}
+
+  /* Metric badges */
+  .metric-badge {{ display:inline-block; padding:2px 8px; border-radius:10px; font-size:0.68rem;
+    background:#21262d; color:#8b949e; }}
+  .metric-badge span {{ font-weight:600; color:#58a6ff; }}
+
+  /* Stats modal */
+  .stat-card {{ flex:1; background:#0d1117; border:1px solid #30363d; border-radius:8px; padding:12px; text-align:center; }}
+  .stat-value {{ font-size:1.4rem; font-weight:700; color:#58a6ff; }}
+  .stat-label {{ font-size:0.72rem; color:#8b949e; margin-top:4px; }}
+  .dau-chart {{ display:flex; align-items:flex-end; gap:2px; height:120px; padding:8px 0; overflow-x:auto; }}
+  .bar-group {{ display:flex; flex-direction:column; align-items:center; flex:1; min-width:12px; }}
+  .bar {{ background:#58a6ff; border-radius:2px 2px 0 0; min-height:2px; width:100%; position:relative; transition:height 0.3s; }}
+  .bar:hover {{ background:#79c0ff; }}
+  .bar-tooltip {{ display:none; position:absolute; top:-24px; left:50%; transform:translateX(-50%);
+    background:#21262d; color:#e6edf3; padding:2px 6px; border-radius:4px; font-size:0.68rem; white-space:nowrap; z-index:10; }}
+  .bar:hover .bar-tooltip {{ display:block; }}
+  .bar-label {{ font-size:0.55rem; color:#484f58; margin-top:2px; writing-mode:vertical-rl; }}
+  .visitors-table {{ width:100%; border-collapse:collapse; font-size:0.78rem; }}
+  .visitors-table th {{ text-align:left; color:#8b949e; font-weight:500; padding:6px 8px; border-bottom:1px solid #30363d; }}
+  .visitors-table td {{ padding:6px 8px; color:#e6edf3; border-bottom:1px solid #21262d; }}
+
+  /* MMS modal textarea */
+  .mms-textarea {{ width:100%; padding:10px 12px; background:#0d1117; border:1px solid #30363d;
+    border-radius:6px; color:#e6edf3; font-size:0.85rem; resize:vertical; outline:none; font-family:inherit; }}
+  .mms-textarea:focus {{ border-color:#58a6ff; }}
   /* Share management */
   .share-check {{ margin-right:10px; accent-color:#58a6ff; }}
   .share-tag {{ display:inline-block; padding:1px 6px; border-radius:4px; font-size:0.68rem; font-weight:600; margin-right:6px; }}
@@ -1504,12 +1530,12 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
       <p>전사 공개 앱 둘러보기</p>
       <span class="badge badge-blue">새 탭에서 열기</span>
     </a>
-    <a class="card" href="/portal/" target="_blank" style="text-decoration:none;color:inherit">
+    <div class="card" style="cursor:pointer" onclick="openHubPage('apps')">
       <div class="icon">&#128202;</div>
       <h2>내 앱 관리</h2>
       <p>배포 통계·접근 권한 설정</p>
-      <span class="badge badge-blue">새 탭에서 열기</span>
-    </a>
+      <span class="badge badge-green">앱 관리</span>
+    </div>
     <div class="card" style="cursor:pointer" onclick="openHubPage('skills')">
       <div class="icon">&#128161;</div>
       <h2>스킬 공유</h2>
@@ -1751,16 +1777,84 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
 
   <!-- ACL 관리 모달 -->
   <div class="modal-overlay" id="aclModal">
-    <div class="modal" style="position:relative;">
+    <div class="modal" style="position:relative;width:460px;">
       <button class="close-btn" onclick="closeAclModal()">&times;</button>
       <h3>접근 권한 관리 — <span id="aclAppName"></span></h3>
-      <div class="search-box">
-        <input type="text" id="aclSearchInput" placeholder="사번 또는 이름 검색..." onkeypress="if(event.key==='Enter')searchUsers()">
-        <button class="search-btn" onclick="searchUsers()">검색</button>
+      <!-- Grant type selector -->
+      <div style="margin-bottom:14px;">
+        <label style="font-size:0.78rem;color:#8b949e;display:block;margin-bottom:6px;">접근 유형</label>
+        <select id="aclGrantType" onchange="onAclGrantTypeChange()" style="width:100%;padding:8px 12px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font-size:0.85rem;">
+          <option value="user">사용자 (개인)</option>
+          <option value="team">팀</option>
+          <option value="region">지역</option>
+          <option value="job">직책</option>
+          <option value="company">전사 공개</option>
+        </select>
       </div>
-      <div id="searchResults"></div>
-      <h4 style="font-size:0.85rem;color:#8b949e;margin:12px 0 8px;">현재 허용된 사용자</h4>
+      <!-- Panel: user search (default) -->
+      <div id="aclUserPanel">
+        <div class="search-box">
+          <input type="text" id="aclSearchInput" placeholder="사번 또는 이름 검색..." onkeypress="if(event.key==='Enter')searchUsers()">
+          <button class="search-btn" onclick="searchUsers()">검색</button>
+        </div>
+        <div id="searchResults"></div>
+      </div>
+      <!-- Panel: dropdown select (team/region/job) -->
+      <div id="aclSelectPanel" style="display:none;margin-bottom:12px;">
+        <div style="display:flex;gap:8px;">
+          <select id="aclGrantValueSelect" style="flex:1;padding:8px 12px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font-size:0.85rem;">
+            <option value="">선택하세요</option>
+          </select>
+          <button class="search-btn" onclick="grantAccessByType()" style="white-space:nowrap;">추가</button>
+        </div>
+      </div>
+      <h4 style="font-size:0.85rem;color:#8b949e;margin:12px 0 8px;">현재 접근 권한</h4>
       <ul class="acl-list" id="aclUserList"></ul>
+    </div>
+  </div>
+
+  <!-- 통계 모달 -->
+  <div id="statsModal" class="modal-overlay">
+    <div class="modal" style="width:560px;max-width:90vw;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+        <h3><span id="statsAppName"></span> 통계</h3>
+        <button class="btn-sm" onclick="closeStatsModal()">닫기</button>
+      </div>
+      <div style="display:flex;gap:16px;margin-bottom:20px;">
+        <div class="stat-card"><div class="stat-value" id="statDau">-</div><div class="stat-label">오늘 DAU</div></div>
+        <div class="stat-card"><div class="stat-value" id="statMau">-</div><div class="stat-label">이번 달 MAU</div></div>
+        <div class="stat-card"><div class="stat-value" id="statTotal">-</div><div class="stat-label">총 조회수</div></div>
+      </div>
+      <div style="margin-bottom:16px;">
+        <h4 style="font-size:0.85rem;color:#8b949e;margin-bottom:10px;">30일 DAU</h4>
+        <div id="dauChart" class="dau-chart"></div>
+      </div>
+      <div>
+        <h4 style="font-size:0.85rem;color:#8b949e;margin-bottom:10px;">최근 방문자</h4>
+        <table class="visitors-table">
+          <thead><tr><th>사번</th><th>이름</th><th>부서</th><th>방문일시</th></tr></thead>
+          <tbody id="visitorsBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- MMS 공유 모달 -->
+  <div id="mmsModal" class="modal-overlay">
+    <div class="modal" style="width:460px;">
+      <h3 style="margin-bottom:16px;"><span id="mmsAppName"></span> MMS 공유</h3>
+      <p style="font-size:0.78rem;color:#8b949e;margin-bottom:12px;">ACL에 등록된 사용자에게 앱 공유 MMS를 발송합니다.</p>
+      <textarea id="mmsMessage" class="mms-textarea" rows="4" maxlength="500" placeholder="공유 메시지를 입력하세요..."
+        oninput="document.getElementById('mmsCharCount').textContent=this.value.length"></textarea>
+      <div style="display:flex;justify-content:space-between;font-size:0.72rem;color:#8b949e;margin:6px 0 12px;">
+        <span><span id="mmsCharCount">0</span>/500자</span>
+      </div>
+      <div id="mmsError" style="display:none;color:#da3633;font-size:0.82rem;margin-bottom:12px;padding:8px;background:#3d1114;border-radius:6px;"></div>
+      <div id="mmsSuccess" style="display:none;color:#3fb950;font-size:0.82rem;margin-bottom:12px;padding:8px;background:#0d2818;border-radius:6px;"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <button class="btn-sm" onclick="closeMmsModal()">취소</button>
+        <button class="btn-sm" id="mmsSendBtn" style="border-color:#238636;color:#3fb950;" onclick="sendMmsFromHub()">발송</button>
+      </div>
     </div>
   </div>
 
@@ -1997,28 +2091,34 @@ function loadMyApps() {{
     var section = document.getElementById('myAppsSection');
     var list = document.getElementById('myAppsList');
     var count = document.getElementById('myAppsCount');
-    // 플랫폼 배포 앱 이름 세트 (중복 방지)
     var deployedNames = {{}};
     platformApps.forEach(function(a) {{ deployedNames[a.app_name] = true; }});
-    // 로컬 전용 앱 (플랫폼에 없는 것만)
     var localOnly = localApps.filter(function(a) {{ return !deployedNames[a.name]; }});
     var total = platformApps.length + localOnly.length;
     if (total === 0) {{ return; }}
     section.style.display = 'block';
     count.textContent = '(' + total + ')';
     list.replaceChildren();
-    platformApps.forEach(function(a) {{ list.appendChild(buildAppItem(a, true)); }});
+    platformApps.forEach(function(a) {{
+      list.appendChild(buildUnifiedAppItem({{
+        name: a.app_name, app_name: a.app_name, status: 'deployed',
+        app_url: a.app_url, version: a.version, visibility: a.visibility,
+        dau: a.dau, mau: a.mau, acl_count: a.acl_count,
+        is_platform: true
+      }}));
+    }});
     localOnly.forEach(function(a) {{
       var status = a.running ? 'running' : 'stopped';
       var appUrl = fileserverBase + '/webapp/' + a.port + '/';
       list.appendChild(buildUnifiedAppItem({{
         name: a.name, path: a.path, type: a.type, port: a.port,
-        status: status, app_url: a.running ? appUrl : null
+        status: status, app_url: a.running ? appUrl : null,
+        is_platform: false
       }}));
     }});
   }}
 
-  apiFetch('/apps/my').then(function(data) {{
+  apiFetch('/portal/my-apps').then(function(data) {{
     platformApps = data.apps || [];
     render();
   }}).catch(function() {{ render(); }});
@@ -2043,10 +2143,21 @@ function loadSharedApps() {{
   }}).catch(function() {{}});
 }}
 
+var aclOptions = null;
+function loadAclOptions() {{
+  if (aclOptions) return;
+  apiFetch('/portal/acl-options').then(function(data) {{
+    if (data && data.teams) aclOptions = data;
+  }}).catch(function() {{}});
+}}
+
 var currentAclApp = '';
 function openAclModal(appName) {{
   currentAclApp = appName;
   document.getElementById('aclAppName').textContent = appName;
+  document.getElementById('aclGrantType').value = 'user';
+  document.getElementById('aclUserPanel').style.display = '';
+  document.getElementById('aclSelectPanel').style.display = 'none';
   document.getElementById('aclModal').classList.add('active');
   document.getElementById('aclSearchInput').value = '';
   document.getElementById('searchResults').replaceChildren();
@@ -2143,10 +2254,192 @@ function revokeAccess(aclId) {{
     .then(function() {{ loadAclUsers(currentAclApp); }});
 }}
 
+function onAclGrantTypeChange() {{
+  var type = document.getElementById('aclGrantType').value;
+  document.getElementById('aclUserPanel').style.display = (type === 'user') ? '' : 'none';
+  document.getElementById('aclSelectPanel').style.display = (type !== 'user' && type !== 'company') ? '' : 'none';
+  if (type === 'company') {{
+    if (confirm('전사 공개로 설정합니다. 모든 임직원이 접근 가능해집니다.')) {{
+      grantAccessByType();
+    }}
+    document.getElementById('aclGrantType').value = 'user';
+    onAclGrantTypeChange();
+    return;
+  }}
+  if (type !== 'user') {{ populateAclSelect(type); }}
+}}
+
+function populateAclSelect(type) {{
+  var sel = document.getElementById('aclGrantValueSelect');
+  sel.replaceChildren();
+  var def = document.createElement('option'); def.value = ''; def.textContent = '선택하세요'; sel.appendChild(def);
+  var items = [];
+  if (aclOptions) {{
+    if (type === 'team') items = aclOptions.teams || [];
+    else if (type === 'region') items = aclOptions.regions || [];
+    else if (type === 'job') items = aclOptions.jobs || [];
+  }}
+  items.forEach(function(o) {{
+    var opt = document.createElement('option'); opt.value = o; opt.textContent = o; sel.appendChild(opt);
+  }});
+}}
+
+function grantAccessByType() {{
+  var type = document.getElementById('aclGrantType').value;
+  var value = (type === 'company') ? '*' : document.getElementById('aclGrantValueSelect').value;
+  if (type !== 'company' && !value) {{ return; }}
+  apiFetch('/apps/' + currentAclApp + '/acl', {{
+    method: 'POST',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify({{grant_type: type, grant_value: value}})
+  }}).then(function() {{
+    loadAclUsers(currentAclApp);
+    var sel = document.getElementById('aclGrantValueSelect');
+    if (sel.options.length > 0) sel.selectedIndex = 0;
+    var t = document.getElementById('hubToast');
+    t.textContent = type + ' 접근 권한이 추가되었습니다.';
+    t.style.display = 'block';
+    setTimeout(function() {{ t.style.display = 'none'; }}, 2000);
+  }}).catch(function() {{}});
+}}
+
 function undeployApp(appName) {{
   if (!confirm(appName + ' \uc571\uc744 \uc0ad\uc81c\ud569\ub2c8\ub2e4. \uc774 \uc791\uc5c5\uc740 \ub418\ub3cc\ub9b4 \uc218 \uc5c6\uc2b5\ub2c8\ub2e4.')) return;
   apiFetch('/apps/' + appName, {{ method: 'DELETE' }})
     .then(function() {{ loadMyApps(); }});
+}}
+
+// ── 통계 모달 ──
+function openStatsModal(appName) {{
+  document.getElementById('statsAppName').textContent = appName;
+  document.getElementById('statDau').textContent = '-';
+  document.getElementById('statMau').textContent = '-';
+  document.getElementById('statTotal').textContent = '-';
+  document.getElementById('dauChart').replaceChildren();
+  document.getElementById('visitorsBody').replaceChildren();
+  document.getElementById('statsModal').classList.add('active');
+  loadAppStats(appName);
+}}
+function closeStatsModal() {{ document.getElementById('statsModal').classList.remove('active'); }}
+
+function loadAppStats(appName) {{
+  apiFetch('/portal/apps/' + encodeURIComponent(appName) + '/stats').then(function(data) {{
+    document.getElementById('statDau').textContent = data.dau_today || 0;
+    document.getElementById('statMau').textContent = data.mau || 0;
+    document.getElementById('statTotal').textContent = data.total_views || 0;
+    renderStatsBarChart(data.dau_series || []);
+    renderStatsVisitors(data.recent_visitors || []);
+  }}).catch(function() {{
+    var chart = document.getElementById('dauChart');
+    chart.replaceChildren();
+    var msg = document.createElement('div');
+    msg.style.cssText = 'color:#484f58;font-size:0.82rem;text-align:center;padding:20px 0;';
+    msg.textContent = '통계를 불러올 수 없습니다.';
+    chart.appendChild(msg);
+  }});
+}}
+
+function renderStatsBarChart(series) {{
+  var chart = document.getElementById('dauChart');
+  chart.replaceChildren();
+  if (!series.length) {{
+    var msg = document.createElement('div');
+    msg.style.cssText = 'color:#484f58;font-size:0.82rem;text-align:center;padding:20px 0;';
+    msg.textContent = 'DAU 데이터가 없습니다.';
+    chart.appendChild(msg); return;
+  }}
+  var maxVal = 1;
+  series.forEach(function(d) {{ if (d.visitors > maxVal) maxVal = d.visitors; }});
+  series.forEach(function(d) {{
+    var pct = Math.max((d.visitors / maxVal) * 100, 1.5);
+    var group = document.createElement('div'); group.className = 'bar-group';
+    var bar = document.createElement('div'); bar.className = 'bar'; bar.style.height = pct + '%';
+    var tooltip = document.createElement('span'); tooltip.className = 'bar-tooltip';
+    tooltip.textContent = d.visitors + '명';
+    bar.appendChild(tooltip);
+    var label = document.createElement('span'); label.className = 'bar-label';
+    label.textContent = (d.date || '').slice(5);
+    group.appendChild(bar); group.appendChild(label);
+    chart.appendChild(group);
+  }});
+}}
+
+function renderStatsVisitors(visitors) {{
+  var tbody = document.getElementById('visitorsBody');
+  tbody.replaceChildren();
+  if (!visitors.length) {{
+    var tr = document.createElement('tr');
+    var td = document.createElement('td'); td.colSpan = 4;
+    td.style.cssText = 'color:#484f58;font-size:0.82rem;text-align:center;padding:16px 0;';
+    td.textContent = '방문 기록이 없습니다.';
+    tr.appendChild(td); tbody.appendChild(tr); return;
+  }}
+  visitors.forEach(function(v) {{
+    var tr = document.createElement('tr');
+    var fields = [v.username || '-', v.name || '-', v.team_name || '-',
+      v.visited_at ? v.visited_at.replace('T', ' ').slice(0, 16) : '-'];
+    fields.forEach(function(text) {{
+      var td = document.createElement('td'); td.textContent = text; tr.appendChild(td);
+    }});
+    tbody.appendChild(tr);
+  }});
+}}
+
+// ── MMS 공유 모달 ──
+var currentMmsApp = '';
+function openMmsModal(appName) {{
+  currentMmsApp = appName;
+  document.getElementById('mmsAppName').textContent = appName;
+  document.getElementById('mmsMessage').value = '';
+  document.getElementById('mmsCharCount').textContent = '0';
+  document.getElementById('mmsError').style.display = 'none';
+  document.getElementById('mmsSuccess').style.display = 'none';
+  var sendBtn = document.getElementById('mmsSendBtn');
+  sendBtn.disabled = false; sendBtn.textContent = '발송';
+  document.getElementById('mmsModal').classList.add('active');
+}}
+function closeMmsModal() {{ document.getElementById('mmsModal').classList.remove('active'); }}
+
+function sendMmsFromHub() {{
+  var msg = document.getElementById('mmsMessage').value.trim();
+  if (!msg) {{
+    document.getElementById('mmsError').textContent = '메시지를 입력해주세요.';
+    document.getElementById('mmsError').style.display = 'block'; return;
+  }}
+  var sendBtn = document.getElementById('mmsSendBtn');
+  sendBtn.disabled = true; sendBtn.textContent = '발송 중...';
+  document.getElementById('mmsError').style.display = 'none';
+  document.getElementById('mmsSuccess').style.display = 'none';
+
+  apiFetch('/portal/apps/' + encodeURIComponent(currentMmsApp) + '/share-mms', {{
+    method: 'POST',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify({{message: msg}})
+  }}).then(function(data) {{
+    if (data && data.detail) {{
+      var detail = data.detail;
+      if (typeof detail === 'object' && detail.error === 'content_violation') {{
+        document.getElementById('mmsError').textContent = '\ud83d\udeab ' + (detail.warning || '부적절한 내용이 감지되었습니다.');
+        document.getElementById('mmsError').style.display = 'block';
+        return;
+      }}
+      document.getElementById('mmsError').textContent = typeof detail === 'string' ? detail : 'MMS 발송에 실패했습니다.';
+      document.getElementById('mmsError').style.display = 'block';
+      return;
+    }}
+    var successEl = document.getElementById('mmsSuccess');
+    successEl.textContent = '\u2705 ' + (data.sent || 0) + '명에게 MMS가 발송되었습니다.';
+    if (data.blocked_users && data.blocked_users.length > 0) {{
+      successEl.textContent += ' (발송 실패: ' + data.blocked_users.length + '명)';
+    }}
+    successEl.style.display = 'block';
+    setTimeout(closeMmsModal, 2500);
+  }}).catch(function(err) {{
+    document.getElementById('mmsError').textContent = err.message || 'MMS 발송에 실패했습니다.';
+    document.getElementById('mmsError').style.display = 'block';
+  }}).finally(function() {{
+    sendBtn.disabled = false; sendBtn.textContent = '발송';
+  }});
 }}
 
 // ── 웹앱 공유(배포) 모달 ──
@@ -2771,6 +3064,12 @@ function openHubPage(pageId) {{
   if (pageId === 'guide') {{
     loadGuides();
   }}
+  if (pageId === 'apps') {{
+    loadMyApps();
+    loadSharedApps();
+    loadMyShares();
+    loadAclOptions();
+  }}
 }}
 
 function backToHub() {{
@@ -3214,19 +3513,21 @@ function loadAppStatus() {{
 }}
 
 function buildUnifiedAppItem(app) {{
-  var li = document.createElement('li'); li.className = 'app-item';
+  var li = document.createElement('li'); li.className = 'app-item'; li.style.flexWrap = 'wrap';
   var info = document.createElement('div'); info.className = 'app-info';
   var nameRow = document.createElement('div'); nameRow.style.display = 'flex'; nameRow.style.alignItems = 'center'; nameRow.style.gap = '8px';
   var nameEl = document.createElement('span'); nameEl.className = 'app-name'; nameEl.style.cursor = 'default';
   nameEl.textContent = app.name || app.app_name || '';
   nameRow.appendChild(nameEl);
-  // Edit button
-  var editBtn = document.createElement('span');
-  editBtn.textContent = '\u270f\ufe0f';
-  editBtn.style.cssText = 'cursor:pointer;font-size:0.75rem;';
-  editBtn.title = '이름 변경';
-  editBtn.onclick = function() {{ renameApp(app.name || app.app_name); }};
-  nameRow.appendChild(editBtn);
+  // Edit button (로컬 앱만)
+  if (!app.is_platform) {{
+    var editBtn = document.createElement('span');
+    editBtn.textContent = '\u270f\ufe0f';
+    editBtn.style.cssText = 'cursor:pointer;font-size:0.75rem;';
+    editBtn.title = '이름 변경';
+    editBtn.onclick = function() {{ renameApp(app.name || app.app_name); }};
+    nameRow.appendChild(editBtn);
+  }}
   // Status badge
   var badge = document.createElement('span'); badge.className = 'status-badge';
   var status = app.status || 'stopped';
@@ -3236,6 +3537,19 @@ function buildUnifiedAppItem(app) {{
   else {{ badge.className += ' status-stopped'; badge.textContent = '미실행'; }}
   nameRow.appendChild(badge);
   info.appendChild(nameRow);
+  // DAU/MAU/ACL 뱃지 (플랫폼 앱만)
+  if (app.is_platform) {{
+    var badgeRow = document.createElement('div'); badgeRow.style.cssText = 'margin-top:4px;display:flex;gap:6px;';
+    var metrics = [['DAU', app.dau], ['MAU', app.mau], ['ACL', app.acl_count]];
+    metrics.forEach(function(m) {{
+      var mb = document.createElement('span'); mb.className = 'metric-badge';
+      mb.textContent = m[0] + ' ';
+      var v = document.createElement('span'); v.textContent = (m[1] || 0);
+      mb.appendChild(v);
+      badgeRow.appendChild(mb);
+    }});
+    info.appendChild(badgeRow);
+  }}
   var meta = document.createElement('div'); meta.className = 'app-meta';
   var parts = [];
   if (app.version) parts.push(app.version);
@@ -3245,20 +3559,32 @@ function buildUnifiedAppItem(app) {{
   info.appendChild(meta);
   li.appendChild(info);
   // Action buttons per state
-  var actions = document.createElement('div'); actions.className = 'app-actions';
+  var actions = document.createElement('div'); actions.className = 'app-actions'; actions.style.flexWrap = 'wrap';
   if (status === 'deployed') {{
     var openBtn = document.createElement('a'); openBtn.className = 'btn-sm';
     openBtn.href = app.app_url || '#'; openBtn.target = '_blank'; openBtn.textContent = '열기';
     openBtn.style.borderColor = '#58a6ff'; openBtn.style.color = '#58a6ff'; openBtn.style.textDecoration = 'none';
     actions.appendChild(openBtn);
-    var aclBtn = document.createElement('button'); aclBtn.className = 'btn-sm';
-    aclBtn.textContent = '접근 관리';
-    aclBtn.onclick = function() {{ openAclModal(app.app_name); }};
-    actions.appendChild(aclBtn);
-    var delBtn = document.createElement('button'); delBtn.className = 'btn-sm danger';
-    delBtn.textContent = '삭제';
-    delBtn.onclick = function() {{ undeployApp(app.app_name); }};
-    actions.appendChild(delBtn);
+    if (app.is_platform) {{
+      var statsBtn = document.createElement('button'); statsBtn.className = 'btn-sm';
+      statsBtn.style.borderColor = '#d29922'; statsBtn.style.color = '#d29922';
+      statsBtn.textContent = '통계';
+      statsBtn.onclick = function() {{ openStatsModal(app.app_name); }};
+      actions.appendChild(statsBtn);
+      var aclBtn = document.createElement('button'); aclBtn.className = 'btn-sm';
+      aclBtn.textContent = '접근 관리';
+      aclBtn.onclick = function() {{ openAclModal(app.app_name); }};
+      actions.appendChild(aclBtn);
+      var mmsBtn = document.createElement('button'); mmsBtn.className = 'btn-sm';
+      mmsBtn.style.borderColor = '#a371f7'; mmsBtn.style.color = '#a371f7';
+      mmsBtn.textContent = 'MMS';
+      mmsBtn.onclick = function() {{ openMmsModal(app.app_name); }};
+      actions.appendChild(mmsBtn);
+      var delBtn = document.createElement('button'); delBtn.className = 'btn-sm danger';
+      delBtn.textContent = '삭제';
+      delBtn.onclick = function() {{ undeployApp(app.app_name); }};
+      actions.appendChild(delBtn);
+    }}
   }} else if (status === 'running') {{
     var openBtn = document.createElement('a'); openBtn.className = 'btn-sm';
     openBtn.href = app.app_url || '#'; openBtn.target = '_blank'; openBtn.textContent = '열기';
