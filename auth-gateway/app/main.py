@@ -8,7 +8,7 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -336,8 +336,23 @@ app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 
 @app.get("/")
-async def root():
+async def root(request: Request):
+    """nginx custom-http-errors가 X-Code 헤더와 함께 전달하면 에러 페이지로 리다이렉트."""
+    x_code = request.headers.get("X-Code")
+    if x_code:
+        original_uri = request.headers.get("X-Original-URI", "")
+        from starlette.responses import RedirectResponse
+        return RedirectResponse(
+            url=f"/error?code={x_code}&uri={original_uri}",
+            status_code=302,
+        )
     return FileResponse(str(static_dir / "login.html"))
+
+
+@app.get("/error")
+async def error_page():
+    """커스텀 에러 페이지 — query param ?code=503&uri=/hub/... 으로 에러 정보 전달."""
+    return FileResponse(str(static_dir / "error.html"), media_type="text/html")
 
 
 @app.get("/webapp-login")
