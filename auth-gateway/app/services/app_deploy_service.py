@@ -335,7 +335,9 @@ class AppDeployService:
                         "http://auth-gateway.platform.svc.cluster.local"
                         "/api/v1/apps/auth-check"
                     ),
-                    "nginx.ingress.kubernetes.io/auth-response-headers": "X-Auth-Username",
+                    "nginx.ingress.kubernetes.io/auth-response-headers": (
+                        "X-Auth-Username, X-Auth-Name, X-Auth-Team, X-Auth-Region, X-Auth-Job"
+                    ),
                     # auth-signin: 401 반환 시 로그인 페이지로 리다이렉트
                     "nginx.ingress.kubernetes.io/auth-signin": (
                         "https://claude.skons.net/webapp-login"

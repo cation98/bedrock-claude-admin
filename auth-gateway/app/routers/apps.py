@@ -216,16 +216,25 @@ async def auth_check(
         )
     owner_username = owner.username
 
+    # 2-1. 요청자 프로필 조회 (앱에 사용자 정보 전달용)
+    requesting_user = db.query(User).filter(User.username == requesting_username.upper()).first()
+    _profile = {
+        "name": requesting_user.name if requesting_user else None,
+        "team": requesting_user.team_name if requesting_user else None,
+        "region": requesting_user.region_name if requesting_user else None,
+        "job": requesting_user.job_name if requesting_user else None,
+    } if requesting_user else None
+
     # 3. 관리자는 모든 앱에 접근 가능
     requesting_role = user_payload.get("role", "user")
     if requesting_role == "admin":
         await _maybe_record_view(original_uri, None, requesting_username)
-        return _auth_check_success(requesting_username)
+        return _auth_check_success(requesting_username, _profile)
 
     # 4. 앱 소유자는 자신의 앱에 접근 가능
     if requesting_username.upper() == owner_username.upper():
         await _maybe_record_view(original_uri, None, requesting_username)
-        return _auth_check_success(requesting_username)
+        return _auth_check_success(requesting_username, _profile)
 
     # 5. 앱 조회 (visibility + ACL 검사에 사용)
     app = (
@@ -250,10 +259,7 @@ async def auth_check(
             detail="이 앱은 소유자에 의해 회수되어 접근할 수 없습니다",
         )
 
-    # 5-2. ACL 검사 (5-type grant)
-    # 요청자의 프로필 조회
-    requesting_user = db.query(User).filter(User.username == requesting_username.upper()).first()
-
+    # 5-2. ACL 검사 (5-type grant) — requesting_user는 위에서 이미 조회됨
     active_acls = (
         db.query(AppACL)
         .filter(
@@ -288,18 +294,30 @@ async def auth_check(
         )
 
     await _maybe_record_view(original_uri, app.id, requesting_username)
-    return _auth_check_success(requesting_username)
+    return _auth_check_success(requesting_username, _profile)
 
 
-def _auth_check_success(username: str) -> dict:
-    """auth-check 성공 응답. X-Auth-Username 헤더를 포함한다.
+def _auth_check_success(username: str, user_profile: dict | None = None) -> dict:
+    """auth-check 성공 응답. 사용자 프로필 헤더를 포함한다.
 
-    NGINX Ingress는 auth-url 응답의 헤더를 upstream으로 전달할 수 있다.
-    auth_response_headers 설정으로 X-Auth-Username을 앱에 전달.
+    NGINX Ingress는 auth-url 응답의 헤더를 upstream(앱)으로 전달할 수 있다.
+    auth_response_headers 설정으로 X-Auth-* 헤더를 앱에 전달.
     """
+    headers = {"X-Auth-Username": username}
+    if user_profile:
+        # 한글 등 비 ASCII 문자는 URL-encode하여 헤더에 안전하게 전달
+        from urllib.parse import quote
+        if user_profile.get("name"):
+            headers["X-Auth-Name"] = quote(user_profile["name"], safe="")
+        if user_profile.get("team"):
+            headers["X-Auth-Team"] = quote(user_profile["team"], safe="")
+        if user_profile.get("region"):
+            headers["X-Auth-Region"] = quote(user_profile["region"], safe="")
+        if user_profile.get("job"):
+            headers["X-Auth-Job"] = quote(user_profile["job"], safe="")
     return JSONResponse(
         content={"authenticated": True, "username": username},
-        headers={"X-Auth-Username": username},
+        headers=headers,
     )
 
 

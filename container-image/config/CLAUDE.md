@@ -274,6 +274,20 @@ Pod에서 웹앱(대시보드 등)을 만들면 브라우저에서 접속할 수
 > 자체 인증, API 전용 서비스, 외부 도구 연동용 데이터 허브는 보안 정책상 구현할 수 없습니다.
 > 데이터 활용이 필요하면 관리자에게 공식 데이터 파이프라인을 요청하세요.
 
+### 배포된 앱에서 로그인 사용자 정보 획득
+
+배포된 앱(`deploy` 명령)은 Auth Gateway가 매 요청마다 사용자 프로필 헤더를 자동 주입합니다:
+
+| 헤더 | 설명 | 비고 |
+|------|------|------|
+| `X-Auth-Username` | 사번 | 항상 ASCII |
+| `X-Auth-Name` | 이름 | URL-encoded 한글 |
+| `X-Auth-Team` | 팀명 | URL-encoded 한글 |
+| `X-Auth-Region` | 지역 | URL-encoded 한글 |
+| `X-Auth-Job` | 직책 | URL-encoded 한글 |
+
+**한글 값은 URL-encoded 상태입니다.** Python: `urllib.parse.unquote()`, JS: `decodeURIComponent()`로 디코딩하세요. 상세 사용법은 `/webapp` 스킬을 참조하세요.
+
 ### 웹앱 실행 규칙 — 반드시 포트 3000 사용
 
 ```bash
