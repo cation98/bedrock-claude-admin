@@ -340,10 +340,13 @@ async def root(request: Request):
     """nginx custom-http-errors가 X-Code 헤더와 함께 전달하면 에러 페이지로 리다이렉트."""
     x_code = request.headers.get("X-Code")
     if x_code:
-        original_uri = request.headers.get("X-Original-URI", "")
+        import re
+        from urllib.parse import quote
         from starlette.responses import RedirectResponse
+        code = x_code if re.match(r"^\d{3}$", x_code) else "503"
+        original_uri = quote(request.headers.get("X-Original-URI", ""), safe="")
         return RedirectResponse(
-            url=f"/error?code={x_code}&uri={original_uri}",
+            url=f"/error?code={code}&uri={original_uri}",
             status_code=302,
         )
     return FileResponse(str(static_dir / "login.html"))

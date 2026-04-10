@@ -252,7 +252,8 @@ async def auth_check(
             detail="앱을 찾을 수 없거나 접근 권한이 없습니다",
         )
 
-    # 5-1. 회수된 앱 차단
+    # 5-1. 회수된 앱 차단 (소유자/admin은 위에서 이미 통과 — 의도적 설계:
+    #       소유자가 앱 상태 확인 후 재배포할 수 있어야 함)
     if app.status == "suspended":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -1005,21 +1006,20 @@ async def resume_app(
     """앱 재배포 (소유자만 가능). 회수된 앱을 다시 서비스."""
     username = current_user["sub"]
 
-    # suspended 상태만 허용 (_get_owned_app은 deleted 제외)
+    # suspended 상태 + 소유자 동시 필터 (정보 유출 방지: 비소유 앱도 404 반환)
     app = (
         db.query(DeployedApp)
         .filter(
             DeployedApp.app_name == app_name,
+            DeployedApp.owner_username == username,
             DeployedApp.status == "suspended",
         )
         .first()
     )
     if not app:
         raise HTTPException(status_code=404, detail="회수된 앱을 찾을 수 없습니다")
-    if app.owner_username != username:
-        raise HTTPException(status_code=403, detail="앱 소유자만 이 작업을 수행할 수 있습니다")
 
-    app.status = "deployed"
+    app.status = "running"
     app.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(app)
