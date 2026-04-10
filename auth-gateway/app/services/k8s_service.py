@@ -569,6 +569,9 @@ class K8sService:
             if e.status != 409:
                 logger.error(f"Failed to create ingress: {e}")
                 raise K8sServiceError(f"Failed to create ingress {pod_name}: {e.reason}")
+        except Exception as e:
+            logger.error(f"Unexpected error creating ingress {pod_name}: {e}")
+            raise K8sServiceError(f"Failed to create ingress {pod_name}: {e}")
 
         # 2) 허브 포탈 Ingress (auth-url 보호: 본인 + admin만)
         # /hub/{pod_name}/ → /portal (Hub 페이지)
@@ -616,6 +619,9 @@ class K8sService:
             if e.status != 409:
                 logger.error(f"Failed to create hub ingress: {e}")
                 raise K8sServiceError(f"Failed to create hub ingress {pod_name}: {e.reason}")
+        except Exception as e:
+            logger.error(f"Unexpected error creating hub ingress {pod_name}: {e}")
+            raise K8sServiceError(f"Failed to create hub ingress {pod_name}: {e}")
 
         # 3) /files/ Ingress (auth-url 보호: 본인 Pod + admin만 접근)
         files_ingress = client.V1Ingress(
@@ -665,6 +671,9 @@ class K8sService:
             if e.status != 409:
                 logger.error(f"Failed to create files ingress: {e}")
                 raise K8sServiceError(f"Failed to create files ingress {pod_name}: {e.reason}")
+        except Exception as e:
+            logger.error(f"Unexpected error creating files ingress {pod_name}: {e}")
+            raise K8sServiceError(f"Failed to create files ingress {pod_name}: {e}")
 
     def delete_pod(self, pod_name: str, username: str | None = None) -> bool:
         """Pod + Service + Ingress + Token Secret 삭제.
