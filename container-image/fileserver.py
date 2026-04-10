@@ -2419,7 +2419,7 @@ function sendMmsFromHub() {{
     if (data && data.detail) {{
       var detail = data.detail;
       if (typeof detail === 'object' && detail.error === 'content_violation') {{
-        document.getElementById('mmsError').textContent = '\ud83d\udeab ' + (detail.warning || '부적절한 내용이 감지되었습니다.');
+        document.getElementById('mmsError').textContent = '\\ud83d\\udeab ' + (detail.warning || '부적절한 내용이 감지되었습니다.');
         document.getElementById('mmsError').style.display = 'block';
         return;
       }}
