@@ -28,7 +28,12 @@ from app.models.bot import UserBot  # noqa: F401 — create_all이 user_bots 테
 from app.models.skill import SharedSkill, SkillInstall  # noqa: F401 — create_all이 skill_installs 테이블 생성하도록 import
 from app.models.file_governance import GovernedFile  # noqa: F401 — create_all이 governed_files 테이블 생성하도록 import
 from app.models.file_audit import FileAuditLog  # noqa: F401 — create_all이 file_audit_logs 테이블 생성하도록 import
+from app.models.announcement import Announcement  # noqa: F401 — create_all이 테이블 생성하도록 import
+from app.models.guide import Guide  # noqa: F401 — create_all이 guides 테이블 생성하도록 import
+from app.models.moderation import ModerationViolation  # noqa: F401 — create_all이 moderation_violations 테이블 생성하도록 import
 from app.routers import admin, apps, auth, bots, file_share, sessions, users, sms, skills, telegram, security, scheduling, infra_policy, surveys, app_proxy, portal
+from app.routers import announcements
+from app.routers.guides import router as guides_router
 from app.routers.file_governance import router as governance_router
 from app.routers.secure_files import router as secure_files_router
 from app.routers.viewers import router as viewers_router
@@ -318,6 +323,8 @@ app.include_router(portal.router)
 app.include_router(governance_router)
 app.include_router(secure_files_router)
 app.include_router(viewers_router)
+app.include_router(announcements.router)
+app.include_router(guides_router)
 # app_proxy는 catch-all 경로이므로 반드시 마지막에 등록
 app.include_router(app_proxy.router)
 

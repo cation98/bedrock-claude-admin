@@ -548,6 +548,56 @@
             .form-row { flex-direction: column; }
             .stats-grid { grid-template-columns: 1fr 1fr; }
         }
+
+        /* ── MMS Share ── */
+        .share-mms-btn {
+            background: #1a365d;
+            color: #93c5fd;
+            border: 1px solid #2563eb;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            margin-top: 12px;
+        }
+        .share-mms-btn:hover { background: #1e3a5f; }
+
+        #mmsModal {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.7); z-index: 1000;
+            display: flex; align-items: center; justify-content: center;
+        }
+        #mmsModal .modal-content {
+            background: #1e1e2e; border: 1px solid #333; border-radius: 8px;
+            width: 90%; max-width: 500px; padding: 0;
+        }
+        #mmsModal .modal-header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 16px 20px; border-bottom: 1px solid #333;
+        }
+        #mmsModal .modal-header h3 { margin: 0; color: #fff; font-size: 16px; }
+        #mmsModal .modal-close { background: none; border: none; color: #888; font-size: 20px; cursor: pointer; }
+        #mmsModal .modal-body { padding: 20px; }
+        #mmsModal .modal-footer { padding: 12px 20px; border-top: 1px solid #333; text-align: right; }
+
+        #mmsModal label { display: block; color: #aaa; font-size: 13px; margin-bottom: 6px; }
+        #mmsModal textarea {
+            width: 100%; background: #2a2a3e; border: 1px solid #444; color: #eee;
+            border-radius: 6px; padding: 10px; font-size: 14px; resize: vertical;
+            font-family: inherit;
+        }
+        .char-count { text-align: right; color: #666; font-size: 12px; margin-top: 4px; }
+        .mms-info { color: #aaa; font-size: 13px; margin-bottom: 8px; }
+        .mms-warning { color: #d97706; font-size: 12px; margin-bottom: 16px; padding: 8px; background: #2a2000; border-radius: 4px; }
+        .mms-preview { margin-top: 16px; padding: 12px; background: #252540; border-radius: 6px; }
+        .mms-preview strong { color: #888; font-size: 12px; }
+        .mms-preview-content { color: #ccc; font-size: 13px; margin-top: 8px; white-space: pre-wrap; }
+        .mms-error { color: #ef4444; background: #3c1111; padding: 10px; border-radius: 6px; margin-top: 12px; font-size: 13px; }
+        .mms-success { color: #34d399; background: #0c3522; padding: 10px; border-radius: 6px; margin-top: 12px; font-size: 13px; }
+        .btn-cancel { background: none; border: 1px solid #555; color: #aaa; padding: 8px 16px; border-radius: 6px; cursor: pointer; margin-right: 8px; }
+        .btn-send { background: #2563eb; color: #fff; border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; }
+        .btn-send:hover { background: #1d4ed8; }
+        .btn-send:disabled { opacity: 0.5; cursor: not-allowed; }
     </style>
 </head>
 <body>
@@ -610,6 +660,8 @@
                         <button class="btn-add" id="addAclBtn" onclick="addAcl()">추가</button>
                     </div>
                 </div>
+
+                <button class="share-mms-btn" onclick="openMmsModal()">📨 MMS로 공유 링크 발송</button>
             </div>
 
             <!-- Stats Tab -->
@@ -652,6 +704,40 @@
         </div>
     </div>
 
+    <!-- MMS Share Modal -->
+    <div id="mmsModal" style="display:none">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>📨 앱 공유 MMS 발송</h3>
+                <button class="modal-close" onclick="closeMmsModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p class="mms-info">접근 권한이 부여된 사용자에게 앱 링크를 MMS로 발송합니다.</p>
+                <p class="mms-warning">⚠️ 전사(company) 공개 앱은 MMS 발송이 불가합니다. 메신저 또는 공지를 이용해주세요.</p>
+
+                <label>메시지 내용 (앱 관련 내용만 허용)</label>
+                <textarea id="mmsMessage" maxlength="200" rows="3" placeholder="예: 제가 만든 대시보드를 공유드립니다. 업무에 활용해보세요!"></textarea>
+                <div class="char-count"><span id="mmsCharCount">0</span>/200</div>
+
+                <div class="mms-preview">
+                    <strong>미리보기:</strong>
+                    <div class="mms-preview-content">
+                        [Otto AI] <span id="mmsPreviewAppName"></span> 앱이 공유되었습니다.<br><br>
+                        <span id="mmsPreviewMessage"></span><br><br>
+                        👉 앱 바로가기: <span id="mmsPreviewUrl"></span>
+                    </div>
+                </div>
+
+                <div id="mmsError" class="mms-error" style="display:none"></div>
+                <div id="mmsSuccess" class="mms-success" style="display:none"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-cancel" onclick="closeMmsModal()">취소</button>
+                <button class="btn-send" id="mmsSendBtn" onclick="sendMms()">발송</button>
+            </div>
+        </div>
+    </div>
+
     <div class="toast" id="toast"></div>
 
     <script>
@@ -676,6 +762,15 @@
             loadUserInfo();
             loadMyApps();
             loadAclOptions();
+
+            // MMS character count + live preview
+            var ta = document.getElementById('mmsMessage');
+            if (ta) {
+                ta.addEventListener('input', function() {
+                    document.getElementById('mmsCharCount').textContent = ta.value.length;
+                    document.getElementById('mmsPreviewMessage').textContent = ta.value;
+                });
+            }
         });
 
         // ── Auth Helper ──
@@ -1071,6 +1166,76 @@
                 loadAcls();
             }).catch(function(e) {
                 showToast(e.message, 'error');
+            });
+        }
+
+        // ── MMS Share ──
+        function openMmsModal() {
+            var appName = currentApp;
+            if (!appName) return;
+
+            document.getElementById('mmsPreviewAppName').textContent = appName;
+            document.getElementById('mmsPreviewUrl').textContent = 'https://claude.skons.net/apps/.../' + appName + '/';
+            document.getElementById('mmsMessage').value = '';
+            document.getElementById('mmsCharCount').textContent = '0';
+            document.getElementById('mmsPreviewMessage').textContent = '';
+            document.getElementById('mmsError').style.display = 'none';
+            document.getElementById('mmsSuccess').style.display = 'none';
+            document.getElementById('mmsSendBtn').disabled = false;
+            document.getElementById('mmsSendBtn').textContent = '발송';
+            document.getElementById('mmsModal').style.display = 'flex';
+        }
+
+        function closeMmsModal() {
+            document.getElementById('mmsModal').style.display = 'none';
+        }
+
+        function showMmsError(msg) {
+            var el = document.getElementById('mmsError');
+            el.textContent = msg;
+            el.style.display = 'block';
+        }
+
+        function sendMms() {
+            var msg = document.getElementById('mmsMessage').value.trim();
+            if (!msg) {
+                showMmsError('메시지를 입력해주세요.');
+                return;
+            }
+
+            var sendBtn = document.getElementById('mmsSendBtn');
+            sendBtn.disabled = true;
+            sendBtn.textContent = '발송 중...';
+            document.getElementById('mmsError').style.display = 'none';
+
+            apiFetch(API_BASE + '/api/v1/portal/apps/' + encodeURIComponent(currentApp) + '/share-mms', {
+                method: 'POST',
+                body: JSON.stringify({ message: msg })
+            }).then(function(res) {
+                return res.json().then(function(data) {
+                    if (!res.ok) {
+                        // 콘텐츠 검열 위반: detail이 객체 형태
+                        var detail = data.detail;
+                        if (detail && typeof detail === 'object' && detail.error === 'content_violation') {
+                            showMmsError('🚫 ' + detail.warning);
+                            throw {handled: true};
+                        }
+                        throw new Error(typeof detail === 'string' ? detail : 'MMS 발송에 실패했습니다.');
+                    }
+                    return data;
+                });
+            }).then(function(data) {
+                if (!data) return;
+                var successEl = document.getElementById('mmsSuccess');
+                successEl.textContent = '✅ ' + data.sent + '명에게 MMS가 발송되었습니다.';
+                successEl.style.display = 'block';
+                setTimeout(closeMmsModal, 2000);
+            }).catch(function(err) {
+                if (err && err.handled) return;
+                showMmsError(err.message || 'MMS 발송에 실패했습니다.');
+            }).finally(function() {
+                sendBtn.disabled = false;
+                sendBtn.textContent = '발송';
             });
         }
 

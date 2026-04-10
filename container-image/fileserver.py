@@ -1285,6 +1285,38 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
   .hub-tab-content {{ display: none; }}
   .hub-tab-content.active {{ display: block; }}
 
+  /* Announcement banner */
+  .announce-banner {{
+    background: #1a365d;
+    border: 1px solid #2563eb;
+    border-radius: 6px;
+    padding: 10px 16px;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 14px;
+    color: #93c5fd;
+  }}
+  .announce-detail-btn {{
+    background: none;
+    border: 1px solid #2563eb;
+    color: #60a5fa;
+    padding: 4px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    margin-left: auto;
+  }}
+  .announce-dismiss {{
+    background: none;
+    border: none;
+    color: #666;
+    font-size: 18px;
+    cursor: pointer;
+    padding: 0 4px;
+  }}
+
   .footer {{ text-align: center; margin-top: 32px; color: #484f58; font-size: 0.75rem; }}
 
   .btn-stop-all {{ padding:6px 14px; background:#da3633; border:none; border-radius:6px; color:#fff; font-size:0.78rem; cursor:pointer; margin-top:8px; }}
@@ -1440,6 +1472,19 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
   }});
   </script>
 
+  <!-- 공지 배너 -->
+  <div id="announceBanner" style="display:none" class="announce-banner">
+    <span id="announceBannerIcon">&#128226;</span>
+    <span id="announceBannerText"></span>
+    <button onclick="showAnnouncementModal()" class="announce-detail-btn">자세히</button>
+    <button onclick="dismissAnnouncement()" class="announce-dismiss">&times;</button>
+  </div>
+
+  <!-- 뒤로가기 버튼 -->
+  <div id="hubBackBtn" style="display:none;margin-bottom:16px">
+    <button onclick="backToHub()" style="background:none;border:1px solid #444;color:#ccc;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:14px">&#8592; 허브로 돌아가기</button>
+  </div>
+
   <div class="cards">
     <a class="card" href="/terminal/{pod_name}/" id="terminalCard" onclick="return openTerminal(event, this)">
       <div class="icon" id="terminalIcon">&#9000;</div>
@@ -1447,44 +1492,40 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
       <p id="terminalDesc">Claude Code AI 코딩 어시스턴트<br>웹 터미널에서 바로 실행</p>
       <span class="badge badge-blue" id="terminalBadge">탭에서 열기</span>
     </a>
-    <div class="card" style="cursor:pointer" onclick="switchHubTab('files')">
+    <div class="card" style="cursor:pointer" onclick="openHubPage('files')">
       <div class="icon">&#128228;</div>
       <h2>파일 관리</h2>
-      <p>파일 업로드 (드래그&amp;드롭)<br>결과물 다운로드</p>
+      <p>파일 업로드·다운로드</p>
       <span class="badge badge-green">파일 탐색기</span>
-    </div>
-    <div class="card" style="cursor:pointer" onclick="switchHubTab('apps')">
-      <div class="icon">&#127760;</div>
-      <h2>웹앱</h2>
-      <p id="webappCardDesc">실행 중인 앱 없음</p>
-      <span class="badge badge-green" id="webappCardBadge">앱 관리</span>
-      <button class="btn-stop-all" id="stopAllBtn" style="display:none" onclick="event.stopPropagation();stopAllApps()">모두 실행중지</button>
-      <div class="resource-warning" id="resourceWarning" style="display:none">⚠️ 실행 중인 앱이 많으면 AI 에이전트 성능이 저하됩니다. 지금은 개발목적이니, 최소한의 앱만 구동하기를 권장드립니다.</div>
     </div>
     <a class="card" href="/gallery/" target="_blank" style="text-decoration:none;color:inherit">
       <div class="icon">&#127981;</div>
       <h2>앱 갤러리</h2>
-      <p>전사 공개 앱 둘러보기<br>인기앱 추천 &amp; 조회</p>
+      <p>전사 공개 앱 둘러보기</p>
       <span class="badge badge-blue">새 탭에서 열기</span>
     </a>
     <a class="card" href="/portal/" target="_blank" style="text-decoration:none;color:inherit">
       <div class="icon">&#128202;</div>
       <h2>내 앱 관리</h2>
-      <p>배포 앱 통계 확인<br>접근 권한(ACL) 설정</p>
+      <p>배포 통계·접근 권한 설정</p>
       <span class="badge badge-blue">새 탭에서 열기</span>
     </a>
+    <div class="card" style="cursor:pointer" onclick="openHubPage('skills')">
+      <div class="icon">&#128161;</div>
+      <h2>스킬 공유</h2>
+      <p>업무 노하우 공유·설치</p>
+      <span class="badge badge-green">스킬 스토어</span>
+    </div>
+    <div class="card" style="cursor:pointer" onclick="openHubPage('guide')">
+      <div class="icon">&#128214;</div>
+      <h2>가이드</h2>
+      <p>명령어·활용 가이드</p>
+      <span class="badge badge-green">바로보기</span>
+    </div>
   </div>
 
-  <!-- 탭 바 -->
-  <div class="hub-tabs">
-    <button class="hub-tab active" onclick="switchHubTab('apps')">앱 관리</button>
-    <button class="hub-tab" onclick="switchHubTab('files')">파일 관리</button>
-    <button class="hub-tab" onclick="switchHubTab('skills')">스킬 관리</button>
-    <button class="hub-tab" onclick="switchHubTab('guide')">명령어 가이드</button>
-  </div>
-
-  <!-- 탭 1: 앱 관리 -->
-  <div class="hub-tab-content active" id="tab-apps">
+  <!-- 탭 1: 앱 관리 (내 앱 관리 페이지로 이동 - /portal/ 사용) -->
+  <div class="hub-tab-content" id="tab-apps">
 
   <!-- 내 웹앱 (통합 뷰) -->
   <div class="app-section" id="myAppsSection">
@@ -1620,6 +1661,13 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
   <div class="hub-tab-content" id="tab-guide">
 
   <div class="guide">
+    <h3>활용 가이드 <span class="count" id="guidesCount">(0)</span></h3>
+    <div id="guidesList" style="margin-bottom:16px">
+      <p style="color:#888;font-size:13px">가이드를 불러오는 중...</p>
+    </div>
+  </div>
+
+  <div class="guide" style="margin-top:16px">
     <h3>슬래시 명령어 (Claude 대화 중 입력)</h3>
     <div class="guide-grid">
       <div class="guide-item"><code>/db</code> <span class="label">DB 조회 (TANGO/Safety/SQLite)</span></div>
@@ -1674,6 +1722,18 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
   </div><!-- /tab-guide -->
 
   <div class="footer">Claude Code Platform &middot; Powered by AWS Bedrock</div>
+
+  <!-- 공지사항 모달 -->
+  <div id="announceModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:1000">
+    <div style="max-width:600px;margin:80px auto;background:#1e1e2e;border:1px solid #333;border-radius:8px;padding:24px;max-height:80vh;overflow-y:auto">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h2 style="margin:0;font-size:18px;color:#fff" id="announceModalTitle">공지사항</h2>
+        <button onclick="closeAnnouncementModal()" style="background:none;border:none;color:#888;font-size:20px;cursor:pointer">&times;</button>
+      </div>
+      <div id="announceModalBody" style="color:#ccc;line-height:1.6"></div>
+      <div id="announceModalDate" style="color:#666;font-size:12px;margin-top:16px"></div>
+    </div>
+  </div>
 
   <!-- 파일 브라우저 모달 -->
   <div class="modal-overlay" id="fileBrowserModal">
@@ -2683,17 +2743,53 @@ function registerDataset() {{
   }});
 }}
 
+// ── 허브 페이지 네비게이션 ──
+function openHubPage(pageId) {{
+  document.querySelector('.cards').style.display = 'none';
+  var banner = document.getElementById('announceBanner');
+  if (banner) banner.style.display = 'none';
+  // Hide all hub pages
+  var pages = document.querySelectorAll('.hub-tab-content');
+  for (var i = 0; i < pages.length; i++) pages[i].classList.remove('active');
+  // Show target
+  var target = document.getElementById('tab-' + pageId);
+  if (target) target.classList.add('active');
+  // Show back button
+  document.getElementById('hubBackBtn').style.display = 'block';
+  // Load content for the page
+  if (pageId === 'skills') {{
+    loadMySkills();
+    loadSkillStore('popular');
+    loadInstalledSkills();
+  }}
+  if (pageId === 'files') {{
+    if (!feTable) initFileExplorer();
+    else loadDirectory(feCurrentPath);
+    loadMyDatasets();
+    loadSharedDatasets();
+  }}
+  if (pageId === 'guide') {{
+    loadGuides();
+  }}
+}}
+
+function backToHub() {{
+  document.querySelector('.cards').style.display = '';
+  var banner = document.getElementById('announceBanner');
+  if (banner && !banner.dataset.dismissed) banner.style.display = '';
+  var pages = document.querySelectorAll('.hub-tab-content');
+  for (var i = 0; i < pages.length; i++) pages[i].classList.remove('active');
+  document.getElementById('hubBackBtn').style.display = 'none';
+}}
+
 // ── 탭 전환 ──
 function switchHubTab(tab) {{
   ['apps','files','skills','guide'].forEach(function(t) {{
     var el = document.getElementById('tab-' + t);
-    var btn = document.querySelector('.hub-tab[onclick*="' + t + '"]');
     if (t === tab) {{
       if (el) el.classList.add('active');
-      if (btn) btn.classList.add('active');
     }} else {{
       if (el) el.classList.remove('active');
-      if (btn) btn.classList.remove('active');
     }}
   }});
   if (tab === 'skills') {{
@@ -2707,6 +2803,99 @@ function switchHubTab(tab) {{
     loadMyDatasets();
     loadSharedDatasets();
   }}
+}}
+
+// ── 가이드 ──
+function loadGuides() {{
+  var token = document.cookie.split('; ').find(function(c) {{ return c.startsWith('claude_token='); }});
+  if (!token) return;
+  token = token.split('=')[1];
+  fetch('/api/v1/guides/', {{
+    headers: {{ 'Authorization': 'Bearer ' + token }}
+  }}).then(function(r) {{ return r.ok ? r.json() : null; }})
+    .then(function(data) {{
+      var container = document.getElementById('guidesList');
+      var countEl = document.getElementById('guidesCount');
+      while (container.firstChild) container.removeChild(container.firstChild);
+      if (!data || !data.guides || data.guides.length === 0) {{
+        var emptyMsg = document.createElement('p');
+        emptyMsg.style.cssText = 'color:#888;font-size:13px';
+        emptyMsg.textContent = '등록된 가이드가 없습니다.';
+        container.appendChild(emptyMsg);
+        countEl.textContent = '(0)';
+        return;
+      }}
+      countEl.textContent = '(' + data.guides.length + ')';
+      data.guides.forEach(function(g) {{
+        var card = document.createElement('div');
+        card.style.cssText = 'background:#252540;border:1px solid #333;border-radius:6px;padding:12px 16px;margin-bottom:8px;cursor:pointer';
+        card.onclick = function() {{ showGuideDetail(g.id); }};
+        var title = document.createElement('div');
+        title.style.cssText = 'color:#eee;font-size:14px;font-weight:600';
+        title.textContent = g.title;
+        var meta = document.createElement('div');
+        meta.style.cssText = 'color:#888;font-size:12px;margin-top:4px';
+        meta.textContent = (g.author_name || g.author_username) + ' \u00b7 ' + (g.category || 'general') + ' \u00b7 조회 ' + (g.view_count || 0);
+        card.appendChild(title);
+        card.appendChild(meta);
+        container.appendChild(card);
+      }});
+    }}).catch(function() {{}});
+}}
+
+function showGuideDetail(guideId) {{
+  var token = document.cookie.split('; ').find(function(c) {{ return c.startsWith('claude_token='); }});
+  if (!token) return;
+  token = token.split('=')[1];
+  fetch('/api/v1/guides/' + guideId, {{
+    headers: {{ 'Authorization': 'Bearer ' + token }}
+  }}).then(function(r) {{ return r.ok ? r.json() : null; }})
+    .then(function(data) {{
+      if (!data) return;
+      var modal = document.getElementById('announceModal');
+      document.getElementById('announceModalTitle').textContent = data.title;
+      document.getElementById('announceModalBody').textContent = data.content;
+      document.getElementById('announceModalDate').textContent = (data.author_name || data.author_username) + ' \u00b7 ' + new Date(data.created_at).toLocaleDateString('ko-KR');
+      modal.style.display = 'block';
+    }}).catch(function() {{}});
+}}
+
+// ── 공지사항 ──
+function loadAnnouncements() {{
+  var token = document.cookie.split('; ').find(function(c) {{ return c.startsWith('claude_token='); }});
+  if (!token) return;
+  token = token.split('=')[1];
+  fetch('/api/v1/announcements/active', {{
+    headers: {{ 'Authorization': 'Bearer ' + token }}
+  }}).then(function(r) {{ return r.ok ? r.json() : null; }})
+    .then(function(data) {{
+      if (!data || !data.announcements || data.announcements.length === 0) return;
+      var latest = data.announcements[0];
+      var dismissed = localStorage.getItem('dismiss_announce_' + latest.id);
+      if (dismissed) return;
+      document.getElementById('announceBannerText').textContent = latest.title;
+      document.getElementById('announceBanner').style.display = '';
+      document.getElementById('announceBanner').dataset.announcement = JSON.stringify(latest);
+    }}).catch(function() {{}});
+}}
+
+function showAnnouncementModal() {{
+  var data = JSON.parse(document.getElementById('announceBanner').dataset.announcement || '{{}}');
+  document.getElementById('announceModalTitle').textContent = data.title || '공지사항';
+  document.getElementById('announceModalBody').textContent = data.content || '';
+  document.getElementById('announceModalDate').textContent = data.created_at ? new Date(data.created_at).toLocaleDateString('ko-KR') : '';
+  document.getElementById('announceModal').style.display = 'block';
+}}
+
+function closeAnnouncementModal() {{
+  document.getElementById('announceModal').style.display = 'none';
+}}
+
+function dismissAnnouncement() {{
+  var data = JSON.parse(document.getElementById('announceBanner').dataset.announcement || '{{}}');
+  if (data.id) localStorage.setItem('dismiss_announce_' + data.id, '1');
+  document.getElementById('announceBanner').style.display = 'none';
+  document.getElementById('announceBanner').dataset.dismissed = '1';
 }}
 
 // ── 파일 탐색기 (Tabulator) ──
@@ -3018,28 +3207,9 @@ document.addEventListener('keydown', function(e) {{
 function loadAppStatus() {{
   localFetch('/api/apps/status').then(function(data) {{
     var running = data.running || [];
-    var projects = data.projects || [];
-    var desc = document.getElementById('webappCardDesc');
-    var badge = document.getElementById('webappCardBadge');
-    var stopBtn = document.getElementById('stopAllBtn');
-    var warning = document.getElementById('resourceWarning');
     var count = running.length;
-    if (count > 0) {{
-      desc.textContent = count + '개 앱 실행 중';
-      badge.textContent = count + '개 실행중';
-      badge.className = 'badge badge-blue';
-      stopBtn.style.display = 'inline-block';
-    }} else {{
-      desc.textContent = '실행 중인 앱 없음';
-      badge.textContent = '앱 관리';
-      badge.className = 'badge badge-green';
-      stopBtn.style.display = 'none';
-    }}
-    if (count >= 3) {{
-      warning.style.display = 'block';
-    }} else {{
-      warning.style.display = 'none';
-    }}
+    // 웹앱 카드가 제거되었으므로 myAppsList 업데이트만 수행
+    // (loadMyApps가 앱 상태를 반영함)
   }}).catch(function() {{}});
 }}
 
@@ -3499,6 +3669,7 @@ loadMyApps();
 loadSharedApps();
 loadAppStatus();
 loadMyShares();
+loadAnnouncements();
 
 // 페이지 로드 시 기존 터미널 탭 확인
 (function() {{
