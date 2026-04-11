@@ -78,6 +78,10 @@ class Settings(BaseSettings):
     # ----- Redis -----
     redis_url: str = ""  # e.g. redis://localhost:6379/0 — 비어 있으면 Redis 비활성화
 
+    # ----- OnlyOffice Document Server -----
+    onlyoffice_url: str = "http://onlyoffice.claude-sessions.svc.cluster.local"
+    onlyoffice_jwt_secret: str = ""  # 비어 있으면 JWT 서명 비활성화
+
     # ----- S3 Vault -----
     s3_vault_bucket: str = ""        # 민감 파일 격리 S3 버킷 이름
     s3_vault_kms_key_id: str = ""    # KMS 키 ID (ARN 또는 별칭)

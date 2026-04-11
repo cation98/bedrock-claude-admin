@@ -178,6 +178,43 @@ class TestOnlyOfficeConfigEndpoint:
             assert resp.status_code == 200
             assert resp.json()["document"]["fileType"] == expected_ext
 
+    def test_unsupported_extension_returns_400(self, client):
+        """지원하지 않는 확장자 → 400 Bad Request."""
+        resp = client.get("/api/v1/viewers/onlyoffice/config/image.png")
+        assert resp.status_code == 400
+        assert "Unsupported" in resp.json()["detail"]
+
+    def test_document_type_mapping(self, client):
+        """모든 확장자별 documentType 매핑 정확성."""
+        cell_files = ["data.xlsx", "data.xls", "data.csv", "data.ods"]
+        slide_files = ["deck.pptx", "deck.ppt", "deck.odp"]
+        word_files = ["doc.docx", "doc.doc", "doc.odt", "doc.rtf"]
+
+        for f in cell_files:
+            resp = client.get(f"/api/v1/viewers/onlyoffice/config/{f}")
+            assert resp.status_code == 200
+            assert resp.json()["documentType"] == "cell", f"{f} should be cell"
+
+        for f in slide_files:
+            resp = client.get(f"/api/v1/viewers/onlyoffice/config/{f}")
+            assert resp.status_code == 200
+            assert resp.json()["documentType"] == "slide", f"{f} should be slide"
+
+        for f in word_files:
+            resp = client.get(f"/api/v1/viewers/onlyoffice/config/{f}")
+            assert resp.status_code == 200
+            assert resp.json()["documentType"] == "word", f"{f} should be word"
+
+    def test_all_permissions_false(self, client):
+        """보안 정책: download, edit, print, review 모두 False."""
+        resp = client.get("/api/v1/viewers/onlyoffice/config/report.xlsx")
+        assert resp.status_code == 200
+        perms = resp.json()["document"]["permissions"]
+        assert perms["download"] is False
+        assert perms["edit"] is False
+        assert perms["print"] is False
+        assert perms["review"] is False
+
     def test_no_token_when_jwt_secret_empty(self, client):
         """onlyoffice_jwt_secret 미설정 시 'token' 필드 없음."""
         resp = client.get("/api/v1/viewers/onlyoffice/config/test.xlsx")
@@ -217,6 +254,94 @@ class TestOnlyOfficeConfigEndpoint:
         assert "token" in data
         assert isinstance(data["token"], str)
         assert len(data["token"]) > 0
+
+    def test_jwt_token_contains_config_claims(self, db_session):
+        """JWT 토큰을 decode하면 config와 동일한 구조가 포함되어야 함."""
+        from jose import jwt as jose_jwt
+
+        jwt_secret = "test-onlyoffice-secret-32chars!!!"
+
+        def _settings_with_jwt() -> Settings:
+            return Settings(
+                database_url="sqlite://",
+                jwt_secret_key="test-secret-key-256-bit-minimum-len",
+                onlyoffice_jwt_secret=jwt_secret,
+                debug=False,
+            )
+
+        def _override_db():
+            try:
+                yield db_session
+            finally:
+                pass
+
+        _test_app.dependency_overrides[get_db] = _override_db
+        _test_app.dependency_overrides[get_settings] = _settings_with_jwt
+        _test_app.dependency_overrides[get_current_user_or_pod] = _mock_current_user
+
+        with TestClient(_test_app, raise_server_exceptions=False) as tc:
+            resp = tc.get("/api/v1/viewers/onlyoffice/config/report.xlsx")
+
+        _test_app.dependency_overrides.clear()
+
+        data = resp.json()
+        decoded = jose_jwt.decode(data["token"], jwt_secret, algorithms=["HS256"])
+        assert decoded["document"]["fileType"] == "xlsx"
+        assert decoded["document"]["title"] == "report.xlsx"
+        assert decoded["document"]["permissions"]["download"] is False
+        assert decoded["documentType"] == "cell"
+        assert decoded["editorConfig"]["user"]["id"] == "TESTUSER01"
+
+
+class TestFileTokenSystem:
+    """파일 토큰 생성/소비 시스템 단위 테스트."""
+
+    def test_create_and_consume_token(self):
+        """토큰 생성 → 소비 → 정상 반환."""
+        from app.routers.viewers import _create_file_token, _consume_file_token, _file_tokens
+        _file_tokens.clear()
+
+        token = _create_file_token("TESTUSER01", "report.xlsx")
+        assert isinstance(token, str)
+        assert len(token) > 0
+
+        data = _consume_file_token(token)
+        assert data is not None
+        assert data["username"] == "TESTUSER01"
+        assert data["file_path"] == "report.xlsx"
+
+    def test_token_single_use(self):
+        """토큰은 1회용 — 두 번째 소비는 None 반환."""
+        from app.routers.viewers import _create_file_token, _consume_file_token, _file_tokens
+        _file_tokens.clear()
+
+        token = _create_file_token("TESTUSER01", "report.xlsx")
+        first = _consume_file_token(token)
+        assert first is not None
+
+        second = _consume_file_token(token)
+        assert second is None
+
+    def test_expired_token_rejected(self):
+        """만료된 토큰은 거부."""
+        from app.routers.viewers import _consume_file_token, _file_tokens
+        _file_tokens.clear()
+
+        _file_tokens["expired-token"] = {
+            "username": "TESTUSER01",
+            "file_path": "old.xlsx",
+            "expires": 0,  # 이미 만료
+        }
+        result = _consume_file_token("expired-token")
+        assert result is None
+
+    def test_invalid_token_rejected(self):
+        """존재하지 않는 토큰은 None 반환."""
+        from app.routers.viewers import _consume_file_token, _file_tokens
+        _file_tokens.clear()
+
+        result = _consume_file_token("nonexistent-token")
+        assert result is None
 
 
 class TestOnlyOfficeCallback:
@@ -266,10 +391,87 @@ class TestOnlyOfficeCallback:
         assert resp.status_code == 200
         assert "frame-ancestors" in resp.headers.get("content-security-policy", "")
 
-    def test_callback_requires_auth(self, unauthenticated_client):
-        """인증 없음 → 콜백도 403 Forbidden."""
-        resp = unauthenticated_client.post(
+    def test_callback_empty_body_accepted(self, client):
+        """빈 JSON body → 정상 처리 (view-only 모드)."""
+        resp = client.post(
+            "/api/v1/viewers/onlyoffice/callback",
+            json={},
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"error": 0}
+
+    def test_callback_no_jwt_secret_accepts_all(self, client):
+        """onlyoffice_jwt_secret 미설정 시 모든 콜백 수락 (JWT 검증 건너뜀)."""
+        resp = client.post(
             "/api/v1/viewers/onlyoffice/callback",
             json={"status": 2, "url": "http://example.com/doc.xlsx"},
         )
+        assert resp.status_code == 200
+        assert resp.json() == {"error": 0}
+
+    def test_callback_rejects_invalid_jwt(self, db_session):
+        """JWT secret 설정 시 잘못된 토큰 → 403."""
+        from jose import jwt as jose_jwt
+
+        def _settings_with_jwt() -> Settings:
+            return Settings(
+                database_url="sqlite://",
+                jwt_secret_key="test-secret-key-256-bit-minimum-len",
+                onlyoffice_jwt_secret="test-onlyoffice-secret-32chars!!!",
+                debug=False,
+            )
+
+        def _override_db():
+            try:
+                yield db_session
+            finally:
+                pass
+
+        _test_app.dependency_overrides[get_db] = _override_db
+        _test_app.dependency_overrides[get_settings] = _settings_with_jwt
+
+        with TestClient(_test_app, raise_server_exceptions=False) as tc:
+            resp = tc.post(
+                "/api/v1/viewers/onlyoffice/callback",
+                json={"status": 1},
+                headers={"Authorization": "Bearer invalid-token"},
+            )
+
+        _test_app.dependency_overrides.clear()
         assert resp.status_code == 403
+
+    def test_callback_accepts_valid_jwt(self, db_session):
+        """JWT secret 설정 시 올바른 토큰 → 200."""
+        from jose import jwt as jose_jwt
+
+        jwt_secret = "test-onlyoffice-secret-32chars!!!"
+
+        def _settings_with_jwt() -> Settings:
+            return Settings(
+                database_url="sqlite://",
+                jwt_secret_key="test-secret-key-256-bit-minimum-len",
+                onlyoffice_jwt_secret=jwt_secret,
+                debug=False,
+            )
+
+        def _override_db():
+            try:
+                yield db_session
+            finally:
+                pass
+
+        _test_app.dependency_overrides[get_db] = _override_db
+        _test_app.dependency_overrides[get_settings] = _settings_with_jwt
+
+        valid_token = jose_jwt.encode({"status": 1}, jwt_secret, algorithm="HS256")
+
+        with TestClient(_test_app, raise_server_exceptions=False) as tc:
+            resp = tc.post(
+                "/api/v1/viewers/onlyoffice/callback",
+                json={"status": 1},
+                headers={"Authorization": f"Bearer {valid_token}"},
+            )
+
+        _test_app.dependency_overrides.clear()
+        assert resp.status_code == 200
+        assert resp.json() == {"error": 0}

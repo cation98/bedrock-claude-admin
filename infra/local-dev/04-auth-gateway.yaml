@@ -93,6 +93,15 @@ spec:
                 secretKeyRef:
                   name: auth-gateway-secrets
                   key: TANGO_DATABASE_URL
+            # OnlyOffice JWT — 07-onlyoffice.yaml의 JWT_SECRET과 동일
+            - name: ONLYOFFICE_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-secrets
+                  key: ONLYOFFICE_JWT_SECRET
+            # OnlyOffice URL (K8s 내부 DNS)
+            - name: ONLYOFFICE_URL
+              value: "http://onlyoffice.claude-sessions.svc.cluster.local"
             # === 직접 설정하는 환경변수 ===
             # SSO 프로토콜 설정
             - name: SSO_AUTH_METHOD

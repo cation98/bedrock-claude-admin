@@ -1,8 +1,10 @@
-"""파일 뷰어 API — Pod fileserver 프록시 + OnlyOffice iframe.
+"""파일 뷰어 API — Pod fileserver 프록시 + OnlyOffice 뷰어.
 
 Endpoints:
   GET /api/v1/viewers/file/{username}/{file_path:path} -- Pod 파일 스트리밍 (인라인)
-  GET /api/v1/viewers/office/{username}/{file_path:path} -- OnlyOffice iframe 뷰어 HTML
+  GET /api/v1/viewers/onlyoffice/config/{filename}     -- OnlyOffice 설정 JSON
+  POST /api/v1/viewers/onlyoffice/callback              -- OnlyOffice 콜백
+  GET /api/v1/viewers/markdown/{username}/{file_path:path} -- Markdown HTML 뷰어
 """
 
 import hashlib
@@ -14,11 +16,12 @@ import time
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from jose import jwt as jose_jwt
 from kubernetes import client
 
 from app.core.config import Settings, get_settings
-from app.core.security import decode_token
+from app.core.security import decode_token, get_current_user_or_pod
 
 # 임시 파일 토큰: Redis(분산) → 메모리(fallback)
 _file_tokens: dict[str, dict] = {}  # fallback: token → {"username", "file_path", "expires"}
@@ -48,8 +51,13 @@ async def _get_viewer_user(request: Request, settings: Settings = Depends(get_se
 
     raise HTTPException(status_code=401, detail="Not authenticated")
 
+
 def _create_file_token(username: str, file_path: str, ttl_seconds: int = 300) -> str:
-    """임시 파일 접근 토큰 생성 (5분 TTL). Redis 우선, fallback 메모리."""
+    """임시 파일 접근 토큰 생성 (5분 TTL). Redis 우선, fallback 메모리.
+
+    상용(2-replica)에서는 Redis가 필수. Redis 장애 시 메모리 fallback은
+    단일 replica 환경(로컬 개발)에서만 안정적.
+    """
     token = secrets.token_urlsafe(32)
     value = json.dumps({"username": username, "file_path": file_path})
     try:
@@ -60,7 +68,8 @@ def _create_file_token(username: str, file_path: str, ttl_seconds: int = 300) ->
             return token
     except Exception:
         pass
-    # fallback: 메모리
+    # fallback: 메모리 (로컬 개발 전용 — 2-replica 환경에서는 50% 실패 가능)
+    logger.warning("Redis unavailable, using memory fallback for file token (unsafe for multi-replica)")
     _file_tokens[token] = {
         "username": username,
         "file_path": file_path,
@@ -82,6 +91,9 @@ def _consume_file_token(token: str) -> dict | None:
         pass
     # fallback: 메모리
     now = time.time()
+    expired = [k for k, v in _file_tokens.items() if v.get("expires", 0) <= now]
+    for k in expired:
+        _file_tokens.pop(k, None)
     data = _file_tokens.pop(token, None)
     if data and data.get("expires", 0) > now:
         return data
@@ -117,6 +129,10 @@ def _get_pod_ip(username: str, namespace: str = "claude-sessions") -> str:
     raise HTTPException(status_code=404, detail=f"Pod not found for {username}")
 
 
+# ---------------------------------------------------------------------------
+# 파일 스트리밍 (Pod proxy)
+# ---------------------------------------------------------------------------
+
 @router.get("/file/{username}/{file_path:path}")
 async def stream_file(
     username: str,
@@ -131,7 +147,6 @@ async def stream_file(
     - 일반: Bearer/cookie 인증 (본인 Pod 또는 admin)
     - OnlyOffice: ?token= 임시 토큰 (서버 측 파일 다운로드용, 5분 TTL)
     """
-    # 임시 토큰 인증 (SheetJS 파일 다운로드용)
     if token:
         token_data = _consume_file_token(token)
         if not token_data:
@@ -139,7 +154,6 @@ async def stream_file(
         if token_data["username"].upper() != username.upper() or token_data["file_path"] != file_path:
             raise HTTPException(status_code=403, detail="Token mismatch")
     else:
-        # 일반 인증
         current_user = await _get_viewer_user(request, settings)
         requesting = current_user.get("sub", "")
         is_admin = current_user.get("role") == "admin"
@@ -154,13 +168,11 @@ async def stream_file(
     download_url = f"http://{pod_ip}:8080/api/download"
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as http:
+        async with httpx.AsyncClient(timeout=60.0) as http:
             import unicodedata, urllib.parse
-            # 공백은 %20으로 인코딩 (+ 아님 — SimpleHTTPRequestHandler 호환)
             encoded = urllib.parse.quote(file_path, safe="/")
             resp = await http.get(f"{download_url}?path={encoded}")
             if resp.status_code == 404:
-                # NFC/NFD 변환 재시도
                 alt_form = "NFD" if file_path == unicodedata.normalize("NFC", file_path) else "NFC"
                 alt_path = unicodedata.normalize(alt_form, file_path)
                 alt_encoded = urllib.parse.quote(alt_path, safe="/")
@@ -186,117 +198,135 @@ async def stream_file(
         raise HTTPException(status_code=502, detail="Pod fileserver unreachable")
 
 
-@router.get("/office/{username}/{file_path:path}", response_class=HTMLResponse)
-async def office_viewer(
-    username: str,
-    file_path: str,
-    current_user: dict = Depends(_get_viewer_user),
+# ---------------------------------------------------------------------------
+# OnlyOffice Document Server 통합
+# ---------------------------------------------------------------------------
+
+def _onlyoffice_doc_type(ext: str) -> str:
+    """확장자 → OnlyOffice documentType 매핑."""
+    if ext in {".xlsx", ".xls", ".csv", ".ods"}:
+        return "cell"
+    if ext in {".pptx", ".ppt", ".odp"}:
+        return "slide"
+    return "word"
+
+
+@router.get("/onlyoffice/config/{filename:path}")
+async def onlyoffice_config(
+    filename: str,
+    current_user: dict = Depends(get_current_user_or_pod),
     settings: Settings = Depends(get_settings),
 ):
-    """Excel/CSV 뷰어 — SheetJS 클라이언트 사이드 렌더링.
+    """OnlyOffice 뷰어 설정 JSON 반환.
 
-    보안: SheetJS sheet_to_html은 셀 값만 추출하여 HTML table 생성.
-    사용자 입력이 아닌 파일 데이터이며, 스크립트 실행은 CSP sandbox로 차단.
+    Hub UI가 이 설정을 받아 OnlyOffice api.js로 iframe을 생성한다.
+    JWT secret이 설정되어 있으면 config에 token 필드를 포함한다.
     """
-    requesting = current_user.get("sub", "")
-    is_admin = current_user.get("role") == "admin"
-    if not is_admin and requesting.upper() != username.upper():
-        raise HTTPException(status_code=403, detail="접근 권한이 없습니다")
-
-    normalized = os.path.normpath(file_path)
+    normalized = os.path.normpath(filename)
     if ".." in normalized or normalized.startswith("/"):
         raise HTTPException(status_code=400, detail="Invalid file path")
 
-    ext = os.path.splitext(file_path)[1].lower()
+    ext = os.path.splitext(filename)[1].lower()
     if ext not in OFFICE_EXTENSIONS:
         raise HTTPException(status_code=400, detail=f"Unsupported format: {ext}")
 
-    basename = os.path.basename(file_path)
-    # 브라우저에서 Pod fileserver로 직접 다운로드 (auth-gateway 프록시 우회)
-    # /files/{pod_name}/ 경로는 nginx Ingress → Pod:8080 직접 라우팅
-    # 한글 파일명 인코딩 문제를 브라우저-nginx가 자연스럽게 처리
-    import urllib.parse
-    pod_name = f"claude-terminal-{username.lower()}"
-    encoded_path = urllib.parse.quote(file_path, safe="/")
-    file_url = f"/files/{pod_name}/api/download?path={encoded_path}"
+    username = current_user.get("sub", "")
+    doc_type = _onlyoffice_doc_type(ext)
+    doc_key = hashlib.sha256(f"{username}:{filename}:{int(time.time()//300)}".encode()).hexdigest()[:20]
 
-    # SheetJS CDN — 브라우저에서 로드 (auth-gateway가 아닌 사용자 브라우저가 접근)
-    sheetjs_cdn = "https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"
+    # OnlyOffice가 파일을 다운로드할 URL (K8s 내부 DNS — auth-gateway Service)
+    file_token = _create_file_token(username, filename)
+    file_download_url = f"http://auth-gateway.platform.svc.cluster.local/api/v1/viewers/file/{username}/{filename}?token={file_token}"
 
-    html = f"""<!DOCTYPE html>
-<html><head>
-<meta charset="utf-8">
-<title>{basename} — Otto AI Viewer</title>
-<script src="{sheetjs_cdn}"></script>
-<style>
-  * {{ margin:0; padding:0; box-sizing:border-box; }}
-  body {{ font-family:'Segoe UI',-apple-system,sans-serif; background:#0d1117; color:#e6edf3; }}
-  .hdr {{ padding:12px 20px; background:#161b22; border-bottom:1px solid #30363d;
-    display:flex; align-items:center; gap:12px; }}
-  .hdr .ttl {{ font-size:14px; color:#8b949e; }}
-  .hdr .tabs {{ display:flex; gap:4px; margin-left:auto; }}
-  .hdr .tab {{ padding:4px 12px; border-radius:4px; font-size:12px;
-    cursor:pointer; background:#21262d; color:#8b949e; border:1px solid #30363d; }}
-  .hdr .tab.on {{ background:#264f78; color:#fff; border-color:#58a6ff; }}
-  .tw {{ overflow:auto; height:calc(100vh - 48px); }}
-  table {{ border-collapse:collapse; width:100%; font-size:13px; }}
-  th {{ background:#161b22; color:#58a6ff; font-weight:600; position:sticky; top:0; z-index:1;
-    padding:8px 12px; border:1px solid #30363d; text-align:left; white-space:nowrap; }}
-  td {{ padding:6px 12px; border:1px solid #21262d; white-space:nowrap; max-width:400px;
-    overflow:hidden; text-overflow:ellipsis; }}
-  tr:hover {{ background:#161b22; }}
-  .ld {{ display:flex; align-items:center; justify-content:center; height:100vh;
-    color:#8b949e; font-size:16px; gap:10px; }}
-  .err {{ color:#f85149; text-align:center; padding:40px; font-size:14px; }}
-</style>
-</head><body>
-<div class="ld" id="ld">&#128194; {basename} 로딩 중...</div>
-<div id="vw" style="display:none;">
-  <div class="hdr">
-    <span style="font-size:20px;">&#128202;</span>
-    <span class="ttl">{basename}</span>
-    <div class="tabs" id="tabs"></div>
-  </div>
-  <div class="tw" id="tw"></div>
-</div>
-<script>
-(async function() {{
-  try {{
-    var resp = await fetch("{file_url}");
-    if (!resp.ok) throw new Error("HTTP " + resp.status);
-    var buf = await resp.arrayBuffer();
-    var wb = XLSX.read(buf, {{type:"array"}});
-    document.getElementById("ld").style.display = "none";
-    document.getElementById("vw").style.display = "block";
-    var tabs = document.getElementById("tabs");
-    var tw = document.getElementById("tw");
-    function show(name) {{
-      var ws = wb.Sheets[name];
-      // sheet_to_html: SheetJS가 셀 값만 추출하여 table 생성 (XSS 안전)
-      tw.textContent = "";
-      var div = document.createElement("div");
-      div.insertAdjacentHTML("afterbegin", XLSX.utils.sheet_to_html(ws, {{editable:false}}));
-      tw.appendChild(div);
-      tabs.querySelectorAll(".tab").forEach(function(t) {{
-        t.className = "tab" + (t.textContent === name ? " on" : "");
-      }});
-    }}
-    wb.SheetNames.forEach(function(n) {{
-      var b = document.createElement("button");
-      b.className = "tab"; b.textContent = n;
-      b.onclick = function() {{ show(n); }};
-      tabs.appendChild(b);
-    }});
-    if (wb.SheetNames.length > 0) show(wb.SheetNames[0]);
-  }} catch(e) {{
-    document.getElementById("ld").textContent = "\\u26a0 " + e.message;
-  }}
-}})();
-</script>
-</body></html>"""
+    config = {
+        "document": {
+            "fileType": ext.lstrip("."),
+            "key": doc_key,
+            "title": filename,
+            "url": file_download_url,
+            "permissions": {
+                "download": False,
+                "edit": False,
+                "print": False,
+                "review": False,
+            },
+        },
+        "documentType": doc_type,
+        "editorConfig": {
+            "mode": "view",
+            "callbackUrl": f"http://auth-gateway.platform.svc.cluster.local/api/v1/viewers/onlyoffice/callback",
+            "lang": "ko",
+            "user": {
+                "id": username,
+                "name": current_user.get("name", username),
+            },
+            "customization": {
+                "toolbarNoTabs": True,
+                "compactHeader": True,
+                "hideRightMenu": True,
+                "chat": False,
+                "comments": False,
+            },
+        },
+        "type": "embedded",
+        "height": "100%",
+        "width": "100%",
+    }
 
-    return HTMLResponse(content=html)
+    # JWT 서명 (OnlyOffice JWT_ENABLED=true인 경우 필수)
+    if settings.onlyoffice_jwt_secret:
+        token = jose_jwt.encode(config, settings.onlyoffice_jwt_secret, algorithm="HS256")
+        config["token"] = token
 
+    return JSONResponse(
+        content=config,
+        headers={
+            "Content-Security-Policy": "frame-ancestors 'self'",
+        },
+    )
+
+
+@router.post("/onlyoffice/callback")
+async def onlyoffice_callback(
+    request: Request,
+    settings: Settings = Depends(get_settings),
+):
+    """OnlyOffice 콜백 — S2S 호출이므로 OnlyOffice JWT로 검증.
+
+    OnlyOffice는 문서 상태 변경 시 이 URL을 서버-서버(S2S)로 호출한다.
+    Bearer 토큰이나 쿠키가 없으므로 get_current_user_or_pod 사용 불가.
+    JWT_ENABLED=true인 경우 요청 body 또는 Authorization 헤더의 JWT로 검증.
+    view-only 모드에서는 저장이 없으므로 acknowledgment만 반환.
+    """
+    if settings.onlyoffice_jwt_secret:
+        token = None
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header.split(" ", 1)[1]
+        if not token:
+            try:
+                body = await request.json()
+                token = body.get("token")
+            except Exception:
+                pass
+        if not token:
+            raise HTTPException(status_code=403, detail="Missing callback token")
+        try:
+            jose_jwt.decode(token, settings.onlyoffice_jwt_secret, algorithms=["HS256"])
+        except Exception:
+            raise HTTPException(status_code=403, detail="Invalid callback token")
+
+    return JSONResponse(
+        content={"error": 0},
+        headers={
+            "Content-Security-Policy": "frame-ancestors 'self'",
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Markdown 뷰어
+# ---------------------------------------------------------------------------
 
 @router.get("/markdown/{username}/{file_path:path}", response_class=HTMLResponse)
 async def markdown_viewer(
@@ -321,11 +351,9 @@ async def markdown_viewer(
     try:
         async with httpx.AsyncClient(timeout=30.0) as http:
             import unicodedata, urllib.parse
-            # 공백은 %20으로 인코딩 (+ 아님 — SimpleHTTPRequestHandler 호환)
             encoded = urllib.parse.quote(file_path, safe="/")
             resp = await http.get(f"{download_url}?path={encoded}")
             if resp.status_code == 404:
-                # NFC/NFD 변환 재시도
                 alt_form = "NFD" if file_path == unicodedata.normalize("NFC", file_path) else "NFC"
                 alt_path = unicodedata.normalize(alt_form, file_path)
                 alt_encoded = urllib.parse.quote(alt_path, safe="/")
@@ -338,12 +366,13 @@ async def markdown_viewer(
         logger.error(f"Pod proxy error: {e}")
         raise HTTPException(status_code=502, detail="Pod fileserver unreachable")
 
+    import html as html_mod
     import markdown
     html_body = markdown.markdown(
         md_text,
         extensions=["tables", "fenced_code", "codehilite", "toc", "nl2br"],
     )
-    basename = os.path.basename(file_path)
+    basename = html_mod.escape(os.path.basename(file_path))
 
     html = f"""<!DOCTYPE html>
 <html><head>
