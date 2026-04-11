@@ -34,6 +34,22 @@ spec:
                 secretKeyRef:
                   name: onlyoffice-jwt-secret
                   key: secret
+            # K8s 내부 사설 IP 다운로드 허용 — SSRF 방지 기능 해제
+            # OnlyOffice는 기본적으로 사설 IP(10.x, 172.x, 192.168.x)로의
+            # 파일 다운로드를 차단. K8s 내부 DNS는 사설 IP로 해석되므로 허용 필수.
+            - name: ALLOW_PRIVATE_IP_ADDRESS
+              value: "true"
+            # Inbox JWT 검증 비활성화
+            # OnlyOffice JWT는 양방향: browser→OO (config token) + OO→외부 (다운로드 검증)
+            # auth-gateway의 파일 응답은 OnlyOffice JWT를 포함하지 않으므로
+            # inbox(수신) 방향 검증을 비활성화. browser→OO config 검증은 유지.
+            # 주의: JWT_INBOX_ENABLED 환경변수가 local.json을 덮어쓰지 못하므로
+            # ONLYOFFICE_DOCS_PARAMS 환경변수로 직접 config 오버라이드.
+            - name: JWT_INBOX_ENABLED
+              value: "false"
+            # local.json 오버라이드: token.enable.request.inbox = false
+            - name: ONLYOFFICE_DOCS_PARAMS
+              value: '{"services":{"CoAuthoring":{"token":{"enable":{"request":{"inbox":false}}}}}}'
           resources:
             requests:
               cpu: "1000m"
@@ -53,6 +69,31 @@ spec:
               port: 80
             initialDelaySeconds: 30
             periodSeconds: 10
+          # postStart: entrypoint가 local.json을 생성한 후 inbox JWT를 비활성화
+          # OnlyOffice entrypoint가 환경변수(JWT_ENABLED 등)로 local.json을 자체 생성하지만
+          # inbox 설정은 환경변수로 제어가 안 되므로 postStart에서 직접 패치
+          lifecycle:
+            postStart:
+              exec:
+                command:
+                  - bash
+                  - -c
+                  - |
+                    sleep 5
+                    python3 -c "
+                    import json,time
+                    for i in range(10):
+                        try:
+                            with open('/etc/onlyoffice/documentserver/local.json') as f:
+                                cfg = json.load(f)
+                            cfg['services']['CoAuthoring']['token']['enable']['request']['inbox'] = False
+                            with open('/etc/onlyoffice/documentserver/local.json','w') as f:
+                                json.dump(cfg,f,indent=2)
+                            print('inbox JWT disabled')
+                            break
+                        except:
+                            time.sleep(2)
+                    " && supervisorctl restart ds:docservice 2>/dev/null || true
           volumeMounts:
             - name: data
               mountPath: /var/lib/onlyoffice

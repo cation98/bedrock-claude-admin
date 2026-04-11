@@ -175,13 +175,15 @@ class K8sService:
         """Pod 환경변수 목록 생성. security_policy에 따라 DB 자격증명을 조건부 주입.
 
         security_policy가 None이거나 빈 dict이면 모든 DB 접근을 허용 (기존 동작 유지).
+        로컬 환경(:local 이미지)에서는 외부 DB secret 참조를 건너뜀.
         """
+        is_local = ":local" in self.settings.k8s_pod_image
         policy = security_policy or {}
         db_access = policy.get("db_access", {})
         # 정책이 없으면 하위 호환: 모든 DB 접근 허용
         safety_allowed = db_access.get("safety", {}).get("allowed", True) if db_access else True
-        tango_allowed = db_access.get("tango", {}).get("allowed", True) if db_access else True
-        doculog_allowed = db_access.get("doculog", {}).get("allowed", True) if db_access else True
+        tango_allowed = (db_access.get("tango", {}).get("allowed", True) if db_access else True) and not is_local
+        doculog_allowed = (db_access.get("doculog", {}).get("allowed", True) if db_access else True) and not is_local
         security_level = policy.get("security_level", "standard")
 
         env_vars = [
@@ -245,7 +247,10 @@ class K8sService:
 
         # Pod 내부 API 인증 토큰 — K8s Secret에서 환경변수로 주입
         # X-Pod-Token 헤더로 Auth Gateway에 전달하여 신원 증명
-        if pod_token:
+        # 로컬에서는 pod-token Secret이 없으므로 직접 값을 주입
+        if pod_token and is_local:
+            env_vars.append(client.V1EnvVar(name="SECURE_POD_TOKEN", value=pod_token))
+        elif pod_token:
             env_vars.append(client.V1EnvVar(
                 name="SECURE_POD_TOKEN",
                 value_from=client.V1EnvVarSource(
@@ -260,7 +265,7 @@ class K8sService:
         # HTTPS_PROXY/HTTP_PROXY: curl, pip, npm 등이 자동으로 프록시를 사용
         # NO_PROXY: 클러스터 내부 통신은 프록시를 우회
         # NOTE: proxy_secret은 kubectl describe pod에서 보임. K8s Secret으로 전환 검토 (Phase 2)
-        if proxy_secret:
+        if proxy_secret and not is_local:
             proxy_url = (
                 f"http://{username}:{proxy_secret}"
                 f"@auth-gateway.platform.svc.cluster.local:3128"
@@ -331,6 +336,96 @@ class K8sService:
         node_selector = node_selector_val if not target_node else None
         shared_read_only = not shared_writable
 
+        # 로컬 개발 환경 감지: 이미지 태그에 ":local"이 포함되면 Docker Desktop
+        # EFS PVC → hostPath, nodeSelector/tolerations/anti-affinity 제거, imagePullPolicy=Never
+        is_local = ":local" in self.settings.k8s_pod_image
+
+        if is_local:
+            # 로컬: hostPath 볼륨, init container 불필요, nodeSelector/tolerations 없음
+            volumes = [
+                client.V1Volume(
+                    name="user-workspace",
+                    host_path=client.V1HostPathVolumeSource(
+                        path=f"/tmp/bedrock-local-data/{username.lower()}",
+                        type="DirectoryOrCreate",
+                    ),
+                ),
+            ]
+            init_containers = None
+            pod_node_selector = None
+            pod_tolerations = None
+            pod_affinity = None
+            image_pull_policy = "Never"
+            volume_mounts = [
+                client.V1VolumeMount(
+                    name="user-workspace",
+                    mount_path="/home/node/workspace",
+                ),
+            ]
+            # 로컬 리소스 제한 완화
+            cpu_req = "500m"
+            cpu_lim = "1000m"
+            mem_req = "512Mi"
+            mem_lim = "1Gi"
+        else:
+            # 상용: EFS PVC, init container, nodeSelector, tolerations
+            volumes = [
+                client.V1Volume(
+                    name="user-workspace",
+                    persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(
+                        claim_name="efs-shared-pvc",
+                    ),
+                ),
+            ]
+            init_containers = [
+                client.V1Container(
+                    name="init-workspace",
+                    image="busybox",
+                    security_context=client.V1SecurityContext(
+                        run_as_user=0,
+                        run_as_non_root=False,
+                    ),
+                    command=["sh", "-c", "chown -R 1000:1000 /workspace && chmod 755 /workspace && chown -R 1000:1000 /shared && chmod 755 /shared"],
+                    volume_mounts=[
+                        client.V1VolumeMount(
+                            name="user-workspace",
+                            mount_path="/workspace",
+                            sub_path=f"users/{username.lower()}",
+                        ),
+                        client.V1VolumeMount(
+                            name="user-workspace",
+                            mount_path="/shared",
+                            sub_path="shared",
+                        ),
+                    ],
+                )
+            ]
+            pod_node_selector = node_selector
+            pod_tolerations = [
+                client.V1Toleration(
+                    key="dedicated", operator="Equal",
+                    value="user", effect="NoSchedule",
+                ),
+                client.V1Toleration(
+                    key="dedicated", operator="Equal",
+                    value="presenter", effect="NoSchedule",
+                ),
+            ]
+            pod_affinity = client.V1Affinity(
+                pod_anti_affinity=client.V1PodAntiAffinity(
+                    required_during_scheduling_ignored_during_execution=[
+                        client.V1PodAffinityTerm(
+                            label_selector=client.V1LabelSelector(
+                                match_labels={"app": "claude-terminal"},
+                            ),
+                            topology_key="kubernetes.io/hostname",
+                        ),
+                    ],
+                ),
+            ) if infra.get("max_pods_per_node", 3) == 1 else None
+            image_pull_policy = "Always"
+            volume_mounts = self._build_volume_mounts(username, shared_read_only)
+
         pod_manifest = client.V1Pod(
             metadata=client.V1ObjectMeta(
                 name=pod_name,
@@ -341,98 +436,42 @@ class K8sService:
                     "session-type": session_type,
                 },
                 annotations={
-                    # 오토스케일러가 활성 사용자 Pod를 강제 퇴거하지 못하도록 방지
                     "cluster-autoscaler.kubernetes.io/safe-to-evict": "false",
                 },
             ),
             spec=client.V1PodSpec(
-                # Pod-level 보안 컨텍스트: 비-root 실행 강제
                 security_context=client.V1PodSecurityContext(
                     run_as_non_root=True,
                     run_as_user=1000,
                     run_as_group=1000,
                     fs_group=1000,
-                ),
-                # EFS 디렉토리 권한 설정 (node user = UID 1000)
-                init_containers=[
-                    client.V1Container(
-                        name="init-workspace",
-                        image="busybox",
-                        # init container는 root로 실행 (chown 필요)
-                        security_context=client.V1SecurityContext(
-                            run_as_user=0,
-                            run_as_non_root=False,
-                        ),
-                        command=["sh", "-c", "chown -R 1000:1000 /workspace && chmod 755 /workspace && chown -R 1000:1000 /shared && chmod 755 /shared"],
-                        volume_mounts=[
-                            client.V1VolumeMount(
-                                name="user-workspace",
-                                mount_path="/workspace",
-                                sub_path=f"users/{username.lower()}",
-                            ),
-                            client.V1VolumeMount(
-                                name="user-workspace",
-                                mount_path="/shared",
-                                sub_path="shared",
-                            ),
-                        ],
-                    )
-                ],
+                ) if not is_local else None,
+                init_containers=init_containers,
                 service_account_name=self.settings.k8s_service_account,
                 restart_policy="Never",
                 active_deadline_seconds=ttl_seconds if ttl_seconds > 0 else None,
-                # 특정 노드 지정 또는 infra_policy 기반 노드 배치
                 node_name=target_node if target_node else None,
-                node_selector=node_selector,
-                # 노드 taint toleration — presenter/user 노드의 dedicated taint 허용
-                tolerations=[
-                    client.V1Toleration(
-                        key="dedicated", operator="Equal",
-                        value="user", effect="NoSchedule",
-                    ),
-                    client.V1Toleration(
-                        key="dedicated", operator="Equal",
-                        value="presenter", effect="NoSchedule",
-                    ),
-                ],
-                # 1-node-1-pod 격리: max_pods_per_node==1 템플릿에서만 활성화
-                affinity=client.V1Affinity(
-                    pod_anti_affinity=client.V1PodAntiAffinity(
-                        required_during_scheduling_ignored_during_execution=[
-                            client.V1PodAffinityTerm(
-                                label_selector=client.V1LabelSelector(
-                                    match_labels={"app": "claude-terminal"},
-                                ),
-                                topology_key="kubernetes.io/hostname",
-                            ),
-                        ],
-                    ),
-                ) if infra.get("max_pods_per_node", 3) == 1 else None,
+                node_selector=pod_node_selector,
+                tolerations=pod_tolerations,
+                affinity=pod_affinity,
                 containers=[
                     client.V1Container(
                         name="terminal",
                         image=self.settings.k8s_pod_image,
-                        image_pull_policy="Always",
+                        image_pull_policy=image_pull_policy,
                         ports=[client.V1ContainerPort(container_port=7681, name="ttyd")],
                         env=self._build_env_vars(
                             username, user_display_name, security_policy,
                             proxy_secret=proxy_secret,
                             pod_token=pod_token,
                         ),
-                        # Container-level 보안: 권한 상승 차단, 불필요 capabilities 제거
                         security_context=client.V1SecurityContext(
                             allow_privilege_escalation=False,
                             capabilities=client.V1Capabilities(drop=["ALL"]),
                         ),
                         resources=client.V1ResourceRequirements(
-                            requests={
-                                "cpu": cpu_req,
-                                "memory": mem_req,
-                            },
-                            limits={
-                                "cpu": cpu_lim,
-                                "memory": mem_lim,
-                            },
+                            requests={"cpu": cpu_req, "memory": mem_req},
+                            limits={"cpu": cpu_lim, "memory": mem_lim},
                         ),
                         readiness_probe=client.V1Probe(
                             http_get=client.V1HTTPGetAction(path="/", port=7681),
@@ -444,19 +483,10 @@ class K8sService:
                             initial_delay_seconds=10,
                             period_seconds=30,
                         ),
-                        volume_mounts=self._build_volume_mounts(
-                            username, shared_read_only,
-                        ),
+                        volume_mounts=volume_mounts,
                     )
                 ],
-                volumes=[
-                    client.V1Volume(
-                        name="user-workspace",
-                        persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(
-                            claim_name="efs-shared-pvc",
-                        ),
-                    ),
-                ],
+                volumes=volumes,
             ),
         )
 

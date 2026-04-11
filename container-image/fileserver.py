@@ -3051,7 +3051,7 @@ function openPreview(d) {{
   if (MARKDOWN_EXTENSIONS[ext]) {{
     window.open('/api/v1/viewers/markdown/' + encodeURIComponent(username) + '/' + encodeURIComponent(d.path), '_blank');
   }} else if (OFFICE_EXTENSIONS[ext]) {{
-    window.open('/api/v1/viewers/office/' + encodeURIComponent(username) + '/' + encodeURIComponent(d.path), '_blank');
+    window.open('/api/v1/viewers/onlyoffice/' + encodeURIComponent(username) + '/' + encodeURIComponent(d.path), '_blank');
   }} else if (PREVIEW_EXTENSIONS[ext]) {{
     window.open('/api/v1/viewers/file/' + encodeURIComponent(username) + '/' + encodeURIComponent(d.path), '_blank');
   }}

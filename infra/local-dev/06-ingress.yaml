@@ -100,9 +100,32 @@ spec:
                 name: claude-terminal-test001
                 port:
                   number: 7681
-          # OnlyOffice Document Server — 문서 편집기
+          # OnlyOffice api.js — rewrite로 /onlyoffice/ prefix 제거
           - path: /onlyoffice(/|$)(.*)
             pathType: ImplementationSpecific
+            backend:
+              service:
+                name: onlyoffice
+                port:
+                  number: 80
+---
+# OnlyOffice 캐시 Ingress — rewrite 없음
+# /cache/ 경로는 OnlyOffice가 원본 경로 그대로 필요하므로 별도 Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: onlyoffice-cache-ingress
+  namespace: claude-sessions
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /cache
+            pathType: Prefix
             backend:
               service:
                 name: onlyoffice

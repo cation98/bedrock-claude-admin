@@ -211,6 +211,57 @@ def _onlyoffice_doc_type(ext: str) -> str:
     return "word"
 
 
+def _build_onlyoffice_config(filename: str, username: str, display_name: str, settings: Settings) -> dict:
+    """OnlyOffice config dict 생성 (config API + HTML viewer 공용)."""
+    ext = os.path.splitext(filename)[1].lower()
+    doc_type = _onlyoffice_doc_type(ext)
+    doc_key = hashlib.sha256(f"{username}:{filename}:{int(time.time()//300)}".encode()).hexdigest()[:20]
+
+    file_token = _create_file_token(username, filename)
+    file_download_url = f"http://auth-gateway.platform.svc.cluster.local/api/v1/viewers/file/{username}/{filename}?token={file_token}"
+
+    config = {
+        "document": {
+            "fileType": ext.lstrip("."),
+            "key": doc_key,
+            "title": filename,
+            "url": file_download_url,
+            "permissions": {
+                "download": False,
+                "edit": False,
+                "print": False,
+                "review": False,
+            },
+        },
+        "documentType": doc_type,
+        "editorConfig": {
+            "mode": "view",
+            "callbackUrl": "http://auth-gateway.platform.svc.cluster.local/api/v1/viewers/onlyoffice/callback",
+            "lang": "ko",
+            "user": {
+                "id": username,
+                "name": display_name,
+            },
+            "customization": {
+                "toolbarNoTabs": True,
+                "compactHeader": True,
+                "hideRightMenu": True,
+                "chat": False,
+                "comments": False,
+            },
+        },
+        "type": "desktop",
+        "height": "100%",
+        "width": "100%",
+    }
+
+    if settings.onlyoffice_jwt_secret:
+        token = jose_jwt.encode(config, settings.onlyoffice_jwt_secret, algorithm="HS256")
+        config["token"] = token
+
+    return config
+
+
 @router.get("/onlyoffice/config/{filename:path}")
 async def onlyoffice_config(
     filename: str,
@@ -231,52 +282,7 @@ async def onlyoffice_config(
         raise HTTPException(status_code=400, detail=f"Unsupported format: {ext}")
 
     username = current_user.get("sub", "")
-    doc_type = _onlyoffice_doc_type(ext)
-    doc_key = hashlib.sha256(f"{username}:{filename}:{int(time.time()//300)}".encode()).hexdigest()[:20]
-
-    # OnlyOffice가 파일을 다운로드할 URL (K8s 내부 DNS — auth-gateway Service)
-    file_token = _create_file_token(username, filename)
-    file_download_url = f"http://auth-gateway.platform.svc.cluster.local/api/v1/viewers/file/{username}/{filename}?token={file_token}"
-
-    config = {
-        "document": {
-            "fileType": ext.lstrip("."),
-            "key": doc_key,
-            "title": filename,
-            "url": file_download_url,
-            "permissions": {
-                "download": False,
-                "edit": False,
-                "print": False,
-                "review": False,
-            },
-        },
-        "documentType": doc_type,
-        "editorConfig": {
-            "mode": "view",
-            "callbackUrl": f"http://auth-gateway.platform.svc.cluster.local/api/v1/viewers/onlyoffice/callback",
-            "lang": "ko",
-            "user": {
-                "id": username,
-                "name": current_user.get("name", username),
-            },
-            "customization": {
-                "toolbarNoTabs": True,
-                "compactHeader": True,
-                "hideRightMenu": True,
-                "chat": False,
-                "comments": False,
-            },
-        },
-        "type": "embedded",
-        "height": "100%",
-        "width": "100%",
-    }
-
-    # JWT 서명 (OnlyOffice JWT_ENABLED=true인 경우 필수)
-    if settings.onlyoffice_jwt_secret:
-        token = jose_jwt.encode(config, settings.onlyoffice_jwt_secret, algorithm="HS256")
-        config["token"] = token
+    config = _build_onlyoffice_config(filename, username, current_user.get("name", username), settings)
 
     return JSONResponse(
         content=config,
@@ -284,6 +290,70 @@ async def onlyoffice_config(
             "Content-Security-Policy": "frame-ancestors 'self'",
         },
     )
+
+
+@router.get("/onlyoffice/{username}/{file_path:path}", response_class=HTMLResponse)
+async def onlyoffice_viewer(
+    username: str,
+    file_path: str,
+    current_user: dict = Depends(_get_viewer_user),
+    settings: Settings = Depends(get_settings),
+):
+    """OnlyOffice 뷰어 HTML — api.js + DocEditor iframe 렌더링.
+
+    Hub UI에서 window.open()으로 열리며, markdown_viewer와 동일한 패턴.
+    OnlyOffice api.js는 /onlyoffice/ Ingress 경로로 로드 (상대경로, Mixed Content 방지).
+    """
+    requesting = current_user.get("sub", "")
+    is_admin = current_user.get("role") == "admin"
+    if not is_admin and requesting.upper() != username.upper():
+        raise HTTPException(status_code=403, detail="접근 권한이 없습니다")
+
+    normalized = os.path.normpath(file_path)
+    if ".." in normalized or normalized.startswith("/"):
+        raise HTTPException(status_code=400, detail="Invalid file path")
+
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext not in OFFICE_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"Unsupported format: {ext}")
+
+    import html as html_mod
+    basename = html_mod.escape(os.path.basename(file_path))
+    config = _build_onlyoffice_config(file_path, username, current_user.get("name", username), settings)
+    config_json = json.dumps(config, ensure_ascii=False)
+
+    html = f"""<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<title>{basename} — Otto AI Viewer</title>
+<style>
+  html, body {{ margin:0; padding:0; height:100%; overflow:hidden; background:#1e1e2e; }}
+  #editor-container {{ width:100%; height:100vh; }}
+  .loading {{ display:flex; align-items:center; justify-content:center;
+    height:100vh; color:#cdd6f4; font-family:'Segoe UI',sans-serif; font-size:16px; }}
+  .err {{ color:#f87171; text-align:center; padding:40px; font-size:14px; }}
+</style>
+</head><body>
+<div id="editor-container"></div>
+<script src="/onlyoffice/web-apps/apps/api/documents/api.js"></script>
+<script>
+(function() {{
+  try {{
+    var config = {config_json};
+    config.type = "desktop";
+    config.height = "100%";
+    config.width = "100%";
+    new DocsAPI.DocEditor("editor-container", config);
+  }} catch(e) {{
+    var el = document.getElementById("editor-container");
+    el.textContent = e.message;
+    el.className = "err";
+  }}
+}})();
+</script>
+</body></html>"""
+
+    return HTMLResponse(content=html)
 
 
 @router.post("/onlyoffice/callback")
