@@ -35,18 +35,35 @@ spec:
         - containerPort: 3000
           name: webapp
       env:
-        # 사용자 식별 정보 — auth-gateway가 Pod 생성 시 주입하는 값과 동일
+        # 사용자 식별 정보 — auth-gateway k8s_service.py가 Pod 생성 시 주입하는 값과 동일
         - name: USER_ID
           value: "TEST001"
         - name: USER_DISPLAY_NAME
           value: "테스트사용자"
+        - name: GIT_USER_NAME
+          value: "테스트사용자"
+        - name: GIT_USER_EMAIL
+          value: "TEST001@skons.net"
         # Bedrock 설정 — 실제 AWS 자격증명이 있어야 Claude Code 동작
         - name: CLAUDE_CODE_USE_BEDROCK
           value: "1"
         - name: AWS_REGION
-          value: "us-east-1"
+          value: "ap-northeast-2"
         - name: ANTHROPIC_DEFAULT_SONNET_MODEL
-          value: "us.anthropic.claude-sonnet-4-6"
+          value: "global.anthropic.claude-sonnet-4-6"
+        - name: ANTHROPIC_DEFAULT_HAIKU_MODEL
+          value: "global.anthropic.claude-haiku-4-5-20251001-v1:0"
+        # 온보딩 스킵 — 상용과 동일
+        - name: CLAUDE_CODE_SKIP_ONBOARDING
+          value: "1"
+        # 보안 정책 메타데이터
+        - name: SECURITY_LEVEL
+          value: "standard"
+        - name: SECURITY_POLICY
+          value: "{}"
+        # 유휴 감지용 내부 heartbeat
+        - name: AUTH_GATEWAY_URL
+          value: "http://auth-gateway.platform.svc.cluster.local"
       volumeMounts:
         # workspace — 사용자 작업 디렉토리 (호스트에 영구 저장)
         - name: workspace

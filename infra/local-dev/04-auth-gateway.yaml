@@ -31,6 +31,7 @@ spec:
           imagePullPolicy: Never
           ports:
             - containerPort: 8000
+            - containerPort: 3128
           env:
             # === Secret에서 로드하는 환경변수 ===
             - name: DATABASE_URL
@@ -81,6 +82,17 @@ spec:
                 secretKeyRef:
                   name: auth-gateway-secrets
                   key: PW_ENCODING_SALT
+            # 워크숍/외부 DB — 상용에서 secretKeyRef로 주입
+            - name: WORKSHOP_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-secrets
+                  key: WORKSHOP_DATABASE_URL
+            - name: TANGO_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-secrets
+                  key: TANGO_DATABASE_URL
             # === 직접 설정하는 환경변수 ===
             # SSO 프로토콜 설정
             - name: SSO_AUTH_METHOD
@@ -119,6 +131,9 @@ spec:
             requests:
               cpu: 250m
               memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
 ---
 # auth-gateway Service — Ingress에서 auth-gateway.platform.svc.cluster.local:80 로 접근
 # targetPort: 8000 (FastAPI uvicorn 포트) → port: 80 (외부 노출 포트)
@@ -131,7 +146,12 @@ spec:
   selector:
     app: auth-gateway
   ports:
+    # FastAPI (Auth Gateway API)
     - name: http
       port: 80
       targetPort: 8000
+    # CONNECT 프록시 — Pod에서 외부 API 접근 시 사용
+    - name: proxy
+      port: 3128
+      targetPort: 3128
   type: NodePort

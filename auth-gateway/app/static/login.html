@@ -291,8 +291,14 @@
                 });
 
                 if (!loginRes.ok) {
-                    const err = await loginRes.json();
-                    throw new Error(err.detail?.message || err.detail || '인증에 실패했습니다.');
+                    let msg = '인증에 실패했습니다.';
+                    try {
+                        const err = await loginRes.json();
+                        msg = err.detail?.message || err.detail || msg;
+                    } catch (_) {
+                        if (loginRes.status >= 500) msg = '서버 오류가 발생했습니다. 잠시 후 다시 시도해주세요.';
+                    }
+                    throw new Error(msg);
                 }
 
                 const loginData = await loginRes.json();
@@ -353,8 +359,14 @@
                 });
 
                 if (!res.ok) {
-                    const err = await res.json();
-                    throw new Error(err.detail || '인증코드 확인에 실패했습니다.');
+                    let msg = '인증코드 확인에 실패했습니다.';
+                    try {
+                        const err = await res.json();
+                        msg = err.detail || msg;
+                    } catch (_) {
+                        if (res.status >= 500) msg = '서버 오류가 발생했습니다. 잠시 후 다시 시도해주세요.';
+                    }
+                    throw new Error(msg);
                 }
 
                 const data = await res.json();
@@ -383,8 +395,14 @@
                 });
 
                 if (!res.ok) {
-                    const err = await res.json();
-                    throw new Error(err.detail?.message || err.detail || '코드 재발송에 실패했습니다.');
+                    let msg = '코드 재발송에 실패했습니다.';
+                    try {
+                        const err = await res.json();
+                        msg = err.detail?.message || err.detail || msg;
+                    } catch (_) {
+                        if (res.status >= 500) msg = '서버 오류가 발생했습니다. 잠시 후 다시 시도해주세요.';
+                    }
+                    throw new Error(msg);
                 }
 
                 const data = await res.json();
@@ -433,8 +451,14 @@
                 });
 
                 if (!sessionRes.ok) {
-                    const err = await sessionRes.json();
-                    throw new Error(err.detail || '터미널 생성에 실패했습니다.');
+                    let msg = '터미널 생성에 실패했습니다.';
+                    try {
+                        const err = await sessionRes.json();
+                        msg = err.detail || msg;
+                    } catch (_) {
+                        if (sessionRes.status >= 500) msg = '서버 오류가 발생했습니다. 잠시 후 다시 시도해주세요.';
+                    }
+                    throw new Error(msg);
                 }
 
                 const sessionData = await sessionRes.json();

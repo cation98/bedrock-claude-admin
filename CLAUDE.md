@@ -132,3 +132,18 @@ In QA mode, flag any code that doesn't match DESIGN.md.
 ## Design Document
 
 전체 시스템 설계: `docs/plans/2026-03-21-bedrock-claude-code-platform-design.md`
+
+## mindbase 컨텍스트 로드
+
+실질적 개발 작업(구현, 버그 수정, 리팩터링, 인프라 변경) 시작 시:
+1. `mcp__mindbase__memory_list(project="bedrock-ai-agent")`로 기존 지식 목록 확인
+2. 현재 작업과 관련된 memory가 있으면 `memory_read`로 로드하여 참고
+3. 전체를 로드하지 않고, 작업 맥락에 맞는 것만 선택적으로 읽을 것
+
+## 디버깅 기록 보존
+
+`/investigate` 등 디버깅 완료 후 DEBUG REPORT를 작성하면:
+- `mcp__mindbase__memory_write(project="bedrock-ai-agent", category="pattern")`으로 교훈을 저장
+- name: `debug-{간결한-키워드}` 형식
+- tags: 관련 컴포넌트, 에러 유형 포함
+- 내용은 Symptom, Root Cause, Fix, 교훈을 압축하여 기록 (전체 대화가 아닌 핵심만)
