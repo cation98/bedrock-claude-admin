@@ -29,9 +29,9 @@ PASS=0
 FAIL=0
 SKIP=0
 
-log_pass() { echo -e "${GREEN}[PASS]${NC} $*"; ((PASS++)); }
-log_fail() { echo -e "${RED}[FAIL]${NC} $*"; ((FAIL++)); }
-log_skip() { echo -e "${YELLOW}[SKIP]${NC} $*"; ((SKIP++)); }
+log_pass() { echo -e "${GREEN}[PASS]${NC} $*"; PASS=$((PASS+1)); }
+log_fail() { echo -e "${RED}[FAIL]${NC} $*"; FAIL=$((FAIL+1)); }
+log_skip() { echo -e "${YELLOW}[SKIP]${NC} $*"; SKIP=$((SKIP+1)); }
 log_info() { echo -e "[INFO] $*"; }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -56,8 +56,9 @@ probe_tcp() {
   fi
 
   log_info "Probing $desc from $ns/$pod (expect: $expect)..."
+  # nc 미설치 컨테이너 대응: nc 사용 가능 시 nc, 없으면 /dev/tcp fallback
   if kubectl exec -n "$ns" "$pod" -- sh -c \
-    "nc -zw3 $host $port 2>/dev/null; echo \$?" 2>/dev/null | grep -q "^0$"; then
+    "if command -v nc >/dev/null 2>&1; then nc -zw3 $host $port 2>/dev/null; else (echo >/dev/tcp/$host/$port) 2>/dev/null; fi; echo \$?" 2>/dev/null | grep -q "^0$"; then
     local actual="allow"
   else
     local actual="block"
@@ -257,7 +258,7 @@ summary() {
   echo "=========================================="
 
   if [[ $FAIL -gt 0 ]]; then
-    echo -e "${RED}[FAIL] $FAIL개 항목 실패 — NetworkPolicy 또는 배포 오류 확인 필요${NC}"
+    echo -e "${RED}[FAIL] ${FAIL}개 항목 실패 — NetworkPolicy 또는 배포 오류 확인 필요${NC}"
     exit 1
   elif [[ $SKIP -gt 0 ]]; then
     echo -e "${YELLOW}[PARTIAL] T2/T11 완료 후 재실행 필요${NC}"
