@@ -1124,7 +1124,8 @@
             try { decoded = decodeURIComponent(rawNext); } catch (e) { return fallback; }
 
             // 상대경로 (/로 시작) — 동일 오리진 보장
-            if (decoded.charAt(0) === '/') return decoded;
+            // charAt(1) !== '/' : protocol-relative URL(//evil.com) bypass 방지
+            if (decoded.charAt(0) === '/' && decoded.charAt(1) !== '/') return decoded;
 
             // 절대 URL 검증
             try {
