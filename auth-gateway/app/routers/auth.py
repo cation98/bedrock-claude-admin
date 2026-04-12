@@ -481,3 +481,64 @@ async def get_me(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return user
+
+
+@router.get("/webui-verify", status_code=200)
+async def webui_verify(
+    request: Request,
+    response: Response,
+    settings: Settings = Depends(get_settings),
+):
+    """nginx ingress auth_request 콜백 — Open WebUI SSO 연동.
+
+    NGINX Ingress가 chat.skons.net 요청마다 이 엔드포인트를 서브요청으로 호출.
+    200 반환 시 X-SKO-Email/X-SKO-User-Id 헤더를 Open WebUI에 전달.
+    401 반환 시 NGINX가 로그인 페이지로 리다이렉트.
+
+    검증 흐름:
+      bedrock_jwt 쿠키 (HttpOnly) → RS256 검증 → username 추출
+      → X-SKO-Email: {username}@skons.net 헤더 응답
+      → ingress auth-response-headers로 Open WebUI에 전달
+      → WEBUI_AUTH_TRUSTED_EMAIL_HEADER=X-SKO-Email 로 자동 로그인/생성
+
+    ingress.yaml 설정 참고:
+      nginx.ingress.kubernetes.io/auth-url: "http://auth-gateway.platform.svc.cluster.local/api/v1/auth/webui-verify"
+      nginx.ingress.kubernetes.io/auth-response-headers: "X-SKO-Email,X-SKO-User-Id"
+      nginx.ingress.kubernetes.io/auth-signin: "https://portal.skons.net/login?redirect=$escaped_request_uri"
+    """
+    from app.core.security import decode_token
+
+    # bedrock_jwt 쿠키 우선 (SSO 로그인 시 설정됨)
+    token = request.cookies.get("bedrock_jwt", "")
+    if not token:
+        # claude_token legacy fallback
+        token = request.cookies.get("claude_token", "")
+
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Cookie"},
+        )
+
+    payload = decode_token(token, settings)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Cookie"},
+        )
+
+    username = payload.get("sub", "")
+    if not username:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token missing subject",
+        )
+
+    # NGINX auth-response-headers로 Open WebUI에 전달되는 헤더
+    # Open WebUI WEBUI_AUTH_TRUSTED_EMAIL_HEADER=X-SKO-Email 로 자동 로그인
+    response.headers["X-SKO-Email"] = f"{username}@skons.net"
+    response.headers["X-SKO-User-Id"] = username
+
+    return {"ok": True}

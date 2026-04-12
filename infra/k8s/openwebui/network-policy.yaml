@@ -96,6 +96,16 @@ spec:
         - port: 5432
           protocol: TCP
 
+    # Pipelines 사이드카 (같은 ns) — LLM 요청 전처리 (user injection, budget gate, usage emit)
+    # Open WebUI의 OPENAI_API_BASE_URL이 Pipelines(9099)를 가리키므로 필수 egress.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: openwebui-pipelines
+      ports:
+        - port: 9099
+          protocol: TCP
+
     # Auth Gateway (platform ns) — JWT 검증, 사용자 프로파일 조회
     - to:
         - namespaceSelector:
