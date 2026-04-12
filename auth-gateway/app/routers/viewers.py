@@ -88,12 +88,19 @@ def _create_file_token(username: str, file_path: str, ttl_seconds: int = 300) ->
 
 
 def _consume_file_token(token: str) -> dict | None:
-    """토큰 검증 + 소비 (1회용). Redis 우선, fallback 메모리."""
+    """토큰 검증 (TTL 기반 재사용 가능). Redis 우선, fallback 메모리.
+
+    P2-BUG4(H1): OnlyOffice Document Server는 Word/PPTX 원본을 변환 파이프라인에서
+    여러 번 fetch한다(2026-04-12 로그로 확증: .docx/.pptx 3회, .xlsx 1회).
+    이전의 1회용(getdel/pop) 의미는 2차 fetch부터 401을 발생시켜 Word/PPTX 로드를
+    실패시키므로, TTL 5분 동안 재검증 가능한 semantics로 전환.
+    TTL 만료 시 Redis TTL(setex) / 메모리 GC로 자연 무효화.
+    """
     try:
         from app.core.redis_client import get_redis
         r = get_redis()
         if r:
-            val = r.getdel(f"ftoken:{token}")  # 원자적 get+delete
+            val = r.get(f"ftoken:{token}")  # 재사용 가능 — 삭제하지 않음
             if val:
                 return json.loads(val)
     except Exception:
@@ -103,7 +110,7 @@ def _consume_file_token(token: str) -> dict | None:
     expired = [k for k, v in _file_tokens.items() if v.get("expires", 0) <= now]
     for k in expired:
         _file_tokens.pop(k, None)
-    data = _file_tokens.pop(token, None)
+    data = _file_tokens.get(token)  # 재사용 가능 — 삭제하지 않음
     if data and data.get("expires", 0) > now:
         return data
     return None

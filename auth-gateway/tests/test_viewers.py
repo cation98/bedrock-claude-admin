@@ -448,7 +448,11 @@ class TestFileTokenSystem:
         assert data["username"] == "TESTUSER01"
         assert data["file_path"] == "report.xlsx"
 
-    def test_token_single_use(self):
+    def test_token_reusable_within_ttl(self):
+        """P2-BUG4(H1): OnlyOffice DS가 Word/PPTX 원본을 다중 fetch하므로
+        토큰은 TTL 내에서 재검증 가능해야 한다 (1회용 → TTL-only 전환).
+        2026-04-12 로그 확증: .docx/.pptx 3회 fetch, .xlsx 1회.
+        """
         from app.routers.viewers import _create_file_token, _consume_file_token, _file_tokens
         _file_tokens.clear()
 
@@ -457,7 +461,8 @@ class TestFileTokenSystem:
         assert first is not None
 
         second = _consume_file_token(token)
-        assert second is None
+        assert second is not None, "TTL 내 재검증 실패 — OO DS 다중 fetch 지원 불가"
+        assert second == first
 
     def test_expired_token_rejected(self):
         from app.routers.viewers import _consume_file_token, _file_tokens
