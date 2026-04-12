@@ -131,15 +131,25 @@ EDITABLE_EXTENSIONS = {".xlsx", ".docx", ".pptx", ".odt", ".ods", ".odp"}
 # OnlyOffice Document Key & Edit Session 관리
 # ---------------------------------------------------------------------------
 
-def _doc_key_personal(username: str, file_path: str, version: int) -> str:
-    """개인 파일 document key — sha256(personal:{username}:{path}:{version}) 앞 20자."""
-    raw = f"personal:{username.upper()}:{file_path}:{version}".encode()
+def _doc_key_personal(username: str, file_path: str, version: int, salt: str = "") -> str:
+    """개인 파일 document key — sha256(personal:{username}:{path}:{version}[:salt]) 앞 20자.
+
+    salt(P2-BUG1): 재편집 시 OnlyOffice Document Server 캐시 충돌 방지를 위해
+    새 세션마다 임의 값을 섞는다. 뷰어 fallback 같이 DB 조회 없이 key 가
+    필요할 때는 salt 생략(빈 문자열) — 기존 시그니처 호환.
+    """
+    suffix = f":{salt}" if salt else ""
+    raw = f"personal:{username.upper()}:{file_path}:{version}{suffix}".encode()
     return hashlib.sha256(raw).hexdigest()[:20]
 
 
-def _doc_key_shared(mount_id: int, file_path: str, version: int) -> str:
-    """공유 파일 document key — sha256(shared:{mount_id}:{path}:{version}) 앞 20자."""
-    raw = f"shared:{mount_id}:{file_path}:{version}".encode()
+def _doc_key_shared(mount_id: int, file_path: str, version: int, salt: str = "") -> str:
+    """공유 파일 document key — sha256(shared:{mount_id}:{path}:{version}[:salt]) 앞 20자.
+
+    salt 의미는 `_doc_key_personal` 과 동일.
+    """
+    suffix = f":{salt}" if salt else ""
+    raw = f"shared:{mount_id}:{file_path}:{version}{suffix}".encode()
     return hashlib.sha256(raw).hexdigest()[:20]
 
 
@@ -237,10 +247,15 @@ def _get_or_create_edit_session(
         file_path=file_path,
         mount_id=mount_id,
     )
+    # P2-BUG1: saved 행이 DELETE 로 정리되면 max(version) 이 리셋되어
+    # 이전 세션과 같은 version 이 재사용될 수 있다. OnlyOffice Document Server
+    # 가 이전 key 의 cached content 를 보고 "버전 변경" 경고 + view-only 로
+    # 강제 전환하는 것을 방지하기 위해 세션마다 임의 salt 를 섞는다.
+    salt = secrets.token_hex(4)
     if is_shared and mount_id is not None:
-        document_key = _doc_key_shared(mount_id, file_path, version)
+        document_key = _doc_key_shared(mount_id, file_path, version, salt=salt)
     else:
-        document_key = _doc_key_personal(owner_username, file_path, version)
+        document_key = _doc_key_personal(owner_username, file_path, version, salt=salt)
 
     session = EditSession(
         document_key=document_key,
@@ -935,11 +950,14 @@ async def onlyoffice_callback(
             db.commit()
             return JSONResponse(content={"error": 0})
 
-        # status 4: 변경 없이 닫힘 — 세션 정리만
+        # status 4: 변경 없이 닫힘 — 행 삭제(P2-BUG1)
+        # 이전에는 status="saved" 로 마킹했으나, saved 행이 남으면 재진입 시
+        # `_lookup_edit_session` 은 건너뛰지만 `_next_version_for` 가 version 을
+        # 계속 키워 DB 에 잔여 행이 누적된다. 변경이 없는 닫힘은 그냥 지운다.
         if status == 4:
-            session.status = "saved"
+            db.delete(session)
             db.commit()
-            logger.info(f"Callback status=4 (no change) key={document_key} — session closed")
+            logger.info(f"Callback status=4 (no change) key={document_key} — session deleted")
             return JSONResponse(content={"error": 0})
 
         # status 2 / 6: 저장 (2=편집 완료, 6=force-save)
@@ -983,8 +1001,8 @@ async def onlyoffice_callback(
                 return JSONResponse(content={"error": 1})
 
             # 성공 처리:
-            # - status=2 (편집 완료): saved + version++ → 재열기 시 새 key
-            # - status=6 (force-save): editing 유지, version은 그대로
+            # - status=2 (편집 완료): DELETE → 재열기 시 새 세션 + 새 key(P2-BUG1)
+            # - status=6 (force-save): editing 유지, version 그대로
             #   (편집 세션 연속 중이므로 key를 바꾸면 OnlyOffice 세션이 끊어짐)
             session3 = (
                 db.query(EditSession)
@@ -994,13 +1012,20 @@ async def onlyoffice_callback(
             )
             if session3:
                 if status == 2:
-                    session3.status = "saved"
-                    session3.version = session3.version + 1
+                    # 행 자체를 삭제하여 재진입 시 무조건 새 세션 생성.
+                    # document_key 의 salt 는 `_get_or_create_edit_session` 에서
+                    # 매번 새로 부여되므로 key 충돌은 발생하지 않는다.
+                    db.delete(session3)
+                    db.commit()
+                    logger.info(
+                        f"Callback status=2 key={document_key} saved — session deleted"
+                    )
+                    return JSONResponse(content={"error": 0})
                 else:  # status == 6 (force-save)
                     session3.status = "editing"
                     # version 유지 — 편집 지속
-                session3.last_error = None
-                db.commit()
+                    session3.last_error = None
+                    db.commit()
             logger.info(
                 f"Callback status={status} key={document_key} saved successfully "
                 f"(version={session3.version if session3 else '?'}, "

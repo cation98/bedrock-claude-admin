@@ -664,11 +664,17 @@ class TestCallbackSaveFlow:
         assert calls[0][0] == session.document_key
         assert calls[0][2] == "xlsx"
 
-    def test_callback_status_2_updates_db_version(self, client, db_session, monkeypatch):
-        """status=2 저장 성공 → session.status='saved', version++."""
+    def test_callback_status_2_deletes_session(self, client, db_session, monkeypatch):
+        """status=2 저장 성공 → 행 DELETE(P2-BUG1).
+
+        이전에는 status='saved' + version++ 로 마킹했으나, 재진입 시 stale 행이
+        재사용되거나 OnlyOffice Document Server 캐시와 충돌하여 view-only 로
+        열리는 이슈가 있었다. 행을 지우고 재진입마다 새 세션 + 새 key(salt) 를
+        발급한다.
+        """
         session = _mk_edit_session(db_session, file_path="report.xlsx", version=3)
         original_key = session.document_key
-        original_version = session.version
+        session_id = session.id
 
         async def _noop_save(sess, url, filetype):
             return None
@@ -684,9 +690,7 @@ class TestCallbackSaveFlow:
         assert resp.json() == {"error": 0}
 
         db_session.expire_all()
-        updated = db_session.query(EditSession).filter_by(id=session.id).one()
-        assert updated.status == "saved"
-        assert updated.version == original_version + 1
+        assert db_session.query(EditSession).filter_by(id=session_id).first() is None
 
     def test_callback_status_2_kubectl_cp_failure(self, client, db_session, monkeypatch):
         """저장 중 kubectl cp 실패 → session.status='save_failed', last_error 기록."""
@@ -817,6 +821,58 @@ class TestPersonalFileEditLock:
         assert cfg["editorConfig"]["mode"] == "edit"
         assert cfg["document"]["permissions"]["edit"] is True
 
+    def test_reopen_after_save_is_editable(self, client, db_session, monkeypatch):
+        """P2-BUG1 회귀: 편집→저장→재진입 flow 에서 계속 editable 이어야 한다.
+
+        버그 상황: 저장 완료 후 같은 파일을 다시 열면 OnlyOffice 가 view-only 로
+        뜨고 "파일 버전이 변경되었다" 경고를 표시. saved 행이 재사용되거나
+        document_key 가 로테이션되지 않은 것이 원인.
+
+        요구 사항(6 assertions):
+          1. 1차 오픈 → editing 세션 생성(version=1)
+          2. 콜백 status=2 처리(저장 완료)
+          3. 2차 오픈 → 새 세션이 생성되고 editable=True
+          4. 새 document_key 는 1차와 달라야 함
+          5. permissions.edit=True
+          6. mode="edit"
+        """
+        # ─ 1차 오픈 ─
+        resp1 = client.get("/api/v1/viewers/onlyoffice/edit/TESTUSER01/deal.xlsx")
+        assert resp1.status_code == 200
+        cfg1 = _extract_config_from_html(resp1.text)
+        first_key = cfg1["document"]["key"]
+        assert cfg1["editorConfig"]["mode"] == "edit"
+        assert cfg1["document"]["permissions"]["edit"] is True
+
+        first_row = db_session.query(EditSession).filter_by(document_key=first_key).one()
+        assert first_row.status == "editing"
+        assert first_row.version == 1
+
+        # ─ status=2 저장 콜백(파일 다운로드는 mock) ─
+        async def _noop_save(sess, url, filetype):
+            return None
+
+        monkeypatch.setattr(viewers_router, "_save_edited_file", _noop_save)
+        save_resp = _post_callback(client, {
+            "status": 2,
+            "key": first_key,
+            "url": "http://documentserver.claude-sessions.svc.cluster.local/deal.xlsx",
+        })
+        assert save_resp.status_code == 200
+        assert save_resp.json() == {"error": 0}
+
+        # ─ 2차 오픈 — 여기서 view-only 로 열리면 BUG ─
+        resp2 = client.get("/api/v1/viewers/onlyoffice/edit/TESTUSER01/deal.xlsx")
+        assert resp2.status_code == 200
+        cfg2 = _extract_config_from_html(resp2.text)
+        second_key = cfg2["document"]["key"]
+
+        assert cfg2["editorConfig"]["mode"] == "edit", "재진입이 edit 모드여야 함"
+        assert cfg2["document"]["permissions"]["edit"] is True, \
+            "재진입의 permissions.edit 이 True 여야 함"
+        assert second_key != first_key, \
+            f"새 세션의 document_key 가 1차와 달라야 함 ({first_key} vs {second_key})"
+
 
 class TestKeyGeneration:
     """Priority 5: document key 생성/로테이션."""
@@ -840,13 +896,16 @@ class TestKeyGeneration:
         assert len(key) == 20
 
     def test_key_rotation_on_save(self, client, db_session, monkeypatch):
-        """status=2 저장 후 version++ → 같은 파일 재진입 시 새 key 생성 가능."""
-        v1_key = viewers_router._doc_key_personal("TESTUSER01", "rot.xlsx", 1)
-        v2_key = viewers_router._doc_key_personal("TESTUSER01", "rot.xlsx", 2)
-        assert v1_key != v2_key
+        """status=2 저장 후 행 DELETE(P2-BUG1) → 같은 파일 재진입 시 새 key 생성됨.
 
+        이전 설계(saved + version++)는 stale 잔여 행이 쌓이고 재진입 시
+        view-only 로 열리는 원인이 되었다. 저장 성공 시 행을 제거하고
+        다음 `_get_or_create_edit_session` 호출이 salt 포함 새 key 를 만든다.
+        """
+        v1_key = viewers_router._doc_key_personal("TESTUSER01", "rot.xlsx", 1)
         session = _mk_edit_session(db_session, file_path="rot.xlsx", version=1)
         assert session.document_key == v1_key
+        session_id = session.id
 
         async def _noop_save(sess, url, filetype):
             return None
@@ -860,15 +919,8 @@ class TestKeyGeneration:
         })
 
         db_session.expire_all()
-        updated = db_session.query(EditSession).filter_by(id=session.id).one()
-        # 기존 세션은 saved + version 증가. saved 상태이므로 다음 열기 때는 새 세션이 생성됨.
-        assert updated.version == 2
-        assert updated.status == "saved"
-        # 로테이션된 key가 v2_key와 일치할 수 있어야 함 (다음 세션 생성 규칙)
-        next_key = viewers_router._doc_key_personal(
-            updated.owner_username, updated.file_path, updated.version
-        )
-        assert next_key == v2_key
+        # 행은 DELETE 되어야 한다.
+        assert db_session.query(EditSession).filter_by(id=session_id).first() is None
 
     def test_view_edit_share_same_key(self, client, db_session):
         """활성 편집 세션이 있으면 /onlyoffice/{user}/{path} view 진입은 같은 key를 사용."""
@@ -892,16 +944,19 @@ class TestCallbackOtherStatuses:
     """Priority 6: 콜백의 나머지 status 처리."""
 
     def test_callback_status_4_cleanup(self, client, db_session):
-        """status=4 (변경 없이 닫힘) → session.status='saved'."""
+        """status=4 (변경 없이 닫힘) → 행 DELETE(P2-BUG1).
+
+        변경이 없는 닫힘은 그대로 지워 재진입 시 새 세션을 생성한다.
+        """
         session = _mk_edit_session(db_session, file_path="nochange.xlsx")
+        session_id = session.id
 
         resp = _post_callback(client, {"status": 4, "key": session.document_key})
         assert resp.status_code == 200
         assert resp.json() == {"error": 0}
 
         db_session.expire_all()
-        updated = db_session.query(EditSession).filter_by(id=session.id).one()
-        assert updated.status == "saved"
+        assert db_session.query(EditSession).filter_by(id=session_id).first() is None
 
     def test_callback_status_6_force_save(self, client, db_session, monkeypatch):
         """status=6 (force-save) → 저장 후 status='editing' 유지 + version 동일(P2 #7).
