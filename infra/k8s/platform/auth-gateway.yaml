@@ -36,7 +36,9 @@ spec:
           operator: "Equal"
           value: "system"
           effect: "NoSchedule"
-      # auth-gateway HA: 서로 다른 노드 + ingress-nginx와 같은 노드 페어링
+      # auth-gateway HA: 서로 다른 노드에 분산 (hard anti-affinity)
+      # 참고: ingress-nginx는 별도 ingress-workers nodegroup으로 분리됨 (T6)
+      #       이전의 ingress-nginx pod affinity(근접 선호)는 제거 — 다른 nodegroup
       affinity:
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -47,17 +49,6 @@ spec:
                     values:
                       - auth-gateway
               topologyKey: kubernetes.io/hostname
-        podAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                labelSelector:
-                  matchExpressions:
-                    - key: app.kubernetes.io/name
-                      operator: In
-                      values:
-                        - ingress-nginx
-                topologyKey: kubernetes.io/hostname
       containers:
         - name: auth-gateway
           image: 680877507363.dkr.ecr.ap-northeast-2.amazonaws.com/bedrock-claude/auth-gateway:latest
