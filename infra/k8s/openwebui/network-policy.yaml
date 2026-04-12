@@ -174,15 +174,15 @@ spec:
         - port: 443
           protocol: TCP
 
-    # Platform ns Redis Stream — usage_events 푸시
-    # Redis Stream에 Bedrock 호출 완료 이벤트를 push → usage-worker가 RDS에 기록
+    # AWS ElastiCache Redis Stream — usage_events 푸시
+    # ElastiCache는 K8s Pod가 아니므로 podSelector 불가 → ipBlock 사용.
+    # EKS private 서브넷(elasticache.tf:66 eks_private_subnet_cidrs)에 배치됨.
+    # SecurityGroup(redis SG)이 동일 서브넷 CIDR에서만 6379 허용 → 이중 방어.
     - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: platform
-          podSelector:
-            matchLabels:
-              app: redis
+        - ipBlock:
+            cidr: 10.0.10.0/24   # ap-northeast-2a EKS private subnet
+        - ipBlock:
+            cidr: 10.0.20.0/24   # ap-northeast-2c EKS private subnet
       ports:
         - port: 6379
           protocol: TCP
@@ -239,14 +239,14 @@ spec:
         - port: 8080
           protocol: TCP
 
-    # Usage emit: Redis Stream 푸시
+    # AWS ElastiCache Redis Stream 푸시 (usage_emit)
+    # ElastiCache는 K8s Pod가 아니므로 podSelector 불가 → ipBlock 사용.
+    # EKS private 서브넷(10.0.10/24, 10.0.20/24)에 배치됨.
     - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: platform
-          podSelector:
-            matchLabels:
-              app: redis
+        - ipBlock:
+            cidr: 10.0.10.0/24   # ap-northeast-2a EKS private subnet
+        - ipBlock:
+            cidr: 10.0.20.0/24   # ap-northeast-2c EKS private subnet
       ports:
         - port: 6379
           protocol: TCP
