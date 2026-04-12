@@ -13,6 +13,24 @@ if [ -z "${AWS_ACCESS_KEY_ID:-}" ] && [ -z "${AWS_PROFILE:-}" ] && [ -z "${AWS_R
 fi
 
 # ---------------------------------------------------------------------------
+# T20: Bedrock AG HTTP proxy 라우팅 설정
+#   ANTHROPIC_BASE_URL이 설정된 경우, Claude CLI 호출을 Auth Gateway의
+#   Anthropic-compatible /v1 엔드포인트로 투명하게 프록시한다.
+#   - CLAUDE_CODE_USE_BEDROCK: 직접 AWS SDK 호출 (설정된 경우)
+#   - ANTHROPIC_BASE_URL 우선: Bedrock AG 통한 usage 추적 경로 (T20 활성화 시)
+#
+#   T20 DEPLOY 시점에 Auth Gateway가 /v1/messages를 지원하고 NetworkPolicy에서
+#   egress Bedrock 직접 접근이 차단되면 CLAUDE_CODE_USE_BEDROCK를 unset한다.
+#   현재는 ANTHROPIC_BASE_URL이 주입된 경우만 프록시 경로 활성화.
+# ---------------------------------------------------------------------------
+if [ -n "${ANTHROPIC_BASE_URL:-}" ]; then
+    # Auth Gateway 프록시 경로 활성화 — AWS SDK 직접 호출 비활성화
+    unset CLAUDE_CODE_USE_BEDROCK 2>/dev/null || true
+    export ANTHROPIC_API_KEY="${BEDROCK_JWT_TOKEN:-placeholder}"  # Auth Gateway가 JWT로 인증
+    echo "  Proxy:    ${ANTHROPIC_BASE_URL} (Bedrock AG T20)"
+fi
+
+# ---------------------------------------------------------------------------
 # 2) 사용자 프로필을 CLAUDE.md에 주입
 #    Auth Gateway가 Pod 생성 시 환경변수로 사용자 정보 전달
 # ---------------------------------------------------------------------------

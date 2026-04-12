@@ -14,12 +14,13 @@ from typing import Union
 import httpx
 import psycopg2
 import psycopg2.extras
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.core.database import get_db
 from app.core.security import create_access_token, get_current_user
+from app.routers.jwt_auth import write_access_cookies
 from app.models.audit_log import AuditAction
 from app.models.two_factor_code import TwoFactorCode
 from app.models.user import User
@@ -262,6 +263,7 @@ def _issue_jwt(user: User, settings: Settings, request: Request | None = None) -
 async def login(
     request: LoginRequest,
     http_request: Request,
+    response: Response,
     settings: Settings = Depends(get_settings),
     db: Session = Depends(get_db),
 ):
@@ -281,7 +283,9 @@ async def login(
             log_audit(db, user.username, AuditAction.LOGIN_BYPASS, detail="test account SSO+2FA skip")
             db.commit()
             logger.info(f"Test account login bypass: {user.username}")
-            return _issue_jwt(user, settings, http_request)
+            jwt_result = _issue_jwt(user, settings, http_request)
+            write_access_cookies(response, jwt_result.access_token)
+            return jwt_result
 
     # ── Admin 계정 SSO 매핑 ──
     # ADMIN001 → N1102359 SSO 인증, JWT는 ADMIN001로 발급
@@ -323,7 +327,9 @@ async def login(
             f"Direct JWT issued (2fa_enabled={settings.two_factor_enabled}): "
             f"{user.username}"
         )
-        return _issue_jwt(user, settings, http_request)
+        jwt_result = _issue_jwt(user, settings, http_request)
+        write_access_cookies(response, jwt_result.access_token)
+        return jwt_result
 
     # ── 테스트 계정 2FA 우회 ──
     # SECURITY: allow_test_users=True (기본값 False)일 때만 활성화됩니다.
@@ -332,7 +338,9 @@ async def login(
         log_audit(db, user.username, AuditAction.LOGIN_BYPASS, detail="test account 2FA skip")
         db.commit()
         logger.info(f"Test account 2FA bypass: {user.username}")
-        return _issue_jwt(user, settings, http_request)
+        jwt_result = _issue_jwt(user, settings, http_request)
+        write_access_cookies(response, jwt_result.access_token)
+        return jwt_result
 
     # ── 2FA 흐름 ──
 
@@ -399,6 +407,7 @@ async def login(
 async def verify_2fa(
     request: Verify2faRequest,
     http_request: Request,
+    response: Response,
     settings: Settings = Depends(get_settings),
     db: Session = Depends(get_db),
 ):
@@ -457,7 +466,9 @@ async def verify_2fa(
     db.commit()
 
     logger.info(f"2FA verified, JWT issued: {username}")
-    return _issue_jwt(user, settings, http_request)
+    jwt_result = _issue_jwt(user, settings, http_request)
+    write_access_cookies(response, jwt_result.access_token)
+    return jwt_result
 
 
 @router.get("/me", response_model=UserInfo)

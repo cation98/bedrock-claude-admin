@@ -1,0 +1,68 @@
+# =============================================================================
+# Usage Worker — Redis Stream Consumer
+# stream:usage_events → token_usage_daily + token_usage_hourly UPSERT
+#
+# Depends on: T2-APPLY (ElastiCache Redis), T7 (Alembic migration)
+# 배포 시점: devops T2-APPLY 완료 후 REDIS_URL Secret 주입 확인 후 apply
+# =============================================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: usage-worker
+  namespace: platform
+  labels:
+    app: usage-worker
+spec:
+  replicas: 1  # Redis Stream Consumer Group — 1 worker면 충분. 확장 필요 시 증가.
+  selector:
+    matchLabels:
+      app: usage-worker
+  template:
+    metadata:
+      labels:
+        app: usage-worker
+    spec:
+      # 시스템 노드에 고정 (auth-gateway와 동일 nodegroup)
+      nodeSelector:
+        role: system
+      tolerations:
+        - key: "dedicated"
+          operator: "Equal"
+          value: "system"
+          effect: "NoSchedule"
+      containers:
+        - name: usage-worker
+          image: 680877507363.dkr.ecr.ap-northeast-2.amazonaws.com/bedrock-claude/usage-worker:latest
+          imagePullPolicy: Always
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-secrets
+                  key: DATABASE_URL
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-secrets
+                  key: REDIS_URL
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          # Redis Ping으로 liveness 확인
+          livenessProbe:
+            exec:
+              command:
+                - python3
+                - -c
+                - |
+                  import redis, os
+                  r = redis.Redis.from_url(os.environ['REDIS_URL'])
+                  r.ping()
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 3

@@ -168,7 +168,10 @@ spec:
 
             # ── Telegram ─────────────────────────────────────────────────────
             - name: TELEGRAM_BOT_USERNAME
-              value: "sko_claude_bot"
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-secrets
+                  key: TELEGRAM_BOT_USERNAME
 
             # ── Kubernetes (EKS 내부에서 실행) ──────────────────────────────
             - name: K8S_IN_CLUSTER

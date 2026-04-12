@@ -52,10 +52,28 @@ logger = logging.getLogger(__name__)
 # 설계 §2: "모든 사내 AI 플랫폼 쿠키 이름 강제 prefix: bedrock_"
 # sso.skons.net과의 이름 충돌 방지.
 COOKIE_DOMAIN = ".skons.net"
-ACCESS_COOKIE_NAME = "bedrock_jwt"
+ACCESS_COOKIE_NAME = "bedrock_jwt"      # HttpOnly — 서버 인증 전용 (JS 접근 불가)
+VIS_COOKIE_NAME = "bedrock_jwt_vis"     # not HttpOnly — portal.html getToken() 전용 (JS 읽기 가능)
 REFRESH_COOKIE_NAME = "bedrock_refresh"
 ACCESS_TTL_SECONDS = 15 * 60         # 15분 (설계: access TTL 15분)
 REFRESH_TTL_SECONDS = 12 * 60 * 60   # 12시간 (설계: refresh TTL 12시간)
+
+
+def write_access_cookies(response: Response, access_token: str) -> None:
+    """access token을 두 쿠키에 동시 기록 (Dual Cookie 전략).
+
+    bedrock_jwt (HttpOnly=True):  서버→브라우저 인증 — JS 접근 불가, XSS 방어
+    bedrock_jwt_vis (HttpOnly=False): portal.html getToken() 전용 — JS 읽기 가능
+    SameSite=Lax: SSO 리다이렉트 top-level navigation 호환 유지
+    """
+    _shared_opts = dict(
+        secure=True,
+        samesite="lax",
+        domain=COOKIE_DOMAIN,
+        max_age=ACCESS_TTL_SECONDS,
+    )
+    response.set_cookie(key=ACCESS_COOKIE_NAME, value=access_token, httponly=True, **_shared_opts)
+    response.set_cookie(key=VIS_COOKIE_NAME, value=access_token, httponly=False, **_shared_opts)
 
 
 # ─── Request / Response 스키마 ───────────────────────────────────────────────
@@ -102,6 +120,7 @@ async def jwks_endpoint():
 @router.post("/pod-token-exchange", response_model=TokenResponse)
 async def pod_token_exchange(
     req: PodTokenExchangeRequest,
+    response: Response,
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ):
@@ -182,6 +201,9 @@ async def pod_token_exchange(
 
     # 6. Pod Token 블랙리스트 (1회 교환 완료 — 이후 재사용 차단, TTL 1시간)
     blacklist_pod_token(submitted_hash, ttl_seconds=3600)
+
+    # 7. Dual Cookie 기록 — Hub portal.html이 getToken()으로 bedrock_jwt_vis 읽음
+    write_access_cookies(response, access_token)
 
     logger.info("Pod token exchanged successfully: pod=%s user=%s", req.pod_name, emp_no)
 
@@ -271,16 +293,8 @@ async def refresh_token_endpoint(
     # 새 access token 발급
     new_access_token = create_access_token(sub, emp_no, email, role, settings)
 
-    # 쿠키 업데이트 (브라우저 클라이언트용)
-    response.set_cookie(
-        key=ACCESS_COOKIE_NAME,
-        value=new_access_token,
-        httponly=True,
-        secure=True,
-        samesite="lax",
-        domain=COOKIE_DOMAIN,
-        max_age=ACCESS_TTL_SECONDS,
-    )
+    # 쿠키 업데이트 — Dual Cookie (bedrock_jwt + bedrock_jwt_vis 동시 갱신)
+    write_access_cookies(response, new_access_token)
 
     logger.debug("Access token refreshed for sub=%s", sub)
 
@@ -319,8 +333,9 @@ async def logout(
             # 이미 만료/무효인 토큰이어도 쿠키는 삭제
             pass
 
-    # 쿠키 삭제
+    # 쿠키 삭제 — Dual Cookie 포함
     response.delete_cookie(key=ACCESS_COOKIE_NAME, domain=COOKIE_DOMAIN, path="/")
+    response.delete_cookie(key=VIS_COOKIE_NAME, domain=COOKIE_DOMAIN, path="/")
     response.delete_cookie(key=REFRESH_COOKIE_NAME, domain=COOKIE_DOMAIN, path="/")
 
     return {"message": "Logged out successfully"}

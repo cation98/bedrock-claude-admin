@@ -108,11 +108,28 @@ def decode_token(token: str, settings: Settings | None = None) -> dict | None:
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security_scheme),
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(security_scheme_optional),
     settings: Settings = Depends(get_settings),
 ) -> dict:
-    """현재 인증된 사용자 정보를 반환하는 FastAPI dependency."""
-    return verify_token(credentials.credentials, settings)
+    """현재 인증된 사용자 정보를 반환하는 FastAPI dependency.
+
+    인증 우선순위:
+    1. Authorization: Bearer 헤더 (CLI / API 클라이언트)
+    2. bedrock_jwt 쿠키 (portal.html credentials:'include' 방식)
+    3. claude_token 쿠키 (레거시 fallback)
+    """
+    # 1) Bearer 헤더 우선
+    if credentials and credentials.credentials:
+        return verify_token(credentials.credentials, settings)
+    # 2) 쿠키 fallback — portal.html apiFetch() credentials:'include' 방식
+    token = request.cookies.get("bedrock_jwt") or request.cookies.get("claude_token", "")
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    return verify_token(token, settings)
 
 
 async def get_current_user_or_pod(
