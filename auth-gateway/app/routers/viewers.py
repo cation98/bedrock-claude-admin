@@ -169,6 +169,34 @@ def _lookup_edit_session(
     return q.order_by(EditSession.id.desc()).first()
 
 
+def _next_version_for(
+    db: Session,
+    *,
+    is_shared: bool,
+    owner_username: str,
+    file_path: str,
+    mount_id: int | None,
+) -> int:
+    """동일 (is_shared, owner, path, mount) 조합의 과거 세션 중 max(version)+1.
+
+    이전 편집 세션이 status=saved/save_failed/error로 남아 있으면 version=1로
+    재삽입 시 unique(document_key) 충돌이 발생한다. 재편집은 항상 새 version.
+    """
+    from sqlalchemy import func
+
+    q = db.query(func.max(EditSession.version)).filter(
+        EditSession.owner_username == owner_username,
+        EditSession.file_path == file_path,
+        EditSession.is_shared == is_shared,
+    )
+    if is_shared:
+        q = q.filter(EditSession.mount_id == mount_id)
+    else:
+        q = q.filter(EditSession.mount_id.is_(None))
+    max_version = q.scalar()
+    return (max_version or 0) + 1
+
+
 def _get_or_create_edit_session(
     db: Session,
     *,
@@ -181,7 +209,12 @@ def _get_or_create_edit_session(
 
     Returns:
         (session, created): created=True이면 방금 새로 만든 세션.
+
+    재편집 시 version은 max(existing)+1로 계산 (#3 fix).
+    동시 생성 race는 IntegrityError 포착 → re-SELECT FOR UPDATE로 방어 (#10 fix).
     """
+    from sqlalchemy.exc import IntegrityError
+
     existing = _lookup_edit_session(
         db,
         is_shared=is_shared,
@@ -193,7 +226,13 @@ def _get_or_create_edit_session(
     if existing:
         return existing, False
 
-    version = 1
+    version = _next_version_for(
+        db,
+        is_shared=is_shared,
+        owner_username=owner_username,
+        file_path=file_path,
+        mount_id=mount_id,
+    )
     if is_shared and mount_id is not None:
         document_key = _doc_key_shared(mount_id, file_path, version)
     else:
@@ -209,7 +248,24 @@ def _get_or_create_edit_session(
         version=version,
     )
     db.add(session)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        # 다른 replica가 같은 document_key로 먼저 insert한 경우.
+        # 롤백 후 FOR UPDATE로 재조회하여 그 세션에 합류.
+        db.rollback()
+        winner = _lookup_edit_session(
+            db,
+            is_shared=is_shared,
+            owner_username=owner_username,
+            file_path=file_path,
+            mount_id=mount_id,
+            for_update=True,
+        )
+        if winner is None:
+            # 이론상 도달 불가 — 충돌했는데 lookup에 없으면 즉시 에러.
+            raise
+        return winner, False
     return session, True
 
 
@@ -687,7 +743,17 @@ async def onlyoffice_viewer(
     if existing:
         doc_key = existing.document_key
     else:
-        doc_key = _doc_key_personal(username, file_path, 1)
+        # 활성 세션이 없을 때의 뷰어 key — 과거 저장 이력까지 반영해
+        # max(version)+1 기반으로 계산. 같은 version 재사용을 피해 OnlyOffice
+        # 캐시가 구버전을 서빙하는 문제를 예방한다. (#3 관련)
+        fallback_version = _next_version_for(
+            db,
+            is_shared=False,
+            owner_username=username.upper(),
+            file_path=file_path,
+            mount_id=None,
+        )
+        doc_key = _doc_key_personal(username, file_path, fallback_version)
 
     config = _build_onlyoffice_config(
         file_path,
