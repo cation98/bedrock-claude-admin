@@ -65,13 +65,17 @@ _test_engine = create_engine(
 _TestSessionLocal = sessionmaker(bind=_test_engine)
 
 
+_DEFAULT_TEST_JWT_SECRET = "test-onlyoffice-jwt-secret-32-chars-min-xx"
+
+
 def _test_settings() -> Settings:
+    # P2 #1 이후 onlyoffice_jwt_secret은 필수. 테스트 기본값으로 32자 dummy 사용.
     return Settings(
         database_url="sqlite://",
         jwt_secret_key="test-secret-key-256-bit-minimum-len",
         jwt_algorithm="HS256",
         jwt_access_token_expire_minutes=60,
-        onlyoffice_jwt_secret="",  # JWT 서명 비활성 (기본 테스트)
+        onlyoffice_jwt_secret=_DEFAULT_TEST_JWT_SECRET,
         onlyoffice_url="http://onlyoffice.claude-sessions.svc.cluster.local",
         debug=False,
     )
@@ -165,6 +169,17 @@ def unauthenticated_client(db_session):
 # ---------------------------------------------------------------------------
 # Helpers for T9 tests
 # ---------------------------------------------------------------------------
+
+def _post_callback(client, payload: dict):
+    """콜백은 JWT 필수(P2 #1). payload를 서명된 Bearer 토큰으로 감싸 호출."""
+    from jose import jwt as jose_jwt
+    token = jose_jwt.encode(payload, _DEFAULT_TEST_JWT_SECRET, algorithm="HS256")
+    return client.post(
+        "/api/v1/viewers/onlyoffice/callback",
+        json=payload,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
 
 def _extract_config_from_html(html: str) -> dict:
     """`_render_onlyoffice_html()` 이 만든 HTML에서 config JSON을 추출."""
@@ -345,13 +360,6 @@ class TestOnlyOfficeConfigEndpoint:
         assert perms["print"] is False
         assert perms["review"] is False
 
-    def test_no_token_when_jwt_secret_empty(self, client):
-        """onlyoffice_jwt_secret 미설정 시 'token' 필드 없음."""
-        resp = client.get("/api/v1/viewers/onlyoffice/config/test.xlsx")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "token" not in data
-
     def test_token_present_when_jwt_secret_set(self, db_session):
         """onlyoffice_jwt_secret 설정 시 'token' 필드 포함."""
 
@@ -474,36 +482,27 @@ class TestOnlyOfficeCallback:
 
     def test_callback_returns_error_0(self, client):
         """콜백 요청 (unknown key) → {"error": 0} 응답."""
-        resp = client.post(
-            "/api/v1/viewers/onlyoffice/callback",
-            json={"status": 1, "key": "doc-123"},
-        )
+        resp = _post_callback(client, {"status": 1, "key": "doc-123"})
         assert resp.status_code == 200
         assert resp.json() == {"error": 0}
 
     def test_callback_save_ready_status(self, client):
         """status=2 (저장 준비) without matching session → {"error": 0}."""
-        resp = client.post(
-            "/api/v1/viewers/onlyoffice/callback",
-            json={
-                "status": 2,
-                "key": "doc-123",
-                "url": "http://documentserver.claude-sessions.svc.cluster.local/cache/x.xlsx",
-            },
-        )
+        resp = _post_callback(client, {
+            "status": 2,
+            "key": "doc-123",
+            "url": "http://documentserver.claude-sessions.svc.cluster.local/cache/x.xlsx",
+        })
         assert resp.status_code == 200
         assert resp.json() == {"error": 0}
 
     def test_callback_force_save_status(self, client):
         """status=6 without matching session → {"error": 0} (unknown key 처리)."""
-        resp = client.post(
-            "/api/v1/viewers/onlyoffice/callback",
-            json={
-                "status": 6,
-                "key": "doc-123",
-                "url": "http://documentserver.claude-sessions.svc.cluster.local/cache/x.xlsx",
-            },
-        )
+        resp = _post_callback(client, {
+            "status": 6,
+            "key": "doc-123",
+            "url": "http://documentserver.claude-sessions.svc.cluster.local/cache/x.xlsx",
+        })
         assert resp.status_code == 200
         assert resp.json() == {"error": 0}
 
@@ -513,30 +512,23 @@ class TestOnlyOfficeCallback:
         설계(T2) 기준: callback은 S2S 엔드포인트이므로 HTML embedding 관련 헤더는 부적절.
         iframe 응답이 아니라 Document Server가 직접 호출하는 JSON 응답이다.
         """
-        resp = client.post(
-            "/api/v1/viewers/onlyoffice/callback",
-            json={"status": 0},
-        )
+        resp = _post_callback(client, {"status": 0})
         assert resp.status_code == 200
         assert "frame-ancestors" not in resp.headers.get("content-security-policy", "")
 
     def test_callback_empty_body_accepted(self, client):
         """빈 JSON body → 정상 처리 (view-only 모드)."""
-        resp = client.post(
-            "/api/v1/viewers/onlyoffice/callback",
-            json={},
-        )
+        resp = _post_callback(client, {})
         assert resp.status_code == 200
         assert resp.json() == {"error": 0}
 
-    def test_callback_no_jwt_secret_accepts_all(self, client):
-        """onlyoffice_jwt_secret 미설정 시 JWT 검증 건너뜀."""
+    def test_callback_rejects_missing_jwt(self, client):
+        """JWT 필수 — 토큰 없이 요청하면 403 (P2 #1)."""
         resp = client.post(
             "/api/v1/viewers/onlyoffice/callback",
             json={"status": 2, "url": "http://example.com/doc.xlsx"},
         )
-        assert resp.status_code == 200
-        assert resp.json() == {"error": 0}
+        assert resp.status_code == 403
 
     def test_callback_rejects_invalid_jwt(self, db_session):
         """JWT secret 설정 시 잘못된 토큰 → 403."""
@@ -622,15 +614,12 @@ class TestCallbackSaveFlow:
 
         monkeypatch.setattr(viewers_router, "_save_edited_file", _fake_save)
 
-        resp = client.post(
-            "/api/v1/viewers/onlyoffice/callback",
-            json={
-                "status": 2,
-                "key": session.document_key,
-                "url": "http://documentserver.claude-sessions.svc.cluster.local/cache/r.xlsx",
-                "filetype": "xlsx",
-            },
-        )
+        resp = _post_callback(client, {
+            "status": 2,
+            "key": session.document_key,
+            "url": "http://documentserver.claude-sessions.svc.cluster.local/cache/r.xlsx",
+            "filetype": "xlsx",
+        })
         assert resp.status_code == 200
         assert resp.json() == {"error": 0}
         assert len(calls) == 1
@@ -648,14 +637,11 @@ class TestCallbackSaveFlow:
 
         monkeypatch.setattr(viewers_router, "_save_edited_file", _noop_save)
 
-        resp = client.post(
-            "/api/v1/viewers/onlyoffice/callback",
-            json={
-                "status": 2,
-                "key": original_key,
-                "url": "http://documentserver.claude-sessions.svc.cluster.local/x.xlsx",
-            },
-        )
+        resp = _post_callback(client, {
+            "status": 2,
+            "key": original_key,
+            "url": "http://documentserver.claude-sessions.svc.cluster.local/x.xlsx",
+        })
         assert resp.status_code == 200
         assert resp.json() == {"error": 0}
 
@@ -673,14 +659,11 @@ class TestCallbackSaveFlow:
 
         monkeypatch.setattr(viewers_router, "_save_edited_file", _fail_save)
 
-        resp = client.post(
-            "/api/v1/viewers/onlyoffice/callback",
-            json={
-                "status": 2,
-                "key": session.document_key,
-                "url": "http://documentserver.claude-sessions.svc.cluster.local/x.xlsx",
-            },
-        )
+        resp = _post_callback(client, {
+            "status": 2,
+            "key": session.document_key,
+            "url": "http://documentserver.claude-sessions.svc.cluster.local/x.xlsx",
+        })
         assert resp.status_code == 200
         assert resp.json() == {"error": 1}
 
@@ -832,14 +815,11 @@ class TestKeyGeneration:
 
         monkeypatch.setattr(viewers_router, "_save_edited_file", _noop_save)
 
-        client.post(
-            "/api/v1/viewers/onlyoffice/callback",
-            json={
-                "status": 2,
-                "key": v1_key,
-                "url": "http://documentserver.claude-sessions.svc.cluster.local/rot.xlsx",
-            },
-        )
+        _post_callback(client, {
+            "status": 2,
+            "key": v1_key,
+            "url": "http://documentserver.claude-sessions.svc.cluster.local/rot.xlsx",
+        })
 
         db_session.expire_all()
         updated = db_session.query(EditSession).filter_by(id=session.id).one()
@@ -877,10 +857,7 @@ class TestCallbackOtherStatuses:
         """status=4 (변경 없이 닫힘) → session.status='saved'."""
         session = _mk_edit_session(db_session, file_path="nochange.xlsx")
 
-        resp = client.post(
-            "/api/v1/viewers/onlyoffice/callback",
-            json={"status": 4, "key": session.document_key},
-        )
+        resp = _post_callback(client, {"status": 4, "key": session.document_key})
         assert resp.status_code == 200
         assert resp.json() == {"error": 0}
 
@@ -889,42 +866,44 @@ class TestCallbackOtherStatuses:
         assert updated.status == "saved"
 
     def test_callback_status_6_force_save(self, client, db_session, monkeypatch):
-        """status=6 (force-save) → 저장 후 status='editing' 유지(편집 계속)."""
+        """status=6 (force-save) → 저장 후 status='editing' 유지 + version 동일(P2 #7).
+
+        P2 #7: force-save 중 version을 증가시키면 Document Server가 사용하는
+        document_key와 어긋나 다음 저장이 unknown-key로 실패한다. 편집 세션은
+        그대로 유지하고 파일만 덮어쓴다.
+        """
         session = _mk_edit_session(db_session, file_path="force.xlsx", version=1)
+        original_version = session.version
+        original_key = session.document_key
 
         async def _noop_save(sess, url, filetype):
             return None
 
         monkeypatch.setattr(viewers_router, "_save_edited_file", _noop_save)
 
-        resp = client.post(
-            "/api/v1/viewers/onlyoffice/callback",
-            json={
-                "status": 6,
-                "key": session.document_key,
-                "url": "http://documentserver.claude-sessions.svc.cluster.local/f.xlsx",
-            },
-        )
+        resp = _post_callback(client, {
+            "status": 6,
+            "key": original_key,
+            "url": "http://documentserver.claude-sessions.svc.cluster.local/f.xlsx",
+        })
         assert resp.status_code == 200
         assert resp.json() == {"error": 0}
 
         db_session.expire_all()
         updated = db_session.query(EditSession).filter_by(id=session.id).one()
-        assert updated.status == "editing"  # force-save는 편집 계속
-        assert updated.version == 2          # version은 증가(key rotation)
+        assert updated.status == "editing"             # force-save는 편집 계속
+        assert updated.version == original_version     # version은 유지 (P2 #7)
+        assert updated.document_key == original_key    # key 로테이션 안 함
 
     def test_callback_status_3_error_state(self, client, db_session):
         """status=3 (저장 에러) → session.status='error' + last_error."""
         session = _mk_edit_session(db_session, file_path="broken.xlsx")
 
-        resp = client.post(
-            "/api/v1/viewers/onlyoffice/callback",
-            json={
-                "status": 3,
-                "key": session.document_key,
-                "error": "conversion failure",
-            },
-        )
+        resp = _post_callback(client, {
+            "status": 3,
+            "key": session.document_key,
+            "error": "conversion failure",
+        })
         assert resp.status_code == 200
         assert resp.json() == {"error": 0}
 
@@ -937,14 +916,11 @@ class TestCallbackOtherStatuses:
         """status=10 (기술적 오류, v8.2+) → session.status='error'."""
         session = _mk_edit_session(db_session, file_path="tech.xlsx")
 
-        resp = client.post(
-            "/api/v1/viewers/onlyoffice/callback",
-            json={
-                "status": 10,
-                "key": session.document_key,
-                "error": "internal engine crash",
-            },
-        )
+        resp = _post_callback(client, {
+            "status": 10,
+            "key": session.document_key,
+            "error": "internal engine crash",
+        })
         assert resp.status_code == 200
         assert resp.json() == {"error": 0}
 
