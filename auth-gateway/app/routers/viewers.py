@@ -272,9 +272,12 @@ def _get_or_create_edit_session(
 
 
 def _get_pod_ip(username: str, namespace: str = "claude-sessions") -> str:
-    """K8s API로 사용자 Pod의 IP 조회."""
+    """K8s API로 사용자 Pod의 IP 조회.
+
+    Pod 이름 정규화는 K8sService._pod_name과 동일 규칙(lower + _→-) 유지.
+    """
     v1 = client.CoreV1Api()
-    pod_name = f"claude-terminal-{username.lower()}"
+    pod_name = f"claude-terminal-{username.lower().replace('_', '-')}"
     try:
         pod = v1.read_namespaced_pod(name=pod_name, namespace=namespace)
         if pod.status and pod.status.pod_ip:
