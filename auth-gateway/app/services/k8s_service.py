@@ -787,17 +787,39 @@ class K8sService:
 
     _KUBECTL_TIMEOUT_SECONDS = 120
     _CONTAINER_NAME = "terminal"
+    # 컨테이너 파일 쓰기 허용 base prefix — 이 아래로만 허용.
+    # /etc, /root, /proc 등으로의 경로 트래버설 차단.
+    _CONTAINER_BASE_DIR = "/home/node/workspace"
 
     @staticmethod
     def _validate_container_path(path: str) -> str:
-        """Pod 내부 절대 경로 검증."""
+        """Pod 내부 절대 경로 검증.
+
+        방어 층위:
+        - 절대 경로만
+        - 제어문자 차단
+        - normpath로 .. 해석 후 base prefix(/home/node/workspace) 아래인지 commonpath로 확인
+          (substring 체크는 /home/node/workspace-evil 같은 우회를 막지 못하므로 commonpath 사용)
+        """
         if not path or not path.startswith("/"):
             raise K8sServiceError("container_path must be absolute")
-        normalized = os.path.normpath(path)
-        if ".." in normalized.split("/"):
-            raise K8sServiceError("container_path must not contain '..'")
-        if re.search(r"[\x00-\x1f]", normalized):
+        if re.search(r"[\x00-\x1f]", path):
             raise K8sServiceError("container_path contains control characters")
+
+        normalized = os.path.normpath(path)
+        # normpath 이후에도 절대 경로 유지 확인
+        if not normalized.startswith("/"):
+            raise K8sServiceError("container_path must resolve to absolute path")
+
+        base = K8sService._CONTAINER_BASE_DIR
+        try:
+            common = os.path.commonpath([normalized, base])
+        except ValueError:
+            raise K8sServiceError("container_path is not within allowed base")
+        if common != base:
+            raise K8sServiceError(
+                f"container_path must be within {base} (got {normalized!r})"
+            )
         return normalized
 
     async def write_file_to_pod(
