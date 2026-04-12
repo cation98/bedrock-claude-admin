@@ -56,9 +56,10 @@ probe_tcp() {
   fi
 
   log_info "Probing $desc from $ns/$pod (expect: $expect)..."
-  # nc 미설치 컨테이너 대응: nc 사용 가능 시 nc, 없으면 /dev/tcp fallback
+  # nc 미설치 컨테이너 대응: nc 우선, 없으면 bash /dev/tcp fallback
+  # /dev/tcp: 'echo >'는 write 실패로 false negative 발생 → ': >' (null cmd) + timeout 사용
   if kubectl exec -n "$ns" "$pod" -- sh -c \
-    "if command -v nc >/dev/null 2>&1; then nc -zw3 $host $port 2>/dev/null; else (echo >/dev/tcp/$host/$port) 2>/dev/null; fi; echo \$?" 2>/dev/null | grep -q "^0$"; then
+    "if command -v nc >/dev/null 2>&1; then nc -zw3 $host $port 2>/dev/null; else timeout 3 bash -c '(: >/dev/tcp/$host/$port)' 2>/dev/null; fi; echo \$?" 2>/dev/null | grep -q "^0$"; then
     local actual="allow"
   else
     local actual="block"
@@ -133,7 +134,7 @@ stage3() {
   if [[ -n "$pod" ]]; then
     local jwks_resp
     jwks_resp=$(kubectl exec -n openwebui "$pod" -- sh -c \
-      "wget -qO- http://auth-gateway.platform.svc:8000/auth/.well-known/jwks.json 2>/dev/null | head -c 100" 2>/dev/null || echo "")
+      "if command -v wget >/dev/null 2>&1; then wget -qO- http://auth-gateway.platform.svc:8000/auth/.well-known/jwks.json 2>/dev/null; else curl -s http://auth-gateway.platform.svc:8000/auth/.well-known/jwks.json 2>/dev/null; fi | head -c 100" 2>/dev/null || echo "")
 
     if echo "$jwks_resp" | grep -q "keys"; then
       log_pass "JWKS 엔드포인트 응답 정상 (keys 필드 포함)"
@@ -232,9 +233,9 @@ stage6() {
       log_info "IRSA 확인 스킵 (EC2 metadata 경로 미지원 or 정상)"
     fi
 
-    # Bedrock AG health 체크
+    # Bedrock AG health 체크 (wget 미설치 대응: curl fallback)
     if kubectl exec -n openwebui "$pod" -- sh -c \
-      "wget -qO- http://localhost:8080/health 2>/dev/null | head -c 50" 2>/dev/null | grep -qi "ok\|healthy\|alive"; then
+      "if command -v wget >/dev/null 2>&1; then wget -qO- http://localhost:8080/health 2>/dev/null; else curl -s http://localhost:8080/health 2>/dev/null; fi | head -c 50" 2>/dev/null | grep -qi "ok\|healthy\|alive"; then
       log_pass "Bedrock AG /health 응답 정상"
     else
       log_fail "Bedrock AG /health 응답 없음 또는 비정상"
