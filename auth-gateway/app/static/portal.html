@@ -1024,10 +1024,14 @@
         });
 
         // ── Auth Helper ──
-        // T10 (부분): bedrock_jwt 우선, claude_token fallback (쿠키 prefix 전환 호환)
-        // api 팀이 T4 완료 후 bedrock_jwt 확정 시 claude_token fallback 제거 예정
+        // Dual Cookie 방식 (api T4 확정):
+        //   bedrock_jwt_vis — JS readable, SameSite=Strict (username/role/exp 경량 페이로드)
+        //   bedrock_jwt     — HttpOnly, Secure, 서버 인증 전용 (JS 접근 불가 → fallback은 자동 skip)
+        //   claude_token    — 레거시 fallback (단계적 제거 예정)
+        // Authorization Bearer 헤더는 bedrock_jwt_vis 값 사용
         function getToken() {
-            var m = document.cookie.match(/(?:^|;\s*)bedrock_jwt=([^;]*)/);
+            var m = document.cookie.match(/(?:^|;\s*)bedrock_jwt_vis=([^;]*)/);
+            if (!m) m = document.cookie.match(/(?:^|;\s*)bedrock_jwt=([^;]*)/);
             if (!m) m = document.cookie.match(/(?:^|;\s*)claude_token=([^;]*)/);
             return m ? m[1] : null;
         }
