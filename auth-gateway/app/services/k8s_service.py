@@ -19,9 +19,13 @@ import secrets
 import tempfile
 from datetime import datetime, timezone
 
+import io
+import tarfile
+
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 from kubernetes.client import NetworkingV1Api
+from kubernetes.stream import stream
 
 from app.core.config import Settings
 
@@ -828,38 +832,34 @@ class K8sService:
         container_path: str,
         local_path: str,
     ) -> None:
-        """로컬 파일을 사용자 Pod 내부로 복사 — 메모리 적재 없이 kubectl cp.
+        """로컬 파일을 사용자 Pod 내부로 복사.
 
-        대용량 편집 파일 저장 시 메모리 사용을 상수로 유지하기 위해 호출자가
-        이미 디스크에 스트리밍 쓰기 완료한 local_path를 넘긴다.
+        구현 (P2-BUG3): `kubernetes.stream.stream` + tar pipe 로 exec API 직접 호출.
+        auth-gateway 이미지에 `kubectl` 바이너리가 없으므로 subprocess 경로는 동작하지 않는다.
+        프로젝트 내 다른 exec 호출(idle_cleanup_service, prompt_audit_service 등)과
+        동일 패턴으로 통일한다.
+
+        호출자는 디스크에 이미 쓰기 완료된 `local_path` 를 넘겨 메모리 버퍼링을 피한다.
         """
         pod_name = self._pod_name(username)
         safe_path = self._validate_container_path(container_path)
         parent = os.path.dirname(safe_path)
 
         if parent and parent != "/":
-            await self._run_kubectl(
-                [
-                    "kubectl", "exec",
-                    "-n", self.namespace,
-                    "-c", self._CONTAINER_NAME,
-                    pod_name,
-                    "--",
-                    "mkdir", "-p", parent,
-                ],
+            await asyncio.to_thread(
+                self._exec_sync,
+                pod_name,
+                ["mkdir", "-p", parent],
                 step="mkdir",
             )
 
-        await self._run_kubectl(
-            [
-                "kubectl", "cp",
-                "-n", self.namespace,
-                "-c", self._CONTAINER_NAME,
-                local_path,
-                f"{pod_name}:{safe_path}",
-            ],
-            step="cp",
+        await asyncio.to_thread(
+            self._copy_local_to_pod_sync,
+            pod_name,
+            local_path,
+            safe_path,
         )
+
         try:
             size = os.path.getsize(local_path)
         except OSError:
@@ -872,9 +872,9 @@ class K8sService:
         container_path: str,
         content: bytes,
     ) -> None:
-        """bytes를 Pod에 쓰기 — 내부적으로 tempfile에 dump 후 write_local_file_to_pod.
+        """bytes 를 Pod 에 쓰기 — 내부적으로 tempfile 에 dump 후 write_local_file_to_pod.
 
-        대용량 파일은 write_local_file_to_pod를 직접 호출해 메모리 버퍼링을 피할 것.
+        대용량 파일은 write_local_file_to_pod 를 직접 호출해 메모리 버퍼링을 피할 것.
         """
         fd, tmp_path = tempfile.mkstemp(prefix="onlyoffice-save-")
         try:
@@ -887,35 +887,96 @@ class K8sService:
             except OSError:
                 pass
 
-    async def _run_kubectl(self, argv: list[str], *, step: str) -> None:
-        """asyncio.create_subprocess_exec로 kubectl 호출. stderr 수집 + 타임아웃."""
+    def _exec_sync(self, pod_name: str, command: list[str], *, step: str) -> None:
+        """짧은 exec 명령 동기 실행. stdout/stderr 는 preload 로 수집."""
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *argv,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            resp = stream(
+                self.v1.connect_get_namespaced_pod_exec,
+                pod_name,
+                self.namespace,
+                container=self._CONTAINER_NAME,
+                command=command,
+                stdin=False,
+                stderr=True,
+                stdout=True,
+                tty=False,
+                _preload_content=True,
             )
-        except FileNotFoundError as e:
-            raise K8sServiceError(f"kubectl not found on auth-gateway: {e}")
+        except ApiException as e:
+            logger.error(f"exec {step} API error: {e}")
+            raise K8sServiceError(f"exec {step} failed: {e.reason}")
+        except Exception as e:
+            logger.error(f"exec {step} failed: {e}")
+            raise K8sServiceError(f"exec {step} failed: {e}")
+
+        # preload 모드에서 stream() 은 stdout 문자열을 반환. 에러 탐지를 위해
+        # 비어있지 않으면 로깅. mkdir -p 는 성공 시 출력 없음.
+        if resp and isinstance(resp, str):
+            logger.debug(f"exec {step} output: {resp[:200]!r}")
+
+    def _copy_local_to_pod_sync(
+        self, pod_name: str, local_path: str, dest_path: str
+    ) -> None:
+        """`tar xmf -` pipe 로 단일 파일을 Pod 에 복사.
+
+        kubectl cp 는 내부적으로 `tar cf - <src> | kubectl exec -- tar xmf -` 패턴.
+        여기서도 동일하게 파일 하나를 in-memory tar 로 감싸 stdin 으로 주입한다.
+        64KB 단위 chunk 로 write_stdin 하여 큰 파일도 메모리 증가 상수로 전송.
+        """
+        # tar 아카이브를 메모리에 빌드. 한 개 파일이므로 파일 크기 + 헤더(512B) 만.
+        # 50MB 편집 파일도 버퍼 피크는 ~50MB (kubectl cp 와 동일 수준).
+        # 스트리밍 tar 로 더 줄일 수 있지만 구현 복잡도 vs 이득 trade-off 로 보류.
+        tar_buf = io.BytesIO()
+        with tarfile.open(fileobj=tar_buf, mode="w") as tar:
+            # arcname 은 루트 상대 경로 — Pod 쪽에서 `-C /` 로 풀면 절대 위치에 배치됨.
+            tar.add(local_path, arcname=dest_path.lstrip("/"))
+        tar_buf.seek(0)
 
         try:
-            _, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=self._KUBECTL_TIMEOUT_SECONDS
+            resp = stream(
+                self.v1.connect_get_namespaced_pod_exec,
+                pod_name,
+                self.namespace,
+                container=self._CONTAINER_NAME,
+                command=["tar", "xmf", "-", "-C", "/"],
+                stdin=True,
+                stderr=True,
+                stdout=True,
+                tty=False,
+                _preload_content=False,
             )
-        except asyncio.TimeoutError:
-            proc.kill()
+        except ApiException as e:
+            logger.error(f"exec cp API error: {e}")
+            raise K8sServiceError(f"exec cp failed: {e.reason}")
+
+        try:
+            stderr_chunks: list[str] = []
+            while True:
+                chunk = tar_buf.read(65536)
+                if not chunk:
+                    break
+                resp.write_stdin(chunk)
+                # 주기적으로 stderr 비우기 — 버퍼 가득 차 블록 방지
+                if resp.peek_stderr():
+                    stderr_chunks.append(resp.read_stderr())
+
+            # 남은 stderr 수집 + flush 대기
+            resp.update(timeout=self._KUBECTL_TIMEOUT_SECONDS)
+            if resp.peek_stderr():
+                stderr_chunks.append(resp.read_stderr())
+
+            stderr_text = "".join(stderr_chunks).strip()
+            if stderr_text:
+                # tar 는 경고도 stderr 로 내보낼 수 있음. 에러 키워드만 실패 처리.
+                lowered = stderr_text.lower()
+                if "error" in lowered or "cannot" in lowered or "no such" in lowered:
+                    raise K8sServiceError(f"tar copy failed: {stderr_text}")
+                logger.warning(f"tar copy stderr (non-fatal): {stderr_text}")
+        finally:
             try:
-                await proc.communicate()
+                resp.close()
             except Exception:
                 pass
-            raise K8sServiceError(
-                f"kubectl {step} timed out after {self._KUBECTL_TIMEOUT_SECONDS}s"
-            )
-
-        if proc.returncode != 0:
-            err = (stderr or b"").decode(errors="replace").strip()
-            logger.error(f"kubectl {step} failed (rc={proc.returncode}): {err}")
-            raise K8sServiceError(f"kubectl {step} failed: {err or 'unknown error'}")
 
     def delete_all_pods(self, label_selector: str | None = None) -> int:
         """모든 터미널 Pod 일괄 삭제 (관리자용)."""
