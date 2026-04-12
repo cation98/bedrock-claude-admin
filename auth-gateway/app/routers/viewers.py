@@ -19,9 +19,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from jose import jwt as jose_jwt
 from kubernetes import client
+from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
+from app.core.database import SessionLocal, get_db
 from app.core.security import decode_token, get_current_user_or_pod
+from app.models.edit_session import EditSession
+from app.models.file_share import FileShareACL, SharedDataset
 
 # 임시 파일 토큰: Redis(분산) → 메모리(fallback)
 _file_tokens: dict[str, dict] = {}  # fallback: token → {"username", "file_path", "expires"}
@@ -114,6 +118,99 @@ MIME_MAP = {
 }
 
 OFFICE_EXTENSIONS = {".xlsx", ".xls", ".csv", ".docx", ".doc", ".pptx", ".ppt", ".odt", ".ods", ".odp", ".rtf"}
+
+# 편집 가능한 확장자 (OnlyOffice가 쓰기를 지원하는 형식만)
+# .csv/.rtf는 편집 후 저장 시 포맷 손실이 심하므로 view-only로만 허용
+EDITABLE_EXTENSIONS = {".xlsx", ".docx", ".pptx", ".odt", ".ods", ".odp"}
+
+
+# ---------------------------------------------------------------------------
+# OnlyOffice Document Key & Edit Session 관리
+# ---------------------------------------------------------------------------
+
+def _doc_key_personal(username: str, file_path: str, version: int) -> str:
+    """개인 파일 document key — sha256(personal:{username}:{path}:{version}) 앞 20자."""
+    raw = f"personal:{username.upper()}:{file_path}:{version}".encode()
+    return hashlib.sha256(raw).hexdigest()[:20]
+
+
+def _doc_key_shared(mount_id: int, file_path: str, version: int) -> str:
+    """공유 파일 document key — sha256(shared:{mount_id}:{path}:{version}) 앞 20자."""
+    raw = f"shared:{mount_id}:{file_path}:{version}".encode()
+    return hashlib.sha256(raw).hexdigest()[:20]
+
+
+def _lookup_edit_session(
+    db: Session,
+    *,
+    is_shared: bool,
+    owner_username: str,
+    file_path: str,
+    mount_id: int | None,
+    for_update: bool = False,
+) -> EditSession | None:
+    """(owner/path/mount) 조합으로 현재 활성 EditSession을 조회.
+
+    활성 기준: status in (editing, saving). save_failed/saved/error는 새 세션으로 취급.
+    for_update=True 시 SELECT ... FOR UPDATE (2-replica 환경에서 콜백 동시성 잠금).
+    """
+    q = db.query(EditSession).filter(
+        EditSession.owner_username == owner_username,
+        EditSession.file_path == file_path,
+        EditSession.is_shared == is_shared,
+        EditSession.status.in_(["editing", "saving"]),
+    )
+    if is_shared:
+        q = q.filter(EditSession.mount_id == mount_id)
+    else:
+        q = q.filter(EditSession.mount_id.is_(None))
+    if for_update:
+        q = q.with_for_update()
+    return q.order_by(EditSession.id.desc()).first()
+
+
+def _get_or_create_edit_session(
+    db: Session,
+    *,
+    is_shared: bool,
+    owner_username: str,
+    file_path: str,
+    mount_id: int | None,
+) -> tuple[EditSession, bool]:
+    """활성 EditSession을 조회하거나 새로 생성.
+
+    Returns:
+        (session, created): created=True이면 방금 새로 만든 세션.
+    """
+    existing = _lookup_edit_session(
+        db,
+        is_shared=is_shared,
+        owner_username=owner_username,
+        file_path=file_path,
+        mount_id=mount_id,
+        for_update=True,
+    )
+    if existing:
+        return existing, False
+
+    version = 1
+    if is_shared and mount_id is not None:
+        document_key = _doc_key_shared(mount_id, file_path, version)
+    else:
+        document_key = _doc_key_personal(owner_username, file_path, version)
+
+    session = EditSession(
+        document_key=document_key,
+        file_path=file_path,
+        owner_username=owner_username,
+        is_shared=is_shared,
+        mount_id=mount_id,
+        status="editing",
+        version=version,
+    )
+    db.add(session)
+    db.flush()
+    return session, True
 
 
 def _get_pod_ip(username: str, namespace: str = "claude-sessions") -> str:
@@ -211,44 +308,92 @@ def _onlyoffice_doc_type(ext: str) -> str:
     return "word"
 
 
-def _build_onlyoffice_config(filename: str, username: str, display_name: str, settings: Settings) -> dict:
-    """OnlyOffice config dict 생성 (config API + HTML viewer 공용)."""
+def _build_onlyoffice_config(
+    filename: str,
+    username: str,
+    display_name: str,
+    settings: Settings,
+    *,
+    editable: bool = False,
+    shared: bool = False,
+    document_key: str | None = None,
+    file_download_url: str | None = None,
+    file_owner_username: str | None = None,
+) -> dict:
+    """OnlyOffice config dict 생성 (config API + HTML viewer 공용).
+
+    Args:
+        filename: 표시용 파일명 (확장자 포함)
+        username: 현재 사용자 (OnlyOffice UI에 표시될 편집자 ID)
+        display_name: 사용자 표시명
+        editable: True이면 permissions.edit=True + mode="edit", False이면 view-only
+        shared: True이면 co-editing UI 활성화(chat, comments)
+        document_key: 외부에서 계산한 key. 제공되지 않으면 기존 방식(fallback)으로 계산
+        file_download_url: Document Server가 원본 파일을 다운로드할 URL. None이면 기본 규칙으로 생성
+        file_owner_username: 파일 소유자(공유 파일의 경우 현재 사용자와 다름). token 발급 시 사용
+    """
     ext = os.path.splitext(filename)[1].lower()
     doc_type = _onlyoffice_doc_type(ext)
-    doc_key = hashlib.sha256(f"{username}:{filename}:{int(time.time()//300)}".encode()).hexdigest()[:20]
 
-    file_token = _create_file_token(username, filename)
-    file_download_url = f"http://auth-gateway.platform.svc.cluster.local/api/v1/viewers/file/{username}/{filename}?token={file_token}"
+    # document key — 외부 지정(DB 버전 기반) 우선, 없으면 과거 방식으로 fallback
+    doc_key = document_key or hashlib.sha256(
+        f"{username}:{filename}:{int(time.time()//300)}".encode()
+    ).hexdigest()[:20]
 
-    config = {
+    # 파일 다운로드 URL — 외부 지정 우선. 기본은 현재 사용자 Pod에서 받기 (기존 동작 호환)
+    if file_download_url is None:
+        token_owner = file_owner_username or username
+        file_token = _create_file_token(token_owner, filename)
+        file_download_url = (
+            f"http://auth-gateway.platform.svc.cluster.local"
+            f"/api/v1/viewers/file/{token_owner}/{filename}?token={file_token}"
+        )
+
+    # 편집 불가 확장자는 강제 view-only (OnlyOffice가 저장 시 포맷 손실)
+    if editable and ext not in EDITABLE_EXTENSIONS:
+        editable = False
+
+    permissions = {
+        "download": editable,   # 편집 중이면 다운로드 허용 (편집자 UX)
+        "edit": editable,
+        "print": editable,
+        "review": editable,
+        "comment": editable,
+        "fillForms": editable,
+        "modifyFilter": editable,
+        "modifyContentControl": editable,
+    }
+
+    customization = {
+        "toolbarNoTabs": not editable,        # 편집 시 탭 표시
+        "compactHeader": not editable,
+        "hideRightMenu": not editable,
+        "chat": bool(shared and editable),    # 공유 co-editing에서만 채팅
+        "comments": bool(editable),
+        "forcesave": bool(editable),          # 편집 시 Ctrl+S/명시적 저장 활성
+    }
+
+    config: dict = {
         "document": {
             "fileType": ext.lstrip("."),
             "key": doc_key,
             "title": filename,
             "url": file_download_url,
-            "permissions": {
-                "download": False,
-                "edit": False,
-                "print": False,
-                "review": False,
-            },
+            "permissions": permissions,
         },
         "documentType": doc_type,
         "editorConfig": {
-            "mode": "view",
-            "callbackUrl": "http://auth-gateway.platform.svc.cluster.local/api/v1/viewers/onlyoffice/callback",
+            "mode": "edit" if editable else "view",
+            "callbackUrl": (
+                "http://auth-gateway.platform.svc.cluster.local"
+                "/api/v1/viewers/onlyoffice/callback"
+            ),
             "lang": "ko",
             "user": {
                 "id": username,
                 "name": display_name,
             },
-            "customization": {
-                "toolbarNoTabs": True,
-                "compactHeader": True,
-                "hideRightMenu": True,
-                "chat": False,
-                "comments": False,
-            },
+            "customization": customization,
         },
         "type": "desktop",
         "height": "100%",
@@ -260,6 +405,43 @@ def _build_onlyoffice_config(filename: str, username: str, display_name: str, se
         config["token"] = token
 
     return config
+
+
+def _render_onlyoffice_html(filename: str, config: dict) -> str:
+    """OnlyOffice DocEditor를 임베드하는 HTML 페이지 생성."""
+    import html as html_mod
+    basename = html_mod.escape(os.path.basename(filename))
+    config_json = json.dumps(config, ensure_ascii=False)
+    return f"""<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<title>{basename} — Otto AI Viewer</title>
+<style>
+  html, body {{ margin:0; padding:0; height:100%; overflow:hidden; background:#1e1e2e; }}
+  #editor-container {{ width:100%; height:100vh; }}
+  .loading {{ display:flex; align-items:center; justify-content:center;
+    height:100vh; color:#cdd6f4; font-family:'Segoe UI',sans-serif; font-size:16px; }}
+  .err {{ color:#f87171; text-align:center; padding:40px; font-size:14px; }}
+</style>
+</head><body>
+<div id="editor-container"></div>
+<script src="/onlyoffice/web-apps/apps/api/documents/api.js"></script>
+<script>
+(function() {{
+  try {{
+    var config = {config_json};
+    config.type = "desktop";
+    config.height = "100%";
+    config.width = "100%";
+    new DocsAPI.DocEditor("editor-container", config);
+  }} catch(e) {{
+    var el = document.getElementById("editor-container");
+    el.textContent = e.message;
+    el.className = "err";
+  }}
+}})();
+</script>
+</body></html>"""
 
 
 @router.get("/onlyoffice/config/{filename:path}")
@@ -292,68 +474,208 @@ async def onlyoffice_config(
     )
 
 
+def _validate_office_path(file_path: str) -> str:
+    """경로 검증 + 확장자 검증. 허용되면 소문자 확장자 반환."""
+    normalized = os.path.normpath(file_path)
+    if ".." in normalized or normalized.startswith("/"):
+        raise HTTPException(status_code=400, detail="Invalid file path")
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext not in OFFICE_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"Unsupported format: {ext}")
+    return ext
+
+
+def _personal_download_url(username: str, file_path: str) -> str:
+    """개인 파일 다운로드용 URL(one-time token 포함) 생성."""
+    file_token = _create_file_token(username, file_path)
+    return (
+        f"http://auth-gateway.platform.svc.cluster.local"
+        f"/api/v1/viewers/file/{username}/{file_path}?token={file_token}"
+    )
+
+
 @router.get("/onlyoffice/{username}/{file_path:path}", response_class=HTMLResponse)
 async def onlyoffice_viewer(
     username: str,
     file_path: str,
     current_user: dict = Depends(_get_viewer_user),
     settings: Settings = Depends(get_settings),
+    db: Session = Depends(get_db),
 ):
-    """OnlyOffice 뷰어 HTML — api.js + DocEditor iframe 렌더링.
+    """OnlyOffice 뷰어 HTML (view-only) — 개인 파일.
 
-    Hub UI에서 window.open()으로 열리며, markdown_viewer와 동일한 패턴.
-    OnlyOffice api.js는 /onlyoffice/ Ingress 경로로 로드 (상대경로, Mixed Content 방지).
+    편집 세션이 이미 진행 중이면 같은 document key + mode='view'로 참여(read-only).
+    편집 세션이 없으면 version=1 기준 key로 단독 뷰.
     """
     requesting = current_user.get("sub", "")
     is_admin = current_user.get("role") == "admin"
     if not is_admin and requesting.upper() != username.upper():
         raise HTTPException(status_code=403, detail="접근 권한이 없습니다")
 
-    normalized = os.path.normpath(file_path)
-    if ".." in normalized or normalized.startswith("/"):
-        raise HTTPException(status_code=400, detail="Invalid file path")
+    _validate_office_path(file_path)
 
-    ext = os.path.splitext(file_path)[1].lower()
-    if ext not in OFFICE_EXTENSIONS:
-        raise HTTPException(status_code=400, detail=f"Unsupported format: {ext}")
+    # 현재 활성 편집 세션이 있으면 동일 key로 read-only 합류
+    existing = _lookup_edit_session(
+        db,
+        is_shared=False,
+        owner_username=username.upper(),
+        file_path=file_path,
+        mount_id=None,
+    )
+    if existing:
+        doc_key = existing.document_key
+    else:
+        doc_key = _doc_key_personal(username, file_path, 1)
 
-    import html as html_mod
-    basename = html_mod.escape(os.path.basename(file_path))
-    config = _build_onlyoffice_config(file_path, username, current_user.get("name", username), settings)
-    config_json = json.dumps(config, ensure_ascii=False)
+    config = _build_onlyoffice_config(
+        file_path,
+        requesting,  # 현재 보는 사람
+        current_user.get("name", requesting),
+        settings,
+        editable=False,
+        shared=False,
+        document_key=doc_key,
+        file_download_url=_personal_download_url(username, file_path),
+        file_owner_username=username,
+    )
+    return HTMLResponse(content=_render_onlyoffice_html(file_path, config))
 
-    html = f"""<!DOCTYPE html>
-<html><head>
-<meta charset="utf-8">
-<title>{basename} — Otto AI Viewer</title>
-<style>
-  html, body {{ margin:0; padding:0; height:100%; overflow:hidden; background:#1e1e2e; }}
-  #editor-container {{ width:100%; height:100vh; }}
-  .loading {{ display:flex; align-items:center; justify-content:center;
-    height:100vh; color:#cdd6f4; font-family:'Segoe UI',sans-serif; font-size:16px; }}
-  .err {{ color:#f87171; text-align:center; padding:40px; font-size:14px; }}
-</style>
-</head><body>
-<div id="editor-container"></div>
-<script src="/onlyoffice/web-apps/apps/api/documents/api.js"></script>
-<script>
-(function() {{
-  try {{
-    var config = {config_json};
-    config.type = "desktop";
-    config.height = "100%";
-    config.width = "100%";
-    new DocsAPI.DocEditor("editor-container", config);
-  }} catch(e) {{
-    var el = document.getElementById("editor-container");
-    el.textContent = e.message;
-    el.className = "err";
-  }}
-}})();
-</script>
-</body></html>"""
 
-    return HTMLResponse(content=html)
+@router.get("/onlyoffice/edit/{username}/{file_path:path}", response_class=HTMLResponse)
+async def onlyoffice_editor(
+    username: str,
+    file_path: str,
+    current_user: dict = Depends(_get_viewer_user),
+    settings: Settings = Depends(get_settings),
+    db: Session = Depends(get_db),
+):
+    """OnlyOffice 편집 모드 — 개인 파일.
+
+    개인 파일은 동시 편집을 지원하지 않는다. 이미 편집 세션이 있으면
+    두 번째 사용자는 자동으로 view-only로 열린다(개인 파일 편집 잠금).
+    """
+    requesting = current_user.get("sub", "")
+    is_admin = current_user.get("role") == "admin"
+    if not is_admin and requesting.upper() != username.upper():
+        raise HTTPException(status_code=403, detail="접근 권한이 없습니다")
+
+    _validate_office_path(file_path)
+
+    # 편집 세션 확보(없으면 생성) — FOR UPDATE로 2-replica 동시 생성 방지
+    session, created = _get_or_create_edit_session(
+        db,
+        is_shared=False,
+        owner_username=username.upper(),
+        file_path=file_path,
+        mount_id=None,
+    )
+
+    # 개인 파일 편집 잠금: 내가 이 세션의 첫 편집자가 아니면 view-only
+    # (세션 행에는 "최초 편집자"가 기록되지 않으므로, 재진입한 당사자도 세션만 있으면
+    # 두 번째 사용자로 간주. 이는 일부러 보수적으로 설계: 다시 진입해도 뷰어로만 열림.)
+    # 다만 방금 created=True이면 내가 첫 편집자다.
+    editable = bool(created)
+    if not editable:
+        logger.info(
+            f"Personal edit lock: {requesting} opens {file_path} as view-only "
+            f"(session {session.id} already active)"
+        )
+
+    db.commit()  # 세션 생성을 확정
+
+    config = _build_onlyoffice_config(
+        file_path,
+        requesting,
+        current_user.get("name", requesting),
+        settings,
+        editable=editable,
+        shared=False,
+        document_key=session.document_key,
+        file_download_url=_personal_download_url(username, file_path),
+        file_owner_username=username,
+    )
+    return HTMLResponse(content=_render_onlyoffice_html(file_path, config))
+
+
+@router.get("/onlyoffice/shared/{mount_id}/{file_path:path}", response_class=HTMLResponse)
+async def onlyoffice_shared_editor(
+    mount_id: int,
+    file_path: str,
+    current_user: dict = Depends(_get_viewer_user),
+    settings: Settings = Depends(get_settings),
+    db: Session = Depends(get_db),
+):
+    """OnlyOffice 편집 모드 — 공유 파일(co-editing 지원).
+
+    동일 mount_id + file_path + version 조합으로 key가 생성되므로
+    두 명 이상이 열면 OnlyOffice가 co-editing 세션으로 합류시킨다.
+
+    ACL 검증은 T5에서 상세화. 여기서는 dataset 존재 + 기본 권한 체크만 수행.
+    """
+    requesting = current_user.get("sub", "")
+    is_admin = current_user.get("role") == "admin"
+
+    # Dataset 조회 (존재 검증 + 소유자 식별)
+    dataset = db.query(SharedDataset).filter(SharedDataset.id == mount_id).first()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="공유 데이터셋을 찾을 수 없습니다")
+
+    # ACL 검증 — T5에서 share_type(user/team) + share_target 상세 처리.
+    # 여기서는 최소한의 방어: 본인 소유가 아니고 admin도 아니면 ACL 통과 필수.
+    if not is_admin and dataset.owner_username.upper() != requesting.upper():
+        _verify_shared_acl(db, dataset, requesting)
+
+    _validate_office_path(file_path)
+
+    session, _ = _get_or_create_edit_session(
+        db,
+        is_shared=True,
+        owner_username=dataset.owner_username.upper(),
+        file_path=file_path,
+        mount_id=mount_id,
+    )
+    db.commit()
+
+    # 공유 파일 다운로드 URL: 소유자의 Pod에서 shared-data 경로로 프록시
+    # Pod 내부 경로: {username}의 workspace 기준 shared-data/{dataset_name}/{sub_path}
+    shared_rel_path = f"shared-data/{dataset.dataset_name}/{file_path}"
+    file_token = _create_file_token(dataset.owner_username, shared_rel_path)
+    file_download_url = (
+        f"http://auth-gateway.platform.svc.cluster.local"
+        f"/api/v1/viewers/file/{dataset.owner_username}/{shared_rel_path}?token={file_token}"
+    )
+
+    config = _build_onlyoffice_config(
+        file_path,
+        requesting,
+        current_user.get("name", requesting),
+        settings,
+        editable=True,
+        shared=True,
+        document_key=session.document_key,
+        file_download_url=file_download_url,
+        file_owner_username=dataset.owner_username,
+    )
+    return HTMLResponse(content=_render_onlyoffice_html(file_path, config))
+
+
+def _verify_shared_acl(db: Session, dataset: SharedDataset, requesting_username: str) -> None:
+    """공유 데이터셋 접근 권한 검증 — T5에서 share_type/share_target 기반으로 상세 구현.
+
+    현재는 최소 구현: active FileShareACL(user) 엔트리로만 허용. 403 발생 시 raise.
+    """
+    acl = (
+        db.query(FileShareACL)
+        .filter(
+            FileShareACL.dataset_id == dataset.id,
+            FileShareACL.revoked_at.is_(None),
+            FileShareACL.share_type == "user",
+            FileShareACL.share_target == requesting_username.upper(),
+        )
+        .first()
+    )
+    if not acl:
+        raise HTTPException(status_code=403, detail="공유 파일 접근 권한이 없습니다")
 
 
 @router.post("/onlyoffice/callback")
@@ -361,37 +683,218 @@ async def onlyoffice_callback(
     request: Request,
     settings: Settings = Depends(get_settings),
 ):
-    """OnlyOffice 콜백 — S2S 호출이므로 OnlyOffice JWT로 검증.
+    """OnlyOffice Document Server 콜백 핸들러 — S2S 호출.
 
-    OnlyOffice는 문서 상태 변경 시 이 URL을 서버-서버(S2S)로 호출한다.
-    Bearer 토큰이나 쿠키가 없으므로 get_current_user_or_pod 사용 불가.
-    JWT_ENABLED=true인 경우 요청 body 또는 Authorization 헤더의 JWT로 검증.
-    view-only 모드에서는 저장이 없으므로 acknowledgment만 반환.
+    상태 코드별 처리 (OnlyOffice Callback API):
+      1: 사용자 연결/해제 — 연결 이벤트 로깅 후 acknowledge
+      2: 편집 완료(마지막 사용자 퇴장 10초 후) — 수정 파일 다운로드 + Pod에 쓰기
+      3: 저장 에러 — 세션을 error 상태로 전환
+      4: 변경 없이 닫힘 — 세션 정리
+      6: Force-save — status=2와 동일 저장 로직
+      7: Force-save 에러 — 에러 로깅
+      10: 기술적 오류 (v8.2+) — 세션을 error로
+      기타: {"error": 0} 반환 + warn 로그
+
+    2-replica 환경에서 동일 콜백이 두 번 오면 edit_sessions 행을 FOR UPDATE 잠가
+    중복 처리를 방지한다. 응답은 반드시 JSON만 — CSP frame-ancestors 같은
+    HTML 관련 헤더는 추가하지 않는다.
     """
+    # 요청 body를 한 번 읽어 재사용 (JWT도 body.token에 올 수 있음)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    # JWT 검증
     if settings.onlyoffice_jwt_secret:
         token = None
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):
             token = auth_header.split(" ", 1)[1]
         if not token:
-            try:
-                body = await request.json()
-                token = body.get("token")
-            except Exception:
-                pass
+            token = body.get("token")
         if not token:
             raise HTTPException(status_code=403, detail="Missing callback token")
         try:
-            jose_jwt.decode(token, settings.onlyoffice_jwt_secret, algorithms=["HS256"])
+            decoded = jose_jwt.decode(token, settings.onlyoffice_jwt_secret, algorithms=["HS256"])
+            # JWT payload가 실제 body를 감싸는 경우 (Document Server가 token 필드 안에 포함)
+            if isinstance(decoded, dict) and "payload" in decoded:
+                body = decoded["payload"]
         except Exception:
             raise HTTPException(status_code=403, detail="Invalid callback token")
 
-    return JSONResponse(
-        content={"error": 0},
-        headers={
-            "Content-Security-Policy": "frame-ancestors 'self'",
-        },
+    status = int(body.get("status", 0))
+    document_key = body.get("key", "")
+    users = body.get("users", [])
+    download_url = body.get("url")
+    actions = body.get("actions", [])
+
+    logger.info(
+        f"OnlyOffice callback: status={status} key={document_key} "
+        f"users={users} url={'yes' if download_url else 'no'}"
     )
+
+    if not document_key:
+        logger.warning("Callback with no document key — ignoring")
+        return JSONResponse(content={"error": 0})
+
+    # DB 세션 (FastAPI의 Depends를 쓰지 않고 직접 관리 — with_for_update + commit 제어)
+    db = SessionLocal()
+    try:
+        # FOR UPDATE로 행 잠금 (2-replica 중복 콜백 처리 방지)
+        session = (
+            db.query(EditSession)
+            .filter(EditSession.document_key == document_key)
+            .with_for_update()
+            .first()
+        )
+
+        if not session:
+            logger.warning(f"Callback for unknown document_key={document_key} status={status}")
+            return JSONResponse(content={"error": 0})
+
+        # status 1: 연결/해제 로깅만
+        if status == 1:
+            try:
+                _, event_type = _extract_action(actions)
+                logger.info(
+                    f"Callback status=1 key={document_key} event={event_type} users={users}"
+                )
+            except Exception:
+                pass
+            db.commit()
+            return JSONResponse(content={"error": 0})
+
+        # status 4: 변경 없이 닫힘 — 세션 정리만
+        if status == 4:
+            session.status = "saved"
+            db.commit()
+            logger.info(f"Callback status=4 (no change) key={document_key} — session closed")
+            return JSONResponse(content={"error": 0})
+
+        # status 2 / 6: 저장 (2=편집 완료, 6=force-save)
+        if status in (2, 6):
+            if not download_url:
+                logger.error(f"Callback status={status} without download URL key={document_key}")
+                session.status = "save_failed"
+                session.last_error = "no download url"
+                db.commit()
+                return JSONResponse(content={"error": 1})
+
+            session.status = "saving"
+            db.commit()  # saving 상태 먼저 확정 (중복 콜백 방지)
+
+            try:
+                await _save_edited_file(session, download_url, body.get("filetype"))
+            except Exception as exc:
+                logger.exception(
+                    f"Failed to persist edited file key={document_key}: {exc}"
+                )
+                # 다시 잠금 획득 후 실패 상태 기록
+                session2 = (
+                    db.query(EditSession)
+                    .filter(EditSession.id == session.id)
+                    .with_for_update()
+                    .first()
+                )
+                if session2:
+                    session2.status = "save_failed"
+                    session2.last_error = str(exc)[:500]
+                    db.commit()
+                return JSONResponse(content={"error": 1})
+
+            # 성공: version 증가하여 key 로테이션 + saved 상태
+            session3 = (
+                db.query(EditSession)
+                .filter(EditSession.id == session.id)
+                .with_for_update()
+                .first()
+            )
+            if session3:
+                session3.status = "saved" if status == 2 else "editing"
+                session3.version = session3.version + 1
+                session3.last_error = None
+                # force-save(status=6)는 편집을 계속하므로 editing 유지
+                db.commit()
+            logger.info(
+                f"Callback status={status} key={document_key} saved successfully "
+                f"(next version={session3.version if session3 else '?'})"
+            )
+            return JSONResponse(content={"error": 0})
+
+        # status 3: 저장 에러
+        if status == 3:
+            session.status = "error"
+            session.last_error = body.get("error") or "OnlyOffice save error"
+            db.commit()
+            logger.error(f"Callback status=3 (save error) key={document_key} body={body}")
+            return JSONResponse(content={"error": 0})
+
+        # status 7: Force-save 에러
+        if status == 7:
+            session.last_error = body.get("error") or "OnlyOffice force-save error"
+            # 편집은 계속 진행되므로 status는 editing 유지
+            db.commit()
+            logger.error(f"Callback status=7 (force-save error) key={document_key}")
+            return JSONResponse(content={"error": 0})
+
+        # status 10: 기술적 오류 (v8.2+)
+        if status == 10:
+            session.status = "error"
+            session.last_error = body.get("error") or "OnlyOffice technical error"
+            db.commit()
+            logger.error(f"Callback status=10 (technical error) key={document_key}")
+            return JSONResponse(content={"error": 0})
+
+        # 미정의 status — 무시
+        logger.warning(f"Unhandled callback status={status} key={document_key}")
+        db.commit()
+        return JSONResponse(content={"error": 0})
+    finally:
+        db.close()
+
+
+def _extract_action(actions: list) -> tuple[str, str]:
+    """actions 배열에서 (userid, event_type) 추출. 없으면 ('', '')."""
+    if not actions:
+        return "", ""
+    first = actions[0] if isinstance(actions, list) else {}
+    if not isinstance(first, dict):
+        return "", ""
+    return str(first.get("userid", "")), str(first.get("type", ""))
+
+
+async def _save_edited_file(session: EditSession, download_url: str, filetype: str | None) -> None:
+    """Document Server에서 수정 파일을 다운로드하여 Pod에 저장.
+
+    - 공유 파일: 소유자 Pod의 shared-data/{dataset_name}/{sub_path}에 쓰기
+    - 개인 파일: 소유자 Pod의 file_path 경로에 쓰기
+
+    실제 Pod 쓰기는 K8sService.write_file_to_pod(username, container_path, bytes)가 담당 (T4).
+    네트워크 통신은 kubectl cp 기반이므로 50MB 파일 기준 60~120초 타임아웃 필요.
+    """
+    async with httpx.AsyncClient(timeout=120.0) as http:
+        resp = await http.get(download_url)
+        if resp.status_code != 200:
+            raise RuntimeError(
+                f"download failed: HTTP {resp.status_code} from {download_url}"
+            )
+        content = resp.content  # streaming 전환은 T3에서 처리
+
+    # Pod 내부 경로 계산
+    if session.is_shared:
+        container_path = f"/home/node/workspace/shared-data/{session.file_path}"
+    else:
+        # 개인 파일은 Pod 내부 절대 경로로 저장됨 — file_path가 이미 Pod 내 경로
+        # (예: /home/node/workspace/documents/report.xlsx 또는 상대 경로)
+        raw = session.file_path
+        container_path = raw if raw.startswith("/") else f"/home/node/workspace/{raw}"
+
+    # K8s service를 통해 Pod에 파일 전송 (T4에서 구현)
+    from app.services.k8s_service import K8sService
+    from app.core.config import get_settings as _gs
+    svc = K8sService(_gs())
+    await svc.write_file_to_pod(session.owner_username, container_path, content)
 
 
 # ---------------------------------------------------------------------------
