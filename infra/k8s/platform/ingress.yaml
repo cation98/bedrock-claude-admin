@@ -9,6 +9,13 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
     nginx.ingress.kubernetes.io/upstream-hash-by: "$request_uri"
     nginx.ingress.kubernetes.io/enable-websocket: "true"
+    # [SECURITY CRITICAL] Trusted header 스푸핑 방지
+    # 외부 클라이언트가 X-SKO-Email / X-SKO-User-Id 헤더를 위조하여
+    # Open WebUI ENABLE_TRUSTED_HEADER_AUTH 우회하는 공격 차단.
+    # more_clear_input_headers: 요청 도착 시 헤더 무조건 제거 (값 무관).
+    # Auth Gateway가 내부 응답 시 다시 주입하므로 정상 인증 플로우에 영향 없음.
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_clear_input_headers "X-SKO-Email" "X-SKO-User-Id";
 spec:
   ingressClassName: nginx
   rules:
