@@ -67,6 +67,8 @@ def _create_file_token(username: str, file_path: str, ttl_seconds: int = 300) ->
     """
     token = secrets.token_urlsafe(32)
     value = json.dumps({"username": username, "file_path": file_path})
+    # P2-BUG4 diag: 토큰 생성 시점 로그 — 이후 /file/ 요청의 prefix와 대조해 1 vs N회 fetch 판별.
+    logger.info(f"file_token_created path={file_path} token_prefix={token[:8]} ttl={ttl_seconds}s")
     try:
         from app.core.redis_client import get_redis
         r = get_redis()
@@ -325,6 +327,8 @@ async def stream_file(
     """
     if token:
         token_data = _consume_file_token(token)
+        # P2-BUG4 diag: OO DS 다중 fetch 가설 검증용 로그. H1 확정 후 제거 예정.
+        logger.info(f"file_token_request path={file_path} token_prefix={token[:8]} consumed={token_data is not None}")
         if not token_data:
             raise HTTPException(status_code=401, detail="Invalid or expired token")
         if token_data["username"].upper() != username.upper() or token_data["file_path"] != file_path:
