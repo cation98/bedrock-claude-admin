@@ -176,13 +176,14 @@ spec:
 
     # AWS ElastiCache Redis Stream — usage_events 푸시
     # ElastiCache는 K8s Pod가 아니므로 podSelector 불가 → ipBlock 사용.
-    # EKS private 서브넷(elasticache.tf:66 eks_private_subnet_cidrs)에 배치됨.
-    # SecurityGroup(redis SG)이 동일 서브넷 CIDR에서만 6379 허용 → 이중 방어.
+    # primary: bedrock-claude-redis.khpawo.0001.apn2.cache.amazonaws.com → 10.0.10.208
+    # SecurityGroup(redis SG)이 EKS private 서브넷에서만 6379 허용 → 이중 방어.
+    # replica failover 시: replica IP 포함 위해 /24 유지 (failover → 같은 서브넷 내 다른 IP)
     - to:
         - ipBlock:
-            cidr: 10.0.10.0/24   # ap-northeast-2a EKS private subnet
+            cidr: 10.0.10.0/24   # ap-northeast-2a: primary(10.0.10.208) + failover 포함
         - ipBlock:
-            cidr: 10.0.20.0/24   # ap-northeast-2c EKS private subnet
+            cidr: 10.0.20.0/24   # ap-northeast-2c: replica 포함
       ports:
         - port: 6379
           protocol: TCP
@@ -241,12 +242,12 @@ spec:
 
     # AWS ElastiCache Redis Stream 푸시 (usage_emit)
     # ElastiCache는 K8s Pod가 아니므로 podSelector 불가 → ipBlock 사용.
-    # EKS private 서브넷(10.0.10/24, 10.0.20/24)에 배치됨.
+    # primary: 10.0.10.208, replica: 10.0.20.x (failover 포함 위해 /24 유지)
     - to:
         - ipBlock:
-            cidr: 10.0.10.0/24   # ap-northeast-2a EKS private subnet
+            cidr: 10.0.10.0/24   # ap-northeast-2a: primary(10.0.10.208) + failover 포함
         - ipBlock:
-            cidr: 10.0.20.0/24   # ap-northeast-2c EKS private subnet
+            cidr: 10.0.20.0/24   # ap-northeast-2c: replica 포함
       ports:
         - port: 6379
           protocol: TCP

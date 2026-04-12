@@ -33,28 +33,28 @@ spec:
   type: ExternalName
   # ⚠️  placeholder: T2 apply 후 실제 endpoint로 교체 필요
   # 예시: bedrock-claude-redis.xxxxxx.ng.0001.apse2.cache.amazonaws.com
-  externalName: PLACEHOLDER_REPLACE_WITH_TERRAFORM_OUTPUT
+  externalName: bedrock-claude-redis.khpawo.0001.apn2.cache.amazonaws.com
   ports:
     - port: 6379
       targetPort: 6379
       protocol: TCP
 
----
-# ----- Reader (선택적 읽기) 엔드포인트 -----
-# 향후 읽기 전용 쿼리 분리 시 사용 (Phase 1)
-# auth-gateway jti 블랙리스트 EXISTS 조회 시 reader 활용 가능
-apiVersion: v1
-kind: Service
-metadata:
-  name: elasticache-redis-reader
-  namespace: openwebui
-  annotations:
-    bedrock-platform/endpoint-source: "terraform output redis_reader_endpoint"
-spec:
-  type: ExternalName
-  # ⚠️  placeholder: T2 apply 후 실제 endpoint로 교체 필요
-  externalName: PLACEHOLDER_REPLACE_WITH_TERRAFORM_OUTPUT_READER
-  ports:
-    - port: 6379
-      targetPort: 6379
-      protocol: TCP
+# ----- Reader (선택적 읽기) 엔드포인트 — Phase 1 예정 -----
+# 적용 시: terraform output redis_reader_endpoint 값으로 externalName 교체 후 주석 해제
+# kubectl apply -f infra/k8s/openwebui/elasticache-service.yaml
+#
+# ---
+# apiVersion: v1
+# kind: Service
+# metadata:
+#   name: elasticache-redis-reader
+#   namespace: openwebui
+#   annotations:
+#     bedrock-platform/endpoint-source: "terraform output redis_reader_endpoint"
+# spec:
+#   type: ExternalName
+#   externalName: REPLACE_WITH_READER_ENDPOINT  # e.g. bedrock-claude-redis.xxxx.0001.apn2.cache.amazonaws.com
+#   ports:
+#     - port: 6379
+#       targetPort: 6379
+#       protocol: TCP
