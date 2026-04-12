@@ -532,51 +532,9 @@ def _personal_download_url(username: str, file_path: str) -> str:
     )
 
 
-@router.get("/onlyoffice/{username}/{file_path:path}", response_class=HTMLResponse)
-async def onlyoffice_viewer(
-    username: str,
-    file_path: str,
-    current_user: dict = Depends(_get_viewer_user),
-    settings: Settings = Depends(get_settings),
-    db: Session = Depends(get_db),
-):
-    """OnlyOffice 뷰어 HTML (view-only) — 개인 파일.
-
-    편집 세션이 이미 진행 중이면 같은 document key + mode='view'로 참여(read-only).
-    편집 세션이 없으면 version=1 기준 key로 단독 뷰.
-    """
-    requesting = current_user.get("sub", "")
-    is_admin = current_user.get("role") == "admin"
-    if not is_admin and requesting.upper() != username.upper():
-        raise HTTPException(status_code=403, detail="접근 권한이 없습니다")
-
-    _validate_office_path(file_path)
-
-    # 현재 활성 편집 세션이 있으면 동일 key로 read-only 합류
-    existing = _lookup_edit_session(
-        db,
-        is_shared=False,
-        owner_username=username.upper(),
-        file_path=file_path,
-        mount_id=None,
-    )
-    if existing:
-        doc_key = existing.document_key
-    else:
-        doc_key = _doc_key_personal(username, file_path, 1)
-
-    config = _build_onlyoffice_config(
-        file_path,
-        requesting,  # 현재 보는 사람
-        current_user.get("name", requesting),
-        settings,
-        editable=False,
-        shared=False,
-        document_key=doc_key,
-        file_download_url=_personal_download_url(username, file_path),
-        file_owner_username=username,
-    )
-    return HTMLResponse(content=_render_onlyoffice_html(file_path, config))
+# 라우트 등록 순서 주의: FastAPI/Starlette는 선언 순서대로 매칭하므로
+# 더 구체적인 prefix(/edit/, /shared/)가 반드시 /onlyoffice/{username}/... 보다 먼저 와야 한다.
+# 아니면 "edit"/"shared"가 username으로 흡수되어 편집/공유 엔드포인트가 호출 불가능해진다.
 
 
 @router.get("/onlyoffice/edit/{username}/{file_path:path}", response_class=HTMLResponse)
@@ -693,6 +651,54 @@ async def onlyoffice_shared_editor(
         document_key=session.document_key,
         file_download_url=file_download_url,
         file_owner_username=dataset.owner_username,
+    )
+    return HTMLResponse(content=_render_onlyoffice_html(file_path, config))
+
+
+# catch-all 성격이므로 반드시 /edit/, /shared/ 뒤에 등록해야 한다. (L535 주석 참고)
+@router.get("/onlyoffice/{username}/{file_path:path}", response_class=HTMLResponse)
+async def onlyoffice_viewer(
+    username: str,
+    file_path: str,
+    current_user: dict = Depends(_get_viewer_user),
+    settings: Settings = Depends(get_settings),
+    db: Session = Depends(get_db),
+):
+    """OnlyOffice 뷰어 HTML (view-only) — 개인 파일.
+
+    편집 세션이 이미 진행 중이면 같은 document key + mode='view'로 참여(read-only).
+    편집 세션이 없으면 version=1 기준 key로 단독 뷰.
+    """
+    requesting = current_user.get("sub", "")
+    is_admin = current_user.get("role") == "admin"
+    if not is_admin and requesting.upper() != username.upper():
+        raise HTTPException(status_code=403, detail="접근 권한이 없습니다")
+
+    _validate_office_path(file_path)
+
+    # 현재 활성 편집 세션이 있으면 동일 key로 read-only 합류
+    existing = _lookup_edit_session(
+        db,
+        is_shared=False,
+        owner_username=username.upper(),
+        file_path=file_path,
+        mount_id=None,
+    )
+    if existing:
+        doc_key = existing.document_key
+    else:
+        doc_key = _doc_key_personal(username, file_path, 1)
+
+    config = _build_onlyoffice_config(
+        file_path,
+        requesting,  # 현재 보는 사람
+        current_user.get("name", requesting),
+        settings,
+        editable=False,
+        shared=False,
+        document_key=doc_key,
+        file_download_url=_personal_download_url(username, file_path),
+        file_owner_username=username,
     )
     return HTMLResponse(content=_render_onlyoffice_html(file_path, config))
 
