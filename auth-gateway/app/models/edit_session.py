@@ -36,6 +36,10 @@ class EditSession(Base):
     is_shared = Column(Boolean, nullable=False, default=False)
     mount_id = Column(Integer, nullable=True)                # SharedDataset.id (shared일 때만)
 
+    # 세션을 처음 연 편집자. 같은 사용자가 재진입하면 계속 편집 가능 — 다른 사용자만 view-only.
+    # NULL이면(구 데이터) 보수적으로 view-only 처리.
+    first_editor_username = Column(String(50), nullable=True, index=True)
+
     # 상태: editing | saving | saved | save_failed | error
     status = Column(String(20), nullable=False, default="editing", index=True)
     version = Column(Integer, nullable=False, default=1)

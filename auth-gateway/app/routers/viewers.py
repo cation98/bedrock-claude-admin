@@ -204,6 +204,7 @@ def _get_or_create_edit_session(
     owner_username: str,
     file_path: str,
     mount_id: int | None,
+    first_editor_username: str | None = None,
 ) -> tuple[EditSession, bool]:
     """활성 EditSession을 조회하거나 새로 생성.
 
@@ -246,6 +247,7 @@ def _get_or_create_edit_session(
         mount_id=mount_id,
         status="editing",
         version=version,
+        first_editor_username=first_editor_username,
     )
     db.add(session)
     try:
@@ -613,24 +615,30 @@ async def onlyoffice_editor(
 
     _validate_office_path(file_path)
 
-    # 편집 세션 확보(없으면 생성) — FOR UPDATE로 2-replica 동시 생성 방지
+    # 편집 세션 확보(없으면 생성) — FOR UPDATE로 2-replica 동시 생성 방지.
+    # first_editor_username을 함께 기록하여 같은 사용자 재진입 허용 (#5 fix).
     session, created = _get_or_create_edit_session(
         db,
         is_shared=False,
         owner_username=username.upper(),
         file_path=file_path,
         mount_id=None,
+        first_editor_username=requesting.upper(),
     )
 
-    # 개인 파일 편집 잠금: 내가 이 세션의 첫 편집자가 아니면 view-only
-    # (세션 행에는 "최초 편집자"가 기록되지 않으므로, 재진입한 당사자도 세션만 있으면
-    # 두 번째 사용자로 간주. 이는 일부러 보수적으로 설계: 다시 진입해도 뷰어로만 열림.)
-    # 다만 방금 created=True이면 내가 첫 편집자다.
-    editable = bool(created)
+    # 개인 파일 편집 잠금:
+    # - created=True → 내가 첫 편집자 → editable
+    # - 기존 세션이고 first_editor == 나 → 재진입 → editable
+    # - 그 외(다른 사용자) → view-only
+    requesting_upper = requesting.upper()
+    editable = bool(created) or (
+        session.first_editor_username is not None
+        and session.first_editor_username == requesting_upper
+    )
     if not editable:
         logger.info(
             f"Personal edit lock: {requesting} opens {file_path} as view-only "
-            f"(session {session.id} already active)"
+            f"(session {session.id} owned by {session.first_editor_username})"
         )
 
     db.commit()  # 세션 생성을 확정
@@ -685,6 +693,7 @@ async def onlyoffice_shared_editor(
         owner_username=dataset.owner_username.upper(),
         file_path=file_path,
         mount_id=mount_id,
+        first_editor_username=requesting.upper(),
     )
     db.commit()
 

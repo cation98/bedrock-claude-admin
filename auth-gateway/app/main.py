@@ -247,6 +247,29 @@ def _run_skill_store_migration() -> None:
         conn.commit()
 
 
+def _run_edit_session_first_editor_migration() -> None:
+    """edit_sessions.first_editor_username 컬럼 없으면 추가 (P2 #5).
+
+    같은 사용자 재진입 편집 허용 — 첫 편집자를 기록하여 다른 사용자만 view-only.
+    """
+    with engine.connect() as conn:
+        result = conn.execute(text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name='edit_sessions' AND column_name='first_editor_username'"
+        ))
+        if result.fetchone() is None:
+            conn.execute(text(
+                "ALTER TABLE edit_sessions "
+                "ADD COLUMN first_editor_username VARCHAR(50)"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_edit_sessions_first_editor_username "
+                "ON edit_sessions(first_editor_username)"
+            ))
+            conn.commit()
+            logger.info("Migration: edit_sessions.first_editor_username 컬럼 추가 완료")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """앱 시작/종료 라이프사이클 — DB 초기화 + 백그라운드 스케줄러 시작."""
@@ -257,6 +280,7 @@ async def lifespan(app: FastAPI):
     _run_proxy_secret_migration()
     _run_app_acl_grant_migration()
     _run_skill_store_migration()
+    _run_edit_session_first_editor_migration()
     idle_task = asyncio.create_task(idle_checker_loop(settings))
     snapshot_task = asyncio.create_task(token_snapshot_loop(settings))
     audit_task = asyncio.create_task(prompt_audit_loop(settings))
