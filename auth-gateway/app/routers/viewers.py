@@ -698,22 +698,57 @@ async def onlyoffice_shared_editor(
 
 
 def _verify_shared_acl(db: Session, dataset: SharedDataset, requesting_username: str) -> None:
-    """공유 데이터셋 접근 권한 검증 — T5에서 share_type/share_target 기반으로 상세 구현.
+    """공유 데이터셋 접근 권한 검증.
 
-    현재는 최소 구현: active FileShareACL(user) 엔트리로만 허용. 403 발생 시 raise.
+    두 가지 경로 중 하나라도 매칭되면 통과:
+      - share_type="user" + share_target == 요청자 사번 (대소문자 무시)
+      - share_type="team" + share_target == 요청자 소속 팀명
+
+    revoked_at IS NULL만 활성 ACL. 매칭이 없으면 403.
     """
-    acl = (
+    from app.models.user import User
+
+    requesting_upper = requesting_username.upper()
+
+    # 1) user 단위 ACL
+    user_acl = (
         db.query(FileShareACL)
         .filter(
             FileShareACL.dataset_id == dataset.id,
             FileShareACL.revoked_at.is_(None),
             FileShareACL.share_type == "user",
-            FileShareACL.share_target == requesting_username.upper(),
+            FileShareACL.share_target == requesting_upper,
         )
         .first()
     )
-    if not acl:
-        raise HTTPException(status_code=403, detail="공유 파일 접근 권한이 없습니다")
+    if user_acl:
+        return
+
+    # 2) team 단위 ACL — 요청자의 team_name을 조회 후 매칭
+    user = (
+        db.query(User)
+        .filter(User.username == requesting_upper)
+        .first()
+    )
+    if user and user.team_name:
+        team_acl = (
+            db.query(FileShareACL)
+            .filter(
+                FileShareACL.dataset_id == dataset.id,
+                FileShareACL.revoked_at.is_(None),
+                FileShareACL.share_type == "team",
+                FileShareACL.share_target == user.team_name,
+            )
+            .first()
+        )
+        if team_acl:
+            return
+
+    logger.info(
+        f"ACL denied: dataset={dataset.id} ({dataset.dataset_name}) "
+        f"requester={requesting_upper} team={getattr(user, 'team_name', None)}"
+    )
+    raise HTTPException(status_code=403, detail="공유 파일 접근 권한이 없습니다")
 
 
 @router.post("/onlyoffice/callback")
