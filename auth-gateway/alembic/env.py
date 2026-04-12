@@ -51,6 +51,7 @@ from app.models.survey import SurveyTemplate, SurveyAssignment, SurveyResponse  
 from app.models.file_governance import GovernedFile  # noqa: E402, F401
 from app.models.file_audit import FileAuditLog  # noqa: E402, F401
 from app.models.infra_policy import InfraTemplate  # noqa: E402, F401
+from app.models.edit_session import EditSession  # noqa: E402, F401
 
 # The target metadata that Alembic uses for --autogenerate diffing.
 target_metadata = Base.metadata

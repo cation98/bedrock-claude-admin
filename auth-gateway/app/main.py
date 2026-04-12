@@ -31,6 +31,7 @@ from app.models.file_audit import FileAuditLog  # noqa: F401 — create_all이 f
 from app.models.announcement import Announcement  # noqa: F401 — create_all이 테이블 생성하도록 import
 from app.models.guide import Guide  # noqa: F401 — create_all이 guides 테이블 생성하도록 import
 from app.models.moderation import ModerationViolation  # noqa: F401 — create_all이 moderation_violations 테이블 생성하도록 import
+from app.models.edit_session import EditSession  # noqa: F401 — OnlyOffice 편집 세션 테이블 생성용
 from app.routers import admin, apps, auth, bots, file_share, sessions, users, sms, skills, telegram, security, scheduling, infra_policy, surveys, app_proxy, portal
 from app.routers import announcements
 from app.routers.guides import router as guides_router
