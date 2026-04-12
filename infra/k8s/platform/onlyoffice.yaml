@@ -55,6 +55,33 @@ spec:
             secretKeyRef:
               name: onlyoffice-jwt-secret
               key: secret
+
+        # ── F1: 사설 IP 다운로드 허용 (H2 수정) ──────────────────────────────
+        # OnlyOffice는 기본적으로 사설 IP(10.x, 172.x, 192.168.x)로의
+        # 파일 다운로드를 SSRF 방지 목적으로 차단한다.
+        # EKS 클러스터 내부 서비스(auth-gateway 등)는 VPC 사설 IP로 해석되므로
+        # 이 설정 없이는 OO가 내부 auth-gateway에서 문서를 받아올 수 없다.
+        # Word/PPTX는 embedded 리소스를 반복 fetch하므로 Excel보다 더 직접 영향받음.
+        # 참고: infra/k8s/platform/network-policy.yaml L304 주석과 짝을 이룸.
+        - name: ALLOW_PRIVATE_IP_ADDRESS
+          value: "true"
+
+        # ── F2-a: JWT Inbox 검증 비활성화 (H2 수정) ──────────────────────────
+        # OnlyOffice JWT는 양방향:
+        #   outbox (browser→OO): config JSON token 필드로 검증 → JWT_ENABLED=true 유지
+        #   inbox  (OO→외부서버): OO가 파일 다운로드 시 응답 헤더 JWT 검증
+        # auth-gateway의 파일 응답은 OnlyOffice 형식 JWT를 포함하지 않으므로
+        # inbox 방향 검증을 비활성화해야 파일 로드가 성공한다.
+        - name: JWT_INBOX_ENABLED
+          value: "false"
+
+        # ── F2-b: local.json 직접 오버라이드 (H2 수정) ───────────────────────
+        # JWT_INBOX_ENABLED 환경변수는 OO entrypoint가 local.json을 자체 생성한 후에
+        # 적용되지 않을 수 있다(OO 8.x 버그). ONLYOFFICE_DOCS_PARAMS로
+        # local.json 설정을 직접 덮어써서 확실하게 inbox 검증을 끈다.
+        - name: ONLYOFFICE_DOCS_PARAMS
+          value: '{"services":{"CoAuthoring":{"token":{"enable":{"request":{"inbox":false}}}}}}'
+
         # CE 20명 동시 편집 기준 리소스 상향
         # 공식 권고: 세션당 약 100-150MB → 20명 기준 ~3Gi 필요
         resources:
@@ -76,6 +103,41 @@ spec:
             port: 80
           initialDelaySeconds: 30
           periodSeconds: 10
+        # ── F2-c: postStart — local.json 직접 패치 (H2 수정) ────────────────
+        # ONLYOFFICE_DOCS_PARAMS는 OO entrypoint가 local.json을 생성하기 전에
+        # 적용되지 않을 수 있다. postStart에서 entrypoint 완료 후 직접 패치하여
+        # inbox JWT 검증이 확실히 비활성화됨을 보장한다.
+        #
+        # 흐름:
+        #   1. OO entrypoint 실행 → local.json 생성 (JWT_ENABLED=true 포함)
+        #   2. postStart 실행 → local.json의 inbox 설정을 false로 덮어씀
+        #   3. supervisorctl로 docservice 재시작 → 변경사항 반영
+        #
+        # 주의: postStart 실패 시 Pod이 CrashLoopBackOff가 될 수 있음.
+        #   || true 로 실패를 흡수하여 OO는 기동하되 inbox JWT 검증이 활성화될 수 있음.
+        #   → OO Pod 로그에서 "jwt|token|unauthorized" 로 확인.
+        lifecycle:
+          postStart:
+            exec:
+              command:
+                - bash
+                - -c
+                - |
+                  sleep 5
+                  python3 -c "
+                  import json,time
+                  for i in range(10):
+                      try:
+                          with open('/etc/onlyoffice/documentserver/local.json') as f:
+                              cfg = json.load(f)
+                          cfg['services']['CoAuthoring']['token']['enable']['request']['inbox'] = False
+                          with open('/etc/onlyoffice/documentserver/local.json','w') as f:
+                              json.dump(cfg,f,indent=2)
+                          print('inbox JWT disabled')
+                          break
+                      except:
+                          time.sleep(2)
+                  " && supervisorctl restart ds:docservice 2>/dev/null || true
         volumeMounts:
         - name: data
           mountPath: /var/lib/onlyoffice

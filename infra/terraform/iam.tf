@@ -289,12 +289,22 @@ resource "aws_iam_role_policy" "auth_gateway_bedrock_invoke" {
     Version = "2012-10-17"
     Statement = [
       {
-        # auth-gateway bedrock_proxy: Console Pod 대신 Bedrock InvokeModel 호출
+        # auth-gateway AI adapter: OpenAI-compat /api/v1/ai/chat/completions 엔드포인트가
+        # boto3 bedrock-runtime.converse_stream() 을 호출하므로 두 계열 액션 모두 필요.
+        #
+        # 액션 계열 설명:
+        #   InvokeModel / InvokeModelWithResponseStream — 구형(직접 호출) API
+        #   Converse / ConverseStream                  — 신형 대화 API (boto3 converse_stream)
+        #
+        # AWS는 Converse API를 별도 IAM 액션으로 분리했으므로
+        # InvokeModelWithResponseStream 만으로는 converse_stream() 호출 시 AccessDenied 발생 가능.
         Sid    = "AllowBedrockInvoke"
         Effect = "Allow"
         Action = [
           "bedrock:InvokeModel",
-          "bedrock:InvokeModelWithResponseStream"
+          "bedrock:InvokeModelWithResponseStream",
+          "bedrock:Converse",
+          "bedrock:ConverseStream"
         ]
         Resource = [
           "arn:aws:bedrock:*::foundation-model/anthropic.claude-*",

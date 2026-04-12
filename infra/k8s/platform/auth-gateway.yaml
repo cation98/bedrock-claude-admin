@@ -3,6 +3,39 @@
 # EKS 클러스터 내에서 SSO 인증 + Pod 관리 + 로그인 페이지 서빙
 # =============================================================================
 
+# =============================================================================
+# ServiceAccount: platform-admin-sa
+#
+# Auth Gateway Pod이 사용하는 K8s ServiceAccount.
+#
+# IRSA(IAM Roles for Service Accounts) 란?
+#   K8s ServiceAccount에 AWS IAM Role을 연결하는 EKS 기능.
+#   Pod 시작 시 AWS SDK가 자동으로 임시 자격증명을 주입받으므로
+#   별도의 AWS 키를 환경변수로 넣을 필요가 없다.
+#
+# 연결된 IAM Role: bedrock-claude-auth-gateway-bedrock
+#   권한: bedrock:InvokeModel, InvokeModelWithResponseStream,
+#         Converse, ConverseStream, ListFoundationModels, GetFoundationModel
+#
+# Drift 해소 (Phase 0 → Phase 1, Option A):
+#   Phase 0에서는 platform-admin-sa가 AWS CLI로 직접 관리된
+#   bedrock-claude-platform-admin 역할(비 Terraform 관리)을 가리켰음.
+#   Phase 1에서 Terraform 관리 역할(auth-gateway-bedrock)로 일원화.
+#   Terraform output: auth_gateway_bedrock_role_arn
+# =============================================================================
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: platform-admin-sa
+  namespace: platform
+  annotations:
+    # IMPORTANT: Terraform apply 후 실제 ARN 확인:
+    #   cd infra/terraform && terraform output auth_gateway_bedrock_role_arn
+    eks.amazonaws.com/role-arn: "arn:aws:iam::680877507363:role/bedrock-claude-auth-gateway-bedrock"
+  labels:
+    app: auth-gateway
+
+---
 apiVersion: v1
 kind: Namespace
 metadata:
