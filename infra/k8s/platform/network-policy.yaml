@@ -235,12 +235,16 @@ spec:
         - port: 5432
           protocol: TCP
 
-    # Redis 허용 (세션 캐시)
+    # Redis 허용 (세션 캐시) — AWS ElastiCache (managed service, not a K8s Pod)
     # JWT 토큰 블랙리스트, 세션 임시 데이터 저장
+    # ElastiCache는 K8s Pod가 아니므로 podSelector 사용 불가 → ipBlock으로 지정
+    # primary: bedrock-claude-redis.khpawo.0001.apn2.cache.amazonaws.com → 10.0.10.208
+    # /24 유지 이유: failover 시 primary IP가 같은 서브넷 내 다른 IP로 변경될 수 있음
     - to:
-        - podSelector:
-            matchLabels:
-              app: redis
+        - ipBlock:
+            cidr: 10.0.10.0/24   # ap-northeast-2a: primary(10.0.10.208) + failover 포함
+        - ipBlock:
+            cidr: 10.0.20.0/24   # ap-northeast-2c: replica 포함
       ports:
         - port: 6379
           protocol: TCP
