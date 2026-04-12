@@ -857,6 +857,15 @@ async def onlyoffice_callback(
 
         # status 2 / 6: 저장 (2=편집 완료, 6=force-save)
         if status in (2, 6):
+            # 중복 콜백 방지 — 이미 saving 중이면 short-circuit OK 반환.
+            # FOR UPDATE로 잠근 직후이므로 동시성 안전.
+            if session.status == "saving":
+                logger.info(
+                    f"Callback status={status} key={document_key} ignored — already saving"
+                )
+                db.commit()
+                return JSONResponse(content={"error": 0})
+
             if not download_url:
                 logger.error(f"Callback status={status} without download URL key={document_key}")
                 session.status = "save_failed"
@@ -886,7 +895,10 @@ async def onlyoffice_callback(
                     db.commit()
                 return JSONResponse(content={"error": 1})
 
-            # 성공: version 증가하여 key 로테이션 + saved 상태
+            # 성공 처리:
+            # - status=2 (편집 완료): saved + version++ → 재열기 시 새 key
+            # - status=6 (force-save): editing 유지, version은 그대로
+            #   (편집 세션 연속 중이므로 key를 바꾸면 OnlyOffice 세션이 끊어짐)
             session3 = (
                 db.query(EditSession)
                 .filter(EditSession.id == session.id)
@@ -894,14 +906,18 @@ async def onlyoffice_callback(
                 .first()
             )
             if session3:
-                session3.status = "saved" if status == 2 else "editing"
-                session3.version = session3.version + 1
+                if status == 2:
+                    session3.status = "saved"
+                    session3.version = session3.version + 1
+                else:  # status == 6 (force-save)
+                    session3.status = "editing"
+                    # version 유지 — 편집 지속
                 session3.last_error = None
-                # force-save(status=6)는 편집을 계속하므로 editing 유지
                 db.commit()
             logger.info(
                 f"Callback status={status} key={document_key} saved successfully "
-                f"(next version={session3.version if session3 else '?'})"
+                f"(version={session3.version if session3 else '?'}, "
+                f"status={session3.status if session3 else '?'})"
             )
             return JSONResponse(content={"error": 0})
 
