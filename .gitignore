@@ -39,3 +39,4 @@ infra/k8s/platform/secrets.yaml
 .gstack/
 file::memory:
 **/file::memory:
+.worktrees/
