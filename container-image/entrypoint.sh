@@ -14,20 +14,43 @@ fi
 
 # ---------------------------------------------------------------------------
 # T20: Bedrock AG HTTP proxy 라우팅 설정
-#   ANTHROPIC_BASE_URL이 설정된 경우, Claude CLI 호출을 Auth Gateway의
-#   Anthropic-compatible /v1 엔드포인트로 투명하게 프록시한다.
-#   - CLAUDE_CODE_USE_BEDROCK: 직접 AWS SDK 호출 (설정된 경우)
-#   - ANTHROPIC_BASE_URL 우선: Bedrock AG 통한 usage 추적 경로 (T20 활성화 시)
 #
-#   T20 DEPLOY 시점에 Auth Gateway가 /v1/messages를 지원하고 NetworkPolicy에서
-#   egress Bedrock 직접 접근이 차단되면 CLAUDE_CODE_USE_BEDROCK를 unset한다.
-#   현재는 ANTHROPIC_BASE_URL이 주입된 경우만 프록시 경로 활성화.
+#   ANTHROPIC_BASE_URL이 설정된 경우 (Auth Gateway 주입):
+#   1. SECURE_POD_TOKEN으로 pod-token-exchange 호출 → JWT 획득
+#   2. ANTHROPIC_API_KEY = 획득한 JWT (Bearer 토큰으로 /v1/messages 인증)
+#   3. CLAUDE_CODE_USE_BEDROCK unset (AWS SDK 직접 호출 비활성화)
+#
+#   portal.html은 pod-token-exchange를 호출하지 않음 (SSO 쿠키 사용).
+#   Pod 내부 교환과 충돌 없음.
+#
+#   주의: JWT access_token TTL = 15분. 장시간 세션에서는 refresh 필요.
+#   Phase 1에서 background token refresh daemon 추가 예정.
 # ---------------------------------------------------------------------------
-if [ -n "${ANTHROPIC_BASE_URL:-}" ]; then
-    # Auth Gateway 프록시 경로 활성화 — AWS SDK 직접 호출 비활성화
-    unset CLAUDE_CODE_USE_BEDROCK 2>/dev/null || true
-    export ANTHROPIC_API_KEY="${BEDROCK_JWT_TOKEN:-placeholder}"  # Auth Gateway가 JWT로 인증
-    echo "  Proxy:    ${ANTHROPIC_BASE_URL} (Bedrock AG T20)"
+if [ -n "${ANTHROPIC_BASE_URL:-}" ] && [ -n "${SECURE_POD_TOKEN:-}" ] && [ -n "${AUTH_GATEWAY_URL:-}" ]; then
+    # Pod 이름 결정 (k8s_service.py 생성 규칙과 동일)
+    _AG_POD_NAME="claude-terminal-$(echo "${USER_ID:-unknown}" | tr '[:upper:]' '[:lower:]')"
+
+    # pod-token-exchange 호출 → JWT 획득
+    _JWT_RESPONSE=$(curl -sf -X POST \
+        "${AUTH_GATEWAY_URL}/auth/pod-token-exchange" \
+        -H "Content-Type: application/json" \
+        -d "{\"pod_token\":\"${SECURE_POD_TOKEN}\",\"pod_name\":\"${_AG_POD_NAME}\"}" \
+        --max-time 10 2>/dev/null || echo "")
+
+    if [ -n "${_JWT_RESPONSE}" ]; then
+        _ACCESS_TOKEN=$(echo "${_JWT_RESPONSE}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('access_token',''))" 2>/dev/null || echo "")
+        if [ -n "${_ACCESS_TOKEN}" ]; then
+            export ANTHROPIC_API_KEY="${_ACCESS_TOKEN}"
+            unset CLAUDE_CODE_USE_BEDROCK 2>/dev/null || true
+            echo "  Proxy:    ${ANTHROPIC_BASE_URL} (Bedrock AG T20, JWT issued)"
+        else
+            echo "  Proxy:    JWT 파싱 실패 — Bedrock 직접 경로 유지"
+        fi
+    else
+        echo "  Proxy:    pod-token-exchange 실패 — Bedrock 직접 경로 유지"
+    fi
+
+    unset _JWT_RESPONSE _ACCESS_TOKEN _AG_POD_NAME
 fi
 
 # ---------------------------------------------------------------------------

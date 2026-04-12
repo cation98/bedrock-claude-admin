@@ -4,18 +4,26 @@ Stream: stream:usage_events
 Consumer Group: usage-workers
 Batch: 10 events OR 1-second timeout → UPSERT into token_usage_daily + token_usage_hourly
 
-Event schema (XADD fields):
-  username     str   사번 (e.g. N1102359)
-  model        str   Bedrock model ID
-  input_tokens int
-  output_tokens int
-  total_tokens int
-  cost_usd     float
-  cost_krw     int
-  recorded_at  ISO-8601 UTC string
+두 가지 producer 스키마를 모두 지원:
 
-엔드포인트는 devops T2-APPLY 완료 후 REDIS_URL 환경변수로 주입된다.
-T2 전까지는 이 파일을 준비 상태로 유지 — 실제 배포는 T2 완료 시점.
+  [Pipelines / webchat 경로]  —  usage_emit_pipeline (openwebui-pipelines.yaml)
+    user_id      str   Platform DB users.id (integer string) 또는 Open WebUI UUID
+    username     str   사번 (email 추출 후 emit, 없으면 user_id 기반 DB 조회)
+    source       str   "webchat"
+    model        str   Bedrock model ID
+    input_tokens str   (숫자 문자열)
+    output_tokens str
+    ts           str   Unix timestamp (recorded_at 없을 때 fallback)
+
+  [Console Pod / bedrock_proxy 경로]  —  T20 bedrock_proxy.py
+    username     str   사번 (JWT sub)
+    model        str   Bedrock model ID
+    input_tokens str
+    output_tokens str
+    total_tokens str
+    cost_usd     str   (숫자 문자열)
+    cost_krw     str
+    recorded_at  str   ISO-8601 UTC
 """
 
 from __future__ import annotations
@@ -23,8 +31,9 @@ from __future__ import annotations
 import logging
 import os
 import time
-from datetime import datetime, date, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
+from functools import lru_cache
 
 import redis
 from sqlalchemy import create_engine, text
@@ -38,16 +47,16 @@ logger = logging.getLogger(__name__)
 
 # ─── 설정 ─────────────────────────────────────────────────────────────────────
 
-REDIS_URL = os.environ["REDIS_URL"]           # 필수: devops T2-APPLY 후 주입
-DATABASE_URL = os.environ["DATABASE_URL"]     # 필수: platform RDS
+REDIS_URL = os.environ["REDIS_URL"]
+DATABASE_URL = os.environ["DATABASE_URL"]
 
 STREAM_KEY = "stream:usage_events"
 CONSUMER_GROUP = "usage-workers"
-CONSUMER_NAME = os.environ.get("HOSTNAME", "worker-0")  # K8s Pod hostname
+CONSUMER_NAME = os.environ.get("HOSTNAME", "worker-0")
 
-BATCH_SIZE = 10       # 최대 이벤트 개수 (배치 단위)
-BLOCK_MS = 1000       # 1초 대기 후 빈 배치 flush
-RECONNECT_DELAY = 5   # Redis 연결 실패 시 재시도 간격 (초)
+BATCH_SIZE = 10
+BLOCK_MS = 1000
+RECONNECT_DELAY = 5
 
 
 # ─── DB 연결 ──────────────────────────────────────────────────────────────────
@@ -69,9 +78,7 @@ def get_redis_client() -> redis.Redis:
 
 
 def ensure_stream_and_group(r: redis.Redis) -> None:
-    """Stream과 Consumer Group이 없으면 생성한다."""
     try:
-        # Stream이 없으면 mkstream=True로 생성
         r.xgroup_create(STREAM_KEY, CONSUMER_GROUP, id="0", mkstream=True)
         logger.info("Consumer group '%s' created on '%s'", CONSUMER_GROUP, STREAM_KEY)
     except redis.ResponseError as e:
@@ -81,33 +88,131 @@ def ensure_stream_and_group(r: redis.Redis) -> None:
             raise
 
 
-# ─── 이벤트 처리 ──────────────────────────────────────────────────────────────
+# ─── user_id → username 조회 (Pipelines 경로용) ──────────────────────────────
+
+# 세션 내 간단한 메모리 캐시 (재시작 시 초기화 — 사용자 수 제한적이므로 충분)
+_username_cache: dict[str, str] = {}
+
+
+def _resolve_username(fields: dict) -> str | None:
+    """이벤트 필드에서 사번(username) 추출.
+
+    우선순위:
+    1. `username` 필드 직접 사용 (bedrock_proxy / 최신 usage_emit 경로)
+    2. `user_id`가 integer string → Platform DB `users.id` 기준 조회
+    3. `user_id`가 이메일 패턴 → 도메인 앞 부분을 대문자로 변환
+    4. `user_id`를 username으로 직접 사용 (fallback)
+    """
+    if fields.get("username"):
+        return fields["username"]
+
+    user_id = fields.get("user_id", "").strip()
+    if not user_id:
+        return None
+
+    if user_id in _username_cache:
+        return _username_cache[user_id]
+
+    resolved: str | None = None
+
+    # integer string → DB 조회 (Platform DB users.id)
+    if user_id.isdigit():
+        try:
+            with Session() as session:
+                row = session.execute(
+                    text("SELECT username FROM users WHERE id = :uid"),
+                    {"uid": int(user_id)},
+                ).fetchone()
+                if row:
+                    resolved = row[0]
+        except Exception as e:
+            logger.warning("username lookup failed for user_id=%s: %s", user_id, e)
+
+    # email 패턴 (e.g. "n1102359@skons.net") → 사번 추출
+    if not resolved and "@" in user_id:
+        resolved = user_id.split("@")[0].upper()
+
+    # fallback: user_id 그대로 사용
+    if not resolved:
+        resolved = user_id
+
+    _username_cache[user_id] = resolved
+    return resolved
+
+
+# ─── 이벤트 비용 추정 ──────────────────────────────────────────────────────────
+
+def _estimate_cost_usd(model_id: str, input_tokens: int, output_tokens: int) -> float:
+    """모델별 토큰 비용 추정 (USD, 2026-04 기준)."""
+    if "haiku" in model_id:
+        in_price, out_price = 0.80, 4.00
+    elif "opus" in model_id:
+        in_price, out_price = 15.00, 75.00
+    else:
+        in_price, out_price = 3.00, 15.00
+    return (input_tokens * in_price + output_tokens * out_price) / 1_000_000
+
+
+# ─── 이벤트 파싱 ──────────────────────────────────────────────────────────────
 
 def parse_event(fields: dict) -> dict | None:
-    """Redis Stream 필드 딕셔너리 → 정규화된 이벤트 dict."""
+    """Redis Stream 필드 딕셔너리 → 정규화된 이벤트 dict.
+
+    Pipelines (webchat) 및 bedrock_proxy (console) 두 경로 모두 처리.
+    """
     try:
-        recorded_at = datetime.fromisoformat(fields["recorded_at"])
-        if recorded_at.tzinfo is None:
-            recorded_at = recorded_at.replace(tzinfo=timezone.utc)
+        # ── username 결정 ──
+        username = _resolve_username(fields)
+        if not username:
+            logger.warning("Event has no username/user_id — skip: %s", fields)
+            return None
+
+        # ── 타임스탬프 결정: recorded_at 우선, ts fallback ──
+        if fields.get("recorded_at"):
+            recorded_at = datetime.fromisoformat(fields["recorded_at"])
+            if recorded_at.tzinfo is None:
+                recorded_at = recorded_at.replace(tzinfo=timezone.utc)
+        elif fields.get("ts"):
+            recorded_at = datetime.fromtimestamp(int(fields["ts"]), tz=timezone.utc)
+        else:
+            recorded_at = datetime.now(timezone.utc)
+
+        input_tokens = int(fields.get("input_tokens", 0))
+        output_tokens = int(fields.get("output_tokens", 0))
+        total_tokens = int(fields.get("total_tokens", 0)) or (input_tokens + output_tokens)
+
+        # ── 비용: 직접 제공 우선, 없으면 모델 단가 기준 추정 ──
+        model = fields.get("model", "unknown")
+        if fields.get("cost_usd"):
+            cost_usd = Decimal(fields["cost_usd"])
+        else:
+            cost_usd = Decimal(str(_estimate_cost_usd(model, input_tokens, output_tokens)))
+
+        if fields.get("cost_krw"):
+            cost_krw = int(fields["cost_krw"])
+        else:
+            cost_krw = int(float(cost_usd) * 1400)
+
         return {
-            "username": fields["username"],
-            "model": fields.get("model", "unknown"),
-            "input_tokens": int(fields.get("input_tokens", 0)),
-            "output_tokens": int(fields.get("output_tokens", 0)),
-            "total_tokens": int(fields.get("total_tokens", 0)),
-            "cost_usd": Decimal(fields.get("cost_usd", "0")),
-            "cost_krw": int(fields.get("cost_krw", 0)),
+            "username": username,
+            "model": model,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+            "cost_usd": cost_usd,
+            "cost_krw": cost_krw,
             "usage_date": recorded_at.date(),
-            "slot": recorded_at.hour * 6 + recorded_at.minute // 10,  # 0-143
-            "hour": recorded_at.hour,  # 레거시 호환
+            "slot": recorded_at.hour * 6 + recorded_at.minute // 10,
+            "hour": recorded_at.hour,
         }
-    except (KeyError, ValueError) as e:
+    except (KeyError, ValueError, TypeError) as e:
         logger.warning("Event parse error: %s — fields=%s", e, fields)
         return None
 
 
+# ─── DB UPSERT ────────────────────────────────────────────────────────────────
+
 def upsert_daily(session, events: list[dict]) -> None:
-    """token_usage_daily UPSERT (username, usage_date 기준 누적)."""
     for ev in events:
         session.execute(
             text("""
@@ -139,7 +244,6 @@ def upsert_daily(session, events: list[dict]) -> None:
 
 
 def upsert_hourly(session, events: list[dict]) -> None:
-    """token_usage_hourly UPSERT (username, usage_date, slot 기준 누적)."""
     for ev in events:
         session.execute(
             text("""
@@ -171,7 +275,6 @@ def upsert_hourly(session, events: list[dict]) -> None:
 
 
 def process_batch(r: redis.Redis, message_ids: list[str], events: list[dict]) -> None:
-    """DB UPSERT + ACK — 하나의 트랜잭션으로 묶음."""
     if not events:
         return
     with Session() as session:
@@ -179,7 +282,6 @@ def process_batch(r: redis.Redis, message_ids: list[str], events: list[dict]) ->
             upsert_daily(session, events)
             upsert_hourly(session, events)
             session.commit()
-            # ACK는 DB commit 성공 후만 수행 — at-least-once 보장
             r.xack(STREAM_KEY, CONSUMER_GROUP, *message_ids)
             logger.info("Processed %d events, ACKed %d", len(events), len(message_ids))
         except Exception as e:
@@ -209,22 +311,19 @@ def run() -> None:
 
 
 def _consume_loop(r: redis.Redis) -> None:
-    """XREADGROUP 기반 배치 소비 루프."""
-    # 미처리 Pending 메시지 먼저 재처리 (이전 worker 장애 복구)
     _recover_pending(r)
 
     while True:
-        # BLOCK: 1초 대기, 최대 BATCH_SIZE 건 수신
         results = r.xreadgroup(
             CONSUMER_GROUP,
             CONSUMER_NAME,
-            {STREAM_KEY: ">"},  # ">" = 새 메시지만
+            {STREAM_KEY: ">"},
             count=BATCH_SIZE,
             block=BLOCK_MS,
         )
 
         if not results:
-            continue  # 타임아웃 — 다음 iteration
+            continue
 
         message_ids = []
         events = []
@@ -235,7 +334,6 @@ def _consume_loop(r: redis.Redis) -> None:
                     events.append(ev)
                     message_ids.append(msg_id)
                 else:
-                    # 파싱 불가 메시지: 즉시 ACK (dead letter 방지)
                     r.xack(STREAM_KEY, CONSUMER_GROUP, msg_id)
                     logger.warning("Bad event ACKed without processing: id=%s", msg_id)
 
@@ -244,14 +342,10 @@ def _consume_loop(r: redis.Redis) -> None:
 
 
 def _recover_pending(r: redis.Redis, max_recover: int = 100) -> None:
-    """이전 worker가 미처리한 Pending 메시지 재처리 (장애 복구).
-
-    id="0" 로 XREADGROUP 하면 자신의 PEL에서 미확인 메시지를 재수신한다.
-    """
     results = r.xreadgroup(
         CONSUMER_GROUP,
         CONSUMER_NAME,
-        {STREAM_KEY: "0"},  # "0" = 이 consumer의 미처리 메시지
+        {STREAM_KEY: "0"},
         count=max_recover,
     )
     if results:

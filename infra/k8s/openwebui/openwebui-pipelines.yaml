@@ -264,8 +264,17 @@ data:
                 if not user_id and user:
                     user_id = user.get("external_id") or user.get("id", "")
 
+                # username 추출 — usage-worker DB lookup 부하 최소화
+                # 우선순위: user.email 도메인 앞 대문자 → user_id 직접 사용
+                username = ""
+                if user and user.get("email"):
+                    username = user["email"].split("@")[0].upper()
+                if not username:
+                    username = user_id  # fallback: user_id 그대로
+
                 event = {
                     "user_id": user_id,
+                    "username": username,  # usage-worker가 DB lookup 없이 직접 사용
                     "source": "webchat",
                     "model": body.get("model", ""),
                     "input_tokens": str(input_tokens),
@@ -309,6 +318,20 @@ spec:
     spec:
       nodeSelector:
         role: claude-terminal  # main worker nodegroup
+
+      # ConfigMap은 read-only mount → emptyDir에 복사 후 Pipelines가 사용
+      # Pipelines는 각 pipeline 스크립트 디렉토리에 __pycache__ 등을 생성하므로
+      # writable 볼륨이 필요
+      initContainers:
+        - name: copy-pipelines
+          image: busybox:1.36
+          command: ["sh", "-c", "cp /scripts/*.py /app/pipelines/ && echo 'Pipeline scripts copied'"]
+          volumeMounts:
+            - name: pipeline-scripts
+              mountPath: /scripts
+              readOnly: true
+            - name: pipelines-writable
+              mountPath: /app/pipelines
 
       containers:
         - name: pipelines
@@ -363,9 +386,8 @@ spec:
               memory: "1Gi"
 
           volumeMounts:
-            - name: pipeline-scripts
+            - name: pipelines-writable
               mountPath: /app/pipelines
-              readOnly: true
 
           livenessProbe:
             httpGet:
@@ -387,6 +409,8 @@ spec:
         - name: pipeline-scripts
           configMap:
             name: pipelines-scripts
+        - name: pipelines-writable
+          emptyDir: {}
 
 ---
 # ----- Service -----
