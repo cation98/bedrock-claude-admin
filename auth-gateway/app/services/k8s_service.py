@@ -822,15 +822,16 @@ class K8sService:
             )
         return normalized
 
-    async def write_file_to_pod(
+    async def write_local_file_to_pod(
         self,
         username: str,
         container_path: str,
-        content: bytes,
+        local_path: str,
     ) -> None:
-        """사용자 Pod 내부에 파일 기록 — OnlyOffice 콜백 저장 경로.
+        """로컬 파일을 사용자 Pod 내부로 복사 — 메모리 적재 없이 kubectl cp.
 
-        asyncio.create_subprocess_exec를 사용하여 kubectl을 직접 호출(argv 기반, 쉘 없음).
+        대용량 편집 파일 저장 시 메모리 사용을 상수로 유지하기 위해 호출자가
+        이미 디스크에 스트리밍 쓰기 완료한 local_path를 넘긴다.
         """
         pod_name = self._pod_name(username)
         safe_path = self._validate_container_path(container_path)
@@ -849,21 +850,37 @@ class K8sService:
                 step="mkdir",
             )
 
+        await self._run_kubectl(
+            [
+                "kubectl", "cp",
+                "-n", self.namespace,
+                "-c", self._CONTAINER_NAME,
+                local_path,
+                f"{pod_name}:{safe_path}",
+            ],
+            step="cp",
+        )
+        try:
+            size = os.path.getsize(local_path)
+        except OSError:
+            size = -1
+        logger.info(f"Wrote {size} bytes to {pod_name}:{safe_path}")
+
+    async def write_file_to_pod(
+        self,
+        username: str,
+        container_path: str,
+        content: bytes,
+    ) -> None:
+        """bytes를 Pod에 쓰기 — 내부적으로 tempfile에 dump 후 write_local_file_to_pod.
+
+        대용량 파일은 write_local_file_to_pod를 직접 호출해 메모리 버퍼링을 피할 것.
+        """
         fd, tmp_path = tempfile.mkstemp(prefix="onlyoffice-save-")
         try:
             with os.fdopen(fd, "wb") as f:
                 f.write(content)
-            await self._run_kubectl(
-                [
-                    "kubectl", "cp",
-                    "-n", self.namespace,
-                    "-c", self._CONTAINER_NAME,
-                    tmp_path,
-                    f"{pod_name}:{safe_path}",
-                ],
-                step="cp",
-            )
-            logger.info(f"Wrote {len(content)} bytes to {pod_name}:{safe_path}")
+            await self.write_local_file_to_pod(username, container_path, tmp_path)
         finally:
             try:
                 os.unlink(tmp_path)

@@ -1078,43 +1078,43 @@ def _validate_callback_download_url(url: str) -> None:
 async def _save_edited_file(session: EditSession, download_url: str, filetype: str | None) -> None:
     """Document Server에서 수정 파일을 다운로드하여 Pod에 저장.
 
-    - 공유 파일: 소유자 Pod의 shared-data/{dataset_name}/{sub_path}에 쓰기
-    - 개인 파일: 소유자 Pod의 file_path 경로에 쓰기
-
-    실제 Pod 쓰기는 K8sService.write_file_to_pod(username, container_path, bytes)가 담당 (T4).
-    네트워크 통신은 kubectl cp 기반이므로 50MB 파일 기준 60~120초 타임아웃 필요.
+    진짜 스트리밍: httpx.stream() → tempfile 디스크 쓰기 → kubectl cp (#9 fix).
+    메모리 점유는 chunk_size(64KB) 수준으로 상수. 50MB 파일도 메모리 영향 없음.
     SSRF 방어를 위해 download_url 호스트는 allowlist 검증 후에만 호출한다.
     """
+    import tempfile as _tempfile
+
     _validate_callback_download_url(download_url)
 
-    # Document Server → auth-gateway 스트리밍 다운로드 (메모리 버퍼링 최소화)
-    # kubectl cp는 임시 파일을 받기 때문에 여기서 bytes로 모두 수집 후 전달한다.
-    # 향후 파일이 커지면 임시 파일 경로를 직접 주고받는 방식으로 개선 가능.
-    chunks: list[bytes] = []
-    async with httpx.AsyncClient(timeout=120.0) as http:
-        async with http.stream("GET", download_url) as resp:
-            if resp.status_code != 200:
-                raise RuntimeError(
-                    f"download failed: HTTP {resp.status_code} from {download_url}"
-                )
-            async for chunk in resp.aiter_bytes(chunk_size=65536):
-                chunks.append(chunk)
-    content = b"".join(chunks)
-
-    # Pod 내부 경로 계산
+    # Pod 내부 경로 계산 (검증은 K8sService 내부에서)
     if session.is_shared:
         container_path = f"/home/node/workspace/shared-data/{session.file_path}"
     else:
-        # 개인 파일은 Pod 내부 절대 경로로 저장됨 — file_path가 이미 Pod 내 경로
-        # (예: /home/node/workspace/documents/report.xlsx 또는 상대 경로)
         raw = session.file_path
         container_path = raw if raw.startswith("/") else f"/home/node/workspace/{raw}"
 
-    # K8s service를 통해 Pod에 파일 전송 (T4에서 구현)
-    from app.services.k8s_service import K8sService
-    from app.core.config import get_settings as _gs
-    svc = K8sService(_gs())
-    await svc.write_file_to_pod(session.owner_username, container_path, content)
+    # Document Server → 로컬 tempfile 스트리밍 다운로드 (메모리 상수)
+    fd, tmp_path = _tempfile.mkstemp(prefix="onlyoffice-save-")
+    try:
+        with os.fdopen(fd, "wb") as out:
+            async with httpx.AsyncClient(timeout=120.0) as http:
+                async with http.stream("GET", download_url) as resp:
+                    if resp.status_code != 200:
+                        raise RuntimeError(
+                            f"download failed: HTTP {resp.status_code} from {download_url}"
+                        )
+                    async for chunk in resp.aiter_bytes(chunk_size=65536):
+                        out.write(chunk)
+
+        from app.services.k8s_service import K8sService
+        from app.core.config import get_settings as _gs
+        svc = K8sService(_gs())
+        await svc.write_local_file_to_pod(session.owner_username, container_path, tmp_path)
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
 
 # ---------------------------------------------------------------------------
