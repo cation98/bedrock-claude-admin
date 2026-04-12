@@ -948,14 +948,22 @@ def _extract_action(actions: list) -> tuple[str, str]:
 
 
 # SSRF 방어: 콜백 body의 download_url은 OnlyOffice Document Server 서비스 DNS만 허용.
-# JWT 검증이 1차 방어선이지만 secret 미설정 환경 / DS compromise 시나리오를 고려한 심층 방어.
-# 허용 호스트는 K8s svc DNS 또는 documentserver 호스트명 패턴으로 제한.
+# JWT 검증이 1차 방어선이지만 DS compromise 시나리오를 고려한 심층 방어.
+# 허용 호스트는 실제 K8s Service 이름(onlyoffice, claude-sessions ns) + 역호환용
+# documentserver alias. localhost는 로컬 개발용.
 _ALLOWED_CALLBACK_URL_HOSTS = {
+    # 실제 프로덕션 K8s Service DNS
+    "onlyoffice.claude-sessions.svc.cluster.local",
+    "onlyoffice.claude-sessions.svc",
+    "onlyoffice.claude-sessions",
+    "onlyoffice",
+    # 과거 명칭 호환 (스테이징에서 혹시 남아 있을 수 있음)
     "documentserver.claude-sessions.svc.cluster.local",
-    "documentserver",
-    "documentserver.claude-sessions",
     "documentserver.claude-sessions.svc",
-    "localhost",  # 로컬 개발
+    "documentserver.claude-sessions",
+    "documentserver",
+    # 로컬 개발
+    "localhost",
     "127.0.0.1",
 }
 
