@@ -161,9 +161,17 @@
         //   → 원래 경로로 복귀
 
         var PORTAL_URL = 'https://ai.skons.net/portal/';
-        var originalPath = document.referrer
-            ? encodeURIComponent(document.referrer)
-            : encodeURIComponent('https://chat.skons.net');
+
+        // nginx error_page 401 동작 방식에 따른 originalPath 결정:
+        //   내부 리다이렉트(기본): 브라우저 URL = 원래 Open WebUI 페이지 그대로 → window.location.href 사용
+        //   302 리다이렉트(=302): 브라우저가 /auth/expired 로 이동 → document.referrer 사용
+        var currentHref = window.location.href;
+        var isOnExpiredPage = currentHref.indexOf('/auth/expired') !== -1;
+        var originalPath = isOnExpiredPage
+            ? (document.referrer
+                ? encodeURIComponent(document.referrer)
+                : encodeURIComponent('https://chat.skons.net'))
+            : encodeURIComponent(currentHref);
 
         var countdownEl = document.getElementById('countdownNum');
         var statusEl    = document.getElementById('statusMsg');

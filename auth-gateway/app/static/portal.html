@@ -737,9 +737,48 @@
         @media (max-width: 400px) {
             .hub-tiles { grid-template-columns: 1fr; }
         }
+
+        /* #19: JWT refresh 진행 중 전체화면 오버레이 */
+        .refresh-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: #0f172a;
+            z-index: 9999;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 1rem;
+        }
+        .refresh-overlay.active { display: flex; }
+        .refresh-overlay-title {
+            font-size: 1.125rem;
+            font-weight: 600;
+            color: #f8fafc;
+        }
+        .refresh-overlay-desc {
+            font-size: 0.875rem;
+            color: #94a3b8;
+        }
+        .refresh-spinner {
+            width: 32px;
+            height: 32px;
+            border: 3px solid #1e293b;
+            border-top-color: #2563EB;
+            border-radius: 50%;
+            animation: refresh-spin 0.7s linear infinite;
+        }
+        @keyframes refresh-spin { to { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
+    <!-- #19: JWT refresh 진행 중 오버레이 (portal.html?refresh=1 진입 시 표시) -->
+    <div class="refresh-overlay" id="refreshOverlay" role="status" aria-live="assertive">
+        <div class="refresh-spinner" aria-hidden="true"></div>
+        <div class="refresh-overlay-title">세션 갱신 중…</div>
+        <div class="refresh-overlay-desc">잠시만 기다려 주세요</div>
+    </div>
+
     <div class="header">
         <h1>AI 플랫폼 허브</h1>
         <div class="header-right">
@@ -1076,7 +1115,12 @@
             if (params.get('refresh') !== '1') return;
             var next = params.get('next') || 'https://chat.skons.net';
 
+            // 오버레이 즉시 표시 — 포털 UI flash 방지
+            var overlay = document.getElementById('refreshOverlay');
+            if (overlay) overlay.classList.add('active');
+
             // T10/T4: api 팀의 /auth/refresh 엔드포인트 (bedrock_refresh 쿠키 사용)
+            // Authorization 헤더는 보내지만 서버는 bedrock_refresh HttpOnly 쿠키를 우선 사용
             apiFetch(API_BASE + '/auth/refresh', { method: 'POST' }).then(function(res) {
                 if (res.ok) {
                     window.location.replace(decodeURIComponent(next));
