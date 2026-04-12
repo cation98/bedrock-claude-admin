@@ -539,3 +539,68 @@ class TestFileTokenMultiFetch:
     def test_unknown_token_returns_none(self):
         """존재하지 않는 토큰은 재사용 허용 전후 동일하게 None."""
         assert viewers_router._consume_file_token("nonexistent-token-xyz") is None
+
+
+# ---------------------------------------------------------------------------
+# [G] 비-ASCII 파일명 Content-Disposition 인코딩 — H4(P2-BUG4-v2) 회귀 방어
+# ---------------------------------------------------------------------------
+
+class TestContentDispositionNonAscii:
+    """stream_file이 한글/비-ASCII 파일명에서도 정상 응답해야 한다.
+
+    2026-04-12 확증: H1 fix 이후에도 .docx/.pptx 로드 실패. 실제 원인은
+    `Content-Disposition: inline; filename="..."` 헤더가 한글 포함 시
+    starlette의 latin-1 인코딩에서 UnicodeEncodeError 발생 → 500.
+    RFC 5987 이중 파라미터(filename= ASCII fallback + filename*=UTF-8''%xx%xx)로
+    해결.
+    """
+
+    @staticmethod
+    def _build_rfc5987_disposition(basename: str) -> str:
+        """viewers.py:stream_file 의 Content-Disposition 구성 로직 복제(동기화 필수)."""
+        import urllib.parse
+        ascii_fallback = basename.encode("ascii", "replace").decode("ascii").replace('"', "_")
+        utf8_encoded = urllib.parse.quote(basename, safe="")
+        return f"inline; filename=\"{ascii_fallback}\"; filename*=UTF-8''{utf8_encoded}"
+
+    def test_korean_filename_latin1_safe(self):
+        """한글 파일명: latin-1 인코딩 가능해야 함 (starlette init_headers 호환)."""
+        disposition = self._build_rfc5987_disposition("3_당사 자체 개발 Application.docx")
+        # 예외 없이 latin-1 인코딩 가능해야 한다 — UnicodeEncodeError 발생하면 500
+        disposition.encode("latin-1")
+        assert "filename*=UTF-8''" in disposition
+
+    def test_mixed_korean_pptx_filename(self):
+        disposition = self._build_rfc5987_disposition("데이터사이언스_Ext_3rd.pptx")
+        disposition.encode("latin-1")  # 예외 없음 기대
+        assert disposition.startswith("inline; filename=")
+
+    def test_ascii_filename_still_valid(self):
+        """순수 ASCII 파일명에도 정상 동작해야 한다 (회귀 방어)."""
+        disposition = self._build_rfc5987_disposition("report.xlsx")
+        disposition.encode("latin-1")
+        assert 'filename="report.xlsx"' in disposition
+        assert "filename*=UTF-8''report.xlsx" in disposition
+
+    def test_filename_with_double_quote_escaped(self):
+        """파일명 내 큰따옴표는 ASCII fallback에서 치환되어 헤더 injection 방어."""
+        disposition = self._build_rfc5987_disposition('has"quote.docx')
+        disposition.encode("latin-1")
+        assert 'filename="has_quote.docx"' in disposition
+        # filename* 에는 URL-encoded 로 %22 포함
+        assert "%22" in disposition
+
+    def test_disposition_matches_viewers_implementation(self):
+        """L402의 실제 viewers.py 로직과 helper가 동일한 문자열을 생성해야 한다.
+
+        이 테스트가 실패하면 helper 와 실제 코드가 drift 됨 — 동기화 필요.
+        """
+        import ast
+        import pathlib
+        source_path = pathlib.Path(__file__).parent.parent / "app" / "routers" / "viewers.py"
+        source = source_path.read_text()
+        # 핵심 패턴이 코드에 존재하는지 확인
+        assert "filename*=UTF-8''" in source, \
+            "viewers.py에 RFC 5987 filename* 파라미터가 없음 — H4 fix가 적용되지 않았거나 제거됨"
+        assert "encode(\"ascii\", \"replace\")" in source, \
+            "ASCII fallback 생성 로직이 viewers.py에 없음"

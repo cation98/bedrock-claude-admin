@@ -398,8 +398,15 @@ async def stream_file(
     media_type = MIME_MAP.get(ext, "application/octet-stream")
     basename = os.path.basename(file_path)
 
+    # P2-BUG4 H4: 한글 등 비-ASCII 파일명이 HTTP 헤더 latin-1 인코딩에 실패해
+    # OnlyOffice Word/PPTX 다운로드가 500으로 죽는 문제 해결.
+    # RFC 5987: 구형 클라이언트용 ASCII fallback(filename=) + UTF-8 인코딩(filename*=)
+    ascii_fallback = basename.encode("ascii", "replace").decode("ascii").replace('"', "_")
+    utf8_encoded = urllib.parse.quote(basename, safe="")
+    disposition = f"inline; filename=\"{ascii_fallback}\"; filename*=UTF-8''{utf8_encoded}"
+
     fwd_headers = {
-        "Content-Disposition": f'inline; filename="{basename}"',
+        "Content-Disposition": disposition,
         "Content-Security-Policy": "sandbox",
         "X-Content-Type-Options": "nosniff",
     }
