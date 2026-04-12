@@ -45,13 +45,18 @@ from app.models.token_quota import TokenQuotaTemplate, TokenQuotaAssignment  # n
 from app.models.prompt_audit import PromptAuditSummary, PromptAuditFlag, PromptAuditConversation  # noqa: E402, F401
 from app.models.proxy import AllowedDomain, ProxyAccessLog  # noqa: E402, F401
 from app.models.bot import UserBot  # noqa: E402, F401
-from app.models.app import DeployedApp, AppACL, AppView  # noqa: E402, F401
+from app.models.app import DeployedApp, AppACL, AppView, AppLike  # noqa: E402, F401
 from app.models.skill import SharedSkill, SkillInstall  # noqa: E402, F401
 from app.models.survey import SurveyTemplate, SurveyAssignment, SurveyResponse  # noqa: E402, F401
 from app.models.file_governance import GovernedFile  # noqa: E402, F401
 from app.models.file_audit import FileAuditLog  # noqa: E402, F401
 from app.models.infra_policy import InfraTemplate  # noqa: E402, F401
 from app.models.edit_session import EditSession  # noqa: E402, F401
+# Phase 0 신규 모델 — autogenerate에 포함되도록 반드시 import
+from app.models.announcement import Announcement  # noqa: E402, F401
+from app.models.guide import Guide  # noqa: E402, F401
+from app.models.moderation import ModerationViolation  # noqa: E402, F401
+from app.services.sqlcipher_service import SQLCipherKey  # noqa: E402, F401
 
 # The target metadata that Alembic uses for --autogenerate diffing.
 target_metadata = Base.metadata
