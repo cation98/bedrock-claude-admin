@@ -65,10 +65,17 @@ controller:
     # 스트리밍 응답 버퍼링 비활성화 → TTFT(Time To First Token) 최소화
     proxy-buffering: "off"
 
-    # Trusted header 스푸핑 방지 (design doc 필수 보안 요건)
-    # 외부 클라이언트가 X-SKO-Email 헤더를 위조하여 인증 우회 차단
-    # more_clear_input_headers: nginx-ingress-controller에서 지원
+    # [SECURITY CRITICAL] Trusted header 스푸핑 방지 — 전역 설정
+    # 외부 클라이언트가 X-SKO-Email / X-SKO-User-Id 헤더를 위조하여
+    # Open WebUI ENABLE_TRUSTED_HEADER_AUTH 우회하는 공격을 전역 차단.
+    # 이 설정은 모든 Ingress에 적용 (per-ingress annotation과 이중 방어).
     more-clear-input-headers: "X-SKO-Email X-SKO-User-Id"
+
+    # per-Ingress configuration-snippet annotation 허용
+    # ingress.yaml / openwebui/ingress.yaml의 more_clear_input_headers snippet 동작 필요.
+    # nginx-ingress v1.9.0+부터 기본 비활성화 → 명시적 허용 필수.
+    # 전역 more-clear-input-headers와 이중 방어 구조임.
+    allow-snippet-annotations: "true"
 
   # ──────────────────────────────────────────────────────────────────────────
   # HPA: min=2 (HA) / max=6 (WebSocket 트래픽 대응)
