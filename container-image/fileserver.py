@@ -1865,7 +1865,9 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
 
 <!-- 파일 탐색기 우클릭 메뉴 -->
 <div class="fe-context-menu" id="fe-context-menu">
-  <div class="ctx-item" onclick="ctxPreview()"><span class="ctx-icon">&#128065;</span> 미리보기</div>
+  <div class="ctx-item" id="ctxPreviewItem" onclick="ctxPreview()"><span class="ctx-icon">&#128065;</span><span id="ctxPreviewLabel">&nbsp;미리보기</span></div>
+  <div class="ctx-item" id="ctxEditItem" onclick="ctxEdit()"><span class="ctx-icon">&#128221;</span> 편집</div>
+  <div class="ctx-item" id="ctxCoEditItem" onclick="ctxCoEdit()"><span class="ctx-icon">&#128101;</span> 함께 편집</div>
   <div class="ctx-item" onclick="ctxOpen()"><span class="ctx-icon">&#128194;</span> 열기</div>
   <div class="ctx-item" onclick="ctxDownload()"><span class="ctx-icon">&#128190;</span> 다운로드</div>
   <div class="ctx-sep"></div>
@@ -2342,6 +2344,15 @@ function loadMyDatasets() {{
 function loadSharedDatasets() {{
   apiFetch('/files/datasets/shared').then(function(data) {{
     var datasets = Array.isArray(data) ? data : (data.datasets || []);
+    // 공유 데이터셋 룩업 맵: 파일 탐색기 rel path → {{mount_id, file_path}}
+    // 실제 pod 파일 경로는 team/{{owner_username(lower)}}/{{dataset_name}}/{{file_path}} 형식
+    feSharedDatasetMap = {{}};
+    datasets.forEach(function(ds) {{
+      if (!ds || ds.id == null) return;
+      var owner = (ds.owner_username || '').toLowerCase();
+      var relKey = 'team/' + owner + '/' + (ds.dataset_name || '') + '/' + (ds.file_path || '');
+      feSharedDatasetMap[relKey] = {{ mount_id: ds.id, file_path: ds.file_path || '' }};
+    }});
     var section = document.getElementById('sharedDatasetsSection');
     var list = document.getElementById('sharedDatasetsList');
     var count = document.getElementById('sharedDatasetsCount');
@@ -2901,6 +2912,7 @@ function dismissAnnouncement() {{
 // ── 파일 탐색기 (Tabulator) ──
 var feTable = null;
 var feCurrentPath = '';
+var feSharedDatasetMap = {{}};
 var feContextTarget = null;
 
 function getFileIcon(name, isDir) {{
@@ -3139,10 +3151,31 @@ function renameFileExplorer(filePath, oldName) {{
 // Context menu
 function showContextMenu(x,y) {{
   var menu=document.getElementById('fe-context-menu');
+  // 대상 파일 유형에 따라 "편집"/"함께 편집" 메뉴 표시 여부 갱신
+  var previewItem = document.getElementById('ctxPreviewItem');
+  var previewLabel = document.getElementById('ctxPreviewLabel');
+  var editItem = document.getElementById('ctxEditItem');
+  var coEditItem = document.getElementById('ctxCoEditItem');
+  var isOfficeFile = false, isShared = false;
+  if (feContextTarget && feContextTarget.type === 'file') {{
+    var ext = getFileExt(feContextTarget.name);
+    isOfficeFile = !!OFFICE_EXTENSIONS[ext];
+    if (isOfficeFile) isShared = !!getSharedMountInfo(feContextTarget.path);
+  }}
+  if (previewItem) previewItem.style.display = '';
+  if (previewLabel) previewLabel.textContent = isOfficeFile ? ' 열기 (보기 전용)' : ' 미리보기';
+  if (editItem) editItem.style.display = isOfficeFile ? '' : 'none';
+  if (coEditItem) coEditItem.style.display = (isOfficeFile && isShared) ? '' : 'none';
   menu.style.left=x+'px'; menu.style.top=y+'px'; menu.classList.add('visible');
   var rect=menu.getBoundingClientRect();
   if(rect.right>window.innerWidth) menu.style.left=(x-rect.width)+'px';
   if(rect.bottom>window.innerHeight) menu.style.top=(y-rect.height)+'px';
+}}
+
+// 파일의 rel path가 공유 데이터셋인지 확인 → {{mount_id, file_path}} 반환
+function getSharedMountInfo(relPath) {{
+  if (!relPath || relPath.indexOf('team/') !== 0) return null;
+  return feSharedDatasetMap[relPath] || null;
 }}
 function hideContextMenu() {{
   var menu=document.getElementById('fe-context-menu');
@@ -3167,6 +3200,25 @@ function ctxPreview() {{
   }} else {{
     alert('이 파일 형식은 미리보기를 지원하지 않습니다.');
   }}
+  hideContextMenu();
+}}
+
+function ctxEdit() {{
+  if(!feContextTarget || feContextTarget.type!=='file') {{ hideContextMenu(); return; }}
+  var ext = getFileExt(feContextTarget.name);
+  if(!OFFICE_EXTENSIONS[ext]) {{ hideContextMenu(); return; }}
+  var username = '{user_id}';
+  var url = '/api/v1/viewers/onlyoffice/edit/' + encodeURIComponent(username) + '/' + encodeURIComponent(feContextTarget.path);
+  window.open(url, '_blank');
+  hideContextMenu();
+}}
+
+function ctxCoEdit() {{
+  if(!feContextTarget || feContextTarget.type!=='file') {{ hideContextMenu(); return; }}
+  var info = getSharedMountInfo(feContextTarget.path);
+  if(!info) {{ hideContextMenu(); return; }}
+  var url = '/api/v1/viewers/onlyoffice/shared/' + encodeURIComponent(info.mount_id) + '/' + encodeURIComponent(info.file_path);
+  window.open(url, '_blank');
   hideContextMenu();
 }}
 
