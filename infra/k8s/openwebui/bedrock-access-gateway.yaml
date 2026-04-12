@@ -1,0 +1,175 @@
+# =============================================================================
+# Bedrock Access Gateway (BAG) — OpenAI 호환 AWS Bedrock 프록시
+#
+# 역할:
+#   Open WebUI Pipelines → BAG (8080) → AWS Bedrock (us-east-1)
+#   OpenAI 호환 API를 Bedrock Claude 모델 호출로 변환.
+#
+# IRSA: openwebui/bedrock-ag-sa → aws_iam_role.bedrock_ag_access
+#   terraform output bedrock_ag_role_arn 값을 아래 annotation에 주입.
+#
+# 이미지 준비:
+#   terraform output bedrock_ag_ecr_url
+#   → aws-samples/bedrock-access-gateway 빌드 후 위 URL에 push
+#   → 아래 image 필드에 ":latest" 대신 정확한 태그 사용 권장
+#
+# 배포 순서:
+#   1. terraform apply (IRSA role + ECR repo 생성)
+#   2. BAG 이미지 빌드 + ECR push
+#   3. kubectl apply -f infra/k8s/openwebui/namespace.yaml
+#   4. kubectl apply -f infra/k8s/openwebui/network-policy.yaml
+#   5. kubectl apply -f infra/k8s/openwebui/bedrock-access-gateway.yaml
+# =============================================================================
+
+# ----- ServiceAccount (IRSA 연결) -----
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bedrock-ag-sa
+  namespace: openwebui
+  annotations:
+    # terraform output bedrock_ag_role_arn 값으로 교체
+    eks.amazonaws.com/role-arn: "arn:aws:iam::680877507363:role/bedrock-claude-bedrock-ag-access"
+  labels:
+    app: bedrock-access-gateway
+
+---
+# ----- Secret: BAG 설정 (Bedrock API 키 불필요 — IRSA 사용) -----
+# BAG 자체는 API 키 없이 IRSA 자격증명으로 Bedrock 호출.
+# 선택적 설정만 여기에 보관.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bedrock-ag-config
+  namespace: openwebui
+data:
+  # Bedrock 호출 리전 (Claude 모델은 us-east-1)
+  BEDROCK_REGION: "us-east-1"
+  # Cross-region inference profile 사용 (us.anthropic.claude-* 모델)
+  ENABLE_CROSS_REGION_INFERENCE: "true"
+  # 로그 레벨
+  LOG_LEVEL: "INFO"
+  # 기본 모델 (Open WebUI에서 별도 지정하지 않는 경우 fallback)
+  DEFAULT_MODEL: "us.anthropic.claude-sonnet-4-6"
+
+---
+# ----- Deployment -----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bedrock-access-gateway
+  namespace: openwebui
+  labels:
+    app: bedrock-access-gateway
+    version: "phase0"
+spec:
+  # Phase 1: 2 replica (HPA로 최대 8까지 확장)
+  replicas: 2
+  selector:
+    matchLabels:
+      app: bedrock-access-gateway
+  template:
+    metadata:
+      labels:
+        app: bedrock-access-gateway
+    spec:
+      serviceAccountName: bedrock-ag-sa
+
+      # worker nodegroup (system/ingress 노드 미사용)
+      # BAG는 플랫폼 서비스 → main worker nodegroup에 배치
+      nodeSelector:
+        role: claude-terminal  # main worker nodegroup label
+
+      containers:
+        - name: bedrock-access-gateway
+          # terraform output bedrock_ag_ecr_url 값 사용
+          # 빌드 후: <ECR_URL>:latest 또는 :git-<sha>
+          image: 680877507363.dkr.ecr.ap-northeast-2.amazonaws.com/bedrock-claude/bedrock-access-gateway:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+              name: http
+
+          envFrom:
+            - configMapRef:
+                name: bedrock-ag-config
+
+          env:
+            # AWS SDK는 IRSA WebIdentity Token을 자동 사용 (별도 키 불필요)
+            - name: AWS_REGION
+              value: "ap-northeast-2"  # 기본 리전 (KR)
+            - name: AWS_DEFAULT_REGION
+              value: "ap-northeast-2"
+
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2"
+              memory: "2Gi"
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+
+      # IRSA를 위한 토큰 프로젝션 (EKS가 자동 마운트)
+      # aws-sdk-v3는 AWS_WEB_IDENTITY_TOKEN_FILE env를 자동 탐색
+      automountServiceAccountToken: true
+
+---
+# ----- Service -----
+# 클러스터 내부 전용 (Pipelines → BAG, Open WebUI → BAG)
+# 외부 노출 없음 (Bedrock API 호출은 내부에서만)
+apiVersion: v1
+kind: Service
+metadata:
+  name: bedrock-access-gateway
+  namespace: openwebui
+  labels:
+    app: bedrock-access-gateway
+spec:
+  selector:
+    app: bedrock-access-gateway
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+  type: ClusterIP
+
+---
+# ----- HPA: Bedrock AG 수평 자동 확장 -----
+# Phase 2: 2000명 규모에서 최대 8 replicas
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: bedrock-ag-hpa
+  namespace: openwebui
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: bedrock-access-gateway
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60  # 60% CPU → 스케일 아웃 (LLM 프록시는 CPU 부하가 낮음)

@@ -140,3 +140,86 @@ resource "aws_iam_role_policy" "bedrock_invoke" {
     ]
   })
 }
+
+# =============================================================================
+# IAM Role: Bedrock Access Gateway IRSA (openwebui 네임스페이스)
+#
+# Bedrock Access Gateway(BAG)가 사용하는 IRSA.
+# BAG는 OpenAI 호환 API 요청을 AWS Bedrock으로 프록시하므로
+# InvokeModel 권한이 필요.
+#
+# 연결 대상 ServiceAccount: openwebui/bedrock-ag-sa
+# (claude-sessions:claude-terminal-sa 와 별개 — 네임스페이스 격리)
+#
+# 주의: TANGO S3/Athena 권한은 부여하지 않음
+#   BAG는 LLM 호출 프록시 역할만, 데이터 접근은 Console Pod 전용
+# =============================================================================
+
+resource "aws_iam_role" "bedrock_ag_access" {
+  name = "${var.project_name}-bedrock-ag-access"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Federated = aws_iam_openid_connect_provider.eks.arn
+      }
+      Action = "sts:AssumeRoleWithWebIdentity"
+      Condition = {
+        StringEquals = {
+          # openwebui 네임스페이스의 bedrock-ag-sa ServiceAccount 전용
+          "${replace(aws_eks_cluster.main.identity[0].oidc[0].issuer, "https://", "")}:sub" = "system:serviceaccount:openwebui:bedrock-ag-sa"
+          "${replace(aws_eks_cluster.main.identity[0].oidc[0].issuer, "https://", "")}:aud" = "sts.amazonaws.com"
+        }
+      }
+    }]
+  })
+
+  tags = {
+    Name    = "${var.project_name}-bedrock-ag-access"
+    Owner   = "N1102359"
+    Env     = var.environment
+    Service = "sko-claude-ai-agent"
+  }
+}
+
+resource "aws_iam_role_policy" "bedrock_ag_invoke" {
+  name = "${var.project_name}-bedrock-ag-invoke"
+  role = aws_iam_role.bedrock_ag_access.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AllowBedrockInvoke"
+        Effect = "Allow"
+        Action = [
+          "bedrock:InvokeModel",
+          "bedrock:InvokeModelWithResponseStream"
+        ]
+        Resource = [
+          "arn:aws:bedrock:*::foundation-model/anthropic.claude-*",
+          "arn:aws:bedrock:*:680877507363:inference-profile/us.anthropic.claude-*",
+          "arn:aws:bedrock:*:680877507363:inference-profile/global.anthropic.claude-*",
+          "arn:aws:bedrock:*::inference-profile/us.anthropic.claude-*",
+          "arn:aws:bedrock:*::inference-profile/global.anthropic.claude-*"
+        ]
+      },
+      {
+        Sid    = "AllowModelDiscovery"
+        Effect = "Allow"
+        Action = [
+          "bedrock:ListFoundationModels",
+          "bedrock:GetFoundationModel"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+output "bedrock_ag_role_arn" {
+  description = "Bedrock AG IRSA Role ARN (K8s ServiceAccount openwebui/bedrock-ag-sa에 연결)"
+  value       = aws_iam_role.bedrock_ag_access.arn
+}

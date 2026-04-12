@@ -1,0 +1,409 @@
+# =============================================================================
+# Open WebUI Pipelines — 확장 포인트 사이드카 (Phase 0)
+#
+# 역할:
+#   Open WebUI → Pipelines:9099 → Bedrock AG:8080 → AWS Bedrock
+#
+# 포함 Pipeline 스크립트 (ConfigMap으로 마운트):
+#   1. user_injection_pipeline.py  — JWT user ID → body.user 필드 주입
+#   2. usage_emit_pipeline.py      — response 후 Redis Stream push
+#   3. budget_gate_pipeline.py     — 요청 전 monthly budget 잔액 확인
+#
+# 환경변수 설정 (Secret: pipelines-secret):
+#   REDIS_URL             — ElastiCache Redis primary endpoint
+#                           (terraform output redis_connection_url)
+#   PLATFORM_DB_URL       — Platform RDS (budget 잔액 조회용)
+#   PIPELINES_API_KEY     — Open WebUI ↔ Pipelines 인증 키 (랜덤 UUID)
+#
+# 배포 전 필수:
+#   kubectl create secret generic pipelines-secret \
+#     --namespace openwebui \
+#     --from-literal=REDIS_URL=redis://<ENDPOINT>:6379/0 \
+#     --from-literal=PLATFORM_DB_URL=postgresql://<USER>:<PW>@<HOST>/platform \
+#     --from-literal=PIPELINES_API_KEY=<uuid>
+# =============================================================================
+
+# ----- ConfigMap: Pipeline 스크립트 -----
+# Open WebUI Pipelines 컨테이너가 /app/pipelines/ 에서 스크립트를 자동 로드.
+# 변경 시 ConfigMap 업데이트 후 Deployment rollout restart.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pipelines-scripts
+  namespace: openwebui
+  labels:
+    app: openwebui-pipelines
+data:
+  # ──────────────────────────────────────────────────────────────────────────
+  # 1. User ID Injection Pipeline (우선순위: 10 — 가장 먼저 실행)
+  #
+  # JWT trusted header auth에서 Open WebUI가 수립한 사용자 정보를
+  # OpenAI 호환 request body의 `user` 필드로 주입.
+  #
+  # 흐름:
+  #   ingress-nginx X-SKO-User-Id 헤더 주입
+  #   → Open WebUI trusted header auth (WEBUI_AUTH_TRUSTED_EMAIL_HEADER)
+  #   → Open WebUI 사용자 컨텍스트 (user.id = Platform DB UUID)
+  #   → 이 Pipeline: body["user"] = user["id"]
+  #   → Bedrock AG: body["user"] 추출 → usage_events.user_id 기록
+  # ──────────────────────────────────────────────────────────────────────────
+  user_injection_pipeline.py: |
+    """
+    User ID Injection Pipeline
+    Open WebUI 사용자 컨텍스트의 Platform DB UUID를 OpenAI body.user에 주입.
+    Bedrock AG가 이 값을 usage_events.user_id로 기록.
+    """
+    from typing import Optional
+    from pydantic import BaseModel
+
+
+    class Pipeline:
+        class Valves(BaseModel):
+            pass
+
+        def __init__(self):
+            self.type = "filter"
+            self.name = "User ID Injection"
+            self.priority = 10  # 낮을수록 먼저 실행 (budget_gate=5 → user_inject=10 → usage_emit=20)
+            self.valves = self.Valves()
+
+        async def on_startup(self):
+            print("[user_injection] Pipeline ready")
+
+        async def inlet(self, body: dict, user: Optional[dict] = None) -> dict:
+            """
+            Request inlet: Open WebUI user context → body.user 필드 주입
+
+            user 파라미터 구조:
+              {
+                "id": "<openwebui_local_uuid>",    # Open WebUI 내부 ID
+                "external_id": "<platform_uuid>",  # Platform DB users.id (우선)
+                "email": "...",
+                "name": "..."
+              }
+
+            주입 우선순위: external_id(Platform UUID) > id(Open WebUI UUID)
+            Bedrock AG → usage_events.user_id는 Platform UUID를 써야 함.
+            """
+            if user:
+                # Platform DB UUID 우선, 없으면 Open WebUI 로컬 UUID
+                user_id = user.get("external_id") or user.get("id", "")
+                if user_id:
+                    body["user"] = user_id
+                    print(f"[user_injection] Injected user_id={user_id[:8]}...")
+            return body
+
+        async def outlet(self, body: dict, user: Optional[dict] = None) -> dict:
+            return body
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # 2. Budget Gate Pipeline (우선순위: 5 — user_inject보다 먼저)
+  #
+  # 요청 전 monthly budget 잔액 확인. 초과 시 429 반환.
+  # Phase 0: Redis 기반 단순 카운터 (Phase 2에서 RDS 기반 reservation으로 고도화)
+  #
+  # Redis 키 패턴:
+  #   budget:<user_id>:month:<YYYY-MM>  → monthly token count (INCR)
+  #   budget:<user_id>:limit            → monthly token limit (GET)
+  # ──────────────────────────────────────────────────────────────────────────
+  budget_gate_pipeline.py: |
+    """
+    Budget Gate Pipeline
+    월별 사용량 한도 사전 확인 (Phase 0 단순화 버전).
+    한도 미설정 사용자: 기본값(3,000,000 tokens/월 ≈ $3/월) 적용.
+    """
+    import os
+    import time
+    from datetime import datetime
+    from typing import Optional
+
+    import redis.asyncio as aioredis
+    from fastapi import HTTPException
+    from pydantic import BaseModel
+
+
+    class Pipeline:
+        class Valves(BaseModel):
+            # 기본 월 한도 (tokens). 관리자가 Redis에서 사용자별 override 가능.
+            default_monthly_limit: int = 3_000_000
+            # max_tokens 미지정 시 강제 기본값 (Claude Sonnet 4.6 최대)
+            default_max_tokens: int = 8192
+
+        def __init__(self):
+            self.type = "filter"
+            self.name = "Budget Gate"
+            self.priority = 5
+            self.valves = self.Valves()
+            self._redis: Optional[aioredis.Redis] = None
+
+        async def on_startup(self):
+            redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+            self._redis = aioredis.from_url(redis_url, decode_responses=True)
+            print(f"[budget_gate] Connected to Redis")
+
+        async def on_shutdown(self):
+            if self._redis:
+                await self._redis.aclose()
+
+        def _month_key(self, user_id: str) -> str:
+            month = datetime.utcnow().strftime("%Y-%m")
+            return f"budget:{user_id}:month:{month}"
+
+        def _limit_key(self, user_id: str) -> str:
+            return f"budget:{user_id}:limit"
+
+        async def inlet(self, body: dict, user: Optional[dict] = None) -> dict:
+            """
+            요청 전 잔액 확인 + max_tokens 기본값 강제.
+            잔액 부족 시 HTTP 429 (OpenAI 형식).
+            """
+            # max_tokens 미지정 시 강제 설정 (무제한 호출 방지)
+            if "max_tokens" not in body:
+                body["max_tokens"] = self.valves.default_max_tokens
+
+            user_id = body.get("user") or (user.get("id") if user else None)
+            if not user_id or not self._redis:
+                return body  # Redis 미연결 시 pass-through (fail-open)
+
+            try:
+                # 월 한도 조회 (사용자별 override → 기본값)
+                limit_raw = await self._redis.get(self._limit_key(user_id))
+                monthly_limit = int(limit_raw) if limit_raw else self.valves.default_monthly_limit
+
+                # 현재 월 누적 사용량 조회
+                used_raw = await self._redis.get(self._month_key(user_id))
+                monthly_used = int(used_raw) if used_raw else 0
+
+                if monthly_used >= monthly_limit:
+                    raise HTTPException(
+                        status_code=429,
+                        detail={
+                            "error": {
+                                "message": f"월 사용 한도 초과 ({monthly_used:,}/{monthly_limit:,} tokens). 관리자에게 문의하세요.",
+                                "type": "budget_exceeded",
+                                "code": "monthly_limit_exceeded",
+                            }
+                        },
+                    )
+            except HTTPException:
+                raise
+            except Exception as e:
+                # Redis 장애 시 fail-open (Phase 1 허용 정책)
+                print(f"[budget_gate] Redis error, fail-open: {e}")
+
+            return body
+
+        async def outlet(self, body: dict, user: Optional[dict] = None) -> dict:
+            return body
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # 3. Usage Event Emitter Pipeline (우선순위: 20 — 마지막에 실행)
+  #
+  # Bedrock AG 응답 완료 후 usage_events를 Redis Stream에 push.
+  # usage-worker Deployment(T8)가 consumer group으로 배치 INSERT.
+  #
+  # Redis Stream 키: stream:usage_events
+  # 필드: user_id, model, input_tokens, output_tokens, source, ts
+  # ──────────────────────────────────────────────────────────────────────────
+  usage_emit_pipeline.py: |
+    """
+    Usage Event Emitter Pipeline
+    LLM 응답 완료 후 Platform RDS usage_events 기록을 위해
+    Redis Stream에 비동기 push.
+    p99 latency 영향 최소화: XADD는 O(log N) — request path 지연 없음.
+    """
+    import os
+    import time
+    from typing import Optional
+
+    import redis.asyncio as aioredis
+    from pydantic import BaseModel
+
+
+    class Pipeline:
+        class Valves(BaseModel):
+            stream_key: str = "stream:usage_events"
+            stream_maxlen: int = 10_000  # 근사 trim (메모리 상한)
+
+        def __init__(self):
+            self.type = "filter"
+            self.name = "Usage Event Emitter"
+            self.priority = 20
+            self.valves = self.Valves()
+            self._redis: Optional[aioredis.Redis] = None
+
+        async def on_startup(self):
+            redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+            self._redis = aioredis.from_url(redis_url, decode_responses=True)
+            print(f"[usage_emit] Connected to Redis, stream={self.valves.stream_key}")
+
+        async def on_shutdown(self):
+            if self._redis:
+                await self._redis.aclose()
+
+        async def inlet(self, body: dict, user: Optional[dict] = None) -> dict:
+            return body
+
+        async def outlet(self, body: dict, user: Optional[dict] = None) -> dict:
+            """
+            응답 완료 후 usage_events Stream push.
+            실패해도 응답 자체는 반환 (fail-open: usage 누락은 허용, 서비스 차단은 불가).
+            """
+            if not self._redis:
+                return body
+
+            try:
+                usage = body.get("usage", {})
+                input_tokens = usage.get("prompt_tokens", 0)
+                output_tokens = usage.get("completion_tokens", 0)
+
+                if input_tokens == 0 and output_tokens == 0:
+                    return body  # 스트리밍 중간 chunk는 skip (완료 chunk만 처리)
+
+                user_id = body.get("user", "")
+                if not user_id and user:
+                    user_id = user.get("external_id") or user.get("id", "")
+
+                event = {
+                    "user_id": user_id,
+                    "source": "webchat",
+                    "model": body.get("model", ""),
+                    "input_tokens": str(input_tokens),
+                    "output_tokens": str(output_tokens),
+                    # cost_usd는 usage-worker에서 모델별 단가 기준으로 계산
+                    "ts": str(int(time.time())),
+                }
+
+                await self._redis.xadd(
+                    self.valves.stream_key,
+                    event,
+                    maxlen=self.valves.stream_maxlen,
+                    approximate=True,
+                )
+                print(f"[usage_emit] Pushed: user={user_id[:8] if user_id else '?'}... "
+                      f"in={input_tokens} out={output_tokens}")
+            except Exception as e:
+                print(f"[usage_emit] Redis push failed (fail-open): {e}")
+
+            return body
+
+---
+# ----- Deployment -----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openwebui-pipelines
+  namespace: openwebui
+  labels:
+    app: openwebui-pipelines
+    version: "phase0"
+spec:
+  replicas: 2  # stateless, 수평 확장 가능
+  selector:
+    matchLabels:
+      app: openwebui-pipelines
+  template:
+    metadata:
+      labels:
+        app: openwebui-pipelines
+    spec:
+      nodeSelector:
+        role: claude-terminal  # main worker nodegroup
+
+      containers:
+        - name: pipelines
+          # 공식 Open WebUI Pipelines 이미지
+          # 버전 pin 권장: ghcr.io/open-webui/pipelines:v0.x.y
+          image: ghcr.io/open-webui/pipelines:main
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 9099
+              protocol: TCP
+              name: http
+
+          env:
+            # Pipelines 스크립트 디렉토리 (ConfigMap 마운트 위치와 동일)
+            - name: PIPELINES_DIR
+              value: "/app/pipelines"
+
+            # Pipelines → Bedrock AG 라우팅
+            # Open WebUI의 OPENAI_API_BASE_URL이 Pipelines를 가리키고,
+            # Pipelines는 다시 BAG를 가리킴
+            - name: OPENAI_API_BASE_URL
+              value: "http://bedrock-access-gateway:8080/api/v1"
+
+            # Open WebUI ↔ Pipelines 인증 키 (Secret에서 주입)
+            - name: PIPELINES_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: pipelines-secret
+                  key: PIPELINES_API_KEY
+
+            # Redis URL (budget gate + usage emit용)
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: pipelines-secret
+                  key: REDIS_URL
+
+            # Platform DB URL (Phase 2 budget reservation 고도화용, Phase 0 optional)
+            - name: PLATFORM_DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: pipelines-secret
+                  key: PLATFORM_DB_URL
+                  optional: true
+
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+
+          volumeMounts:
+            - name: pipeline-scripts
+              mountPath: /app/pipelines
+              readOnly: true
+
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 9099
+            initialDelaySeconds: 20
+            periodSeconds: 30
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 9099
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 3
+
+      volumes:
+        - name: pipeline-scripts
+          configMap:
+            name: pipelines-scripts
+
+---
+# ----- Service -----
+# Pipelines 서비스 — Open WebUI에서만 접근 (ClusterIP)
+apiVersion: v1
+kind: Service
+metadata:
+  name: openwebui-pipelines
+  namespace: openwebui
+  labels:
+    app: openwebui-pipelines
+spec:
+  selector:
+    app: openwebui-pipelines
+  ports:
+    - name: http
+      port: 9099
+      targetPort: 9099
+      protocol: TCP
+  type: ClusterIP
