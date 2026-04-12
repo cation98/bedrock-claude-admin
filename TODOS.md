@@ -202,3 +202,84 @@ infra/k8s/platform/
 
 DESIGN.md                    ← 디자인 시스템 (Geist+Pretendard)
 ```
+
+---
+
+## Open WebUI 통합 허브 확장 — 엔지니어링 리뷰 산출 TODOs (2026-04-12)
+
+> 설계 문서: `~/.gstack/projects/cation98-bedrock-ai-agent/cation98-main-design-20260412-133106.md`
+> 테스트 플랜: `~/.gstack/projects/cation98-bedrock-ai-agent/cation98-main-eng-review-test-plan-20260412-143159.md`
+
+### 🔴 Phase 0 Blockers (Phase 1 착수 전 반드시 해결)
+
+#### #17 — DocSpace MCP ↔ Document Server 호환성 PoC
+- **무엇을**: `ONLYOFFICE/docspace-mcp` 서버를 기존 Document Server Community Edition 엔드포인트(claude-sessions ns)에 붙여 동작 여부 검증.
+- **왜**: 설계 전제 "OnlyOffice 재사용"의 성립 여부 결정. 불호환이면 DocSpace 전환 또는 Phase 1 스코프에서 OnlyOffice 통합 제거.
+- **어떻게**: 별도 테스트 네임스페이스에 DocSpace MCP 배포 → 기존 Document Server JWT로 인증 시도 → `get_folder_content`, `upload_file` 기본 tool 호출 → 결과 문서.
+- **Depends on**: 없음
+- **Pros**: 설계 전제 검증. 리스크 제거.
+- **Cons**: 1일 작업.
+- **Context**: DocSpace MCP는 DocSpace 제품군 전용으로 설계됨. Document Server는 편집 엔진만 제공하는 다른 제품. T1-T9 편집 기능은 Document Server를 직접 사용하므로 DocSpace 전환 시 재작업 가능성.
+
+#### #18 — Redis Stream + usage-worker 설계·배포
+- **무엇을**: ElastiCache Redis에 `stream:usage_events` Stream 생성, `usage-worker` Python Deployment 신설(consumer group).
+- **왜**: 사용량 INSERT 동기 실행이 2,000명 규모 병목. Request path에서 분리.
+- **어떻게**: (1) Terraform으로 ElastiCache Redis 배포 (TODOS #5 해결 과정에서) (2) `usage-worker/` 디렉토리 신설(FastAPI/Celery 아닌 순수 Python consumer) (3) 배치 10건 또는 1초 단위 RDS INSERT.
+- **Depends on**: TODOS #5 (EKS/ElastiCache), #11 (Alembic)
+- **Pros**: p99 latency 1ms로 감소. RDS 부하 분산.
+- **Cons**: Worker 장애 시 Stream 적체. PVC WAL로 완화.
+
+#### #20 — Console Pod AWS SDK → HTTP proxy 마이그레이션
+- **무엇을**: User Pod의 `ANTHROPIC_BASE_URL`을 Bedrock AG 내부 endpoint로 고정. AWS SDK 직접 호출 경로 차단(NetworkPolicy egress AWS Bedrock 차단).
+- **왜**: 사용량 추적 단일화. User attribution을 JWT 기반으로 통일.
+- **어떻게**: (1) Bedrock AG에 Anthropic 호환 엔드포인트 추가(모델 ID 매핑) (2) container-image entrypoint.sh에 환경변수 설정 (3) NetworkPolicy `egress` 규칙 추가.
+- **Depends on**: Bedrock AG 배포(Phase 0 내 선행)
+- **Pros**: usage_events 일관성 보장. Console 사용량 가시성 확보.
+- **Cons**: Claude Code CLI가 HTTP proxy를 정상 인식하는지 사전 검증 필요.
+
+#### #24 — CLAUDE.md 시스템 노드 제약 수정
+- **무엇을**: `system-node-large` nodegroup max 3 → max 6. 또는 ingress-nginx를 별도 `ingress-workers` nodegroup으로 분리.
+- **왜**: Open WebUI WebSocket 트래픽(500 concurrent long-lived)이 현재 제약(max 3)에서 수용 불가.
+- **어떻게**: (1) CLAUDE.md Infrastructure Design Constraints 섹션 수정 (2) Terraform nodegroup 스펙 변경 (3) ingress-nginx anti-affinity 설정 재검토.
+- **Depends on**: 없음
+- **Pros**: 용량 절벽 해결.
+- **Cons**: 비용 증가(노드 추가). 월 ~$150 추정.
+
+### 🟡 Phase 1 작업
+
+#### #19 — JWT refresh 401 redirect 페이지
+- **무엇을**: `auth-gateway/app/static/auth-expired.html` 신설 + `chat.skons.net/auth/expired` 라우트 매핑.
+- **왜**: Open WebUI 코어 수정 없이 브라우저 레벨 refresh 구현.
+- **어떻게**: Open WebUI 401 응답 시 nginx error_page 지시어로 정적 HTML 서빙 → JS가 `portal.html?refresh=1` 리디렉트 → Hub가 auth-gateway refresh 호출 → 새 JWT 쿠키 세팅 → 원래 경로 복귀.
+- **Depends on**: #17, #18, #24 완료
+- **Pros**: Open WebUI 업스트림 영향 zero.
+- **Cons**: 사용자 경험상 짧은 리디렉트 노출.
+
+#### #23 — Parallel UIs 사용률 instrumentation
+- **무엇을**: user_id × source(webchat|console) 주간/월간 활성 사용자 리포트 Admin Dashboard 페이지.
+- **왜**: 설계의 parallel UIs exit criteria 평가 데이터 확보. 분기별 review용.
+- **어떻게**: `usage_events` 집계 쿼리 + admin-dashboard `/analytics/ui-split` 페이지.
+- **Depends on**: #18 완료
+- **Pros**: 데이터 기반 console 폐기 결정 가능.
+- **Cons**: 3개월 이상 관측 필요.
+
+### 🟢 Phase 2 작업
+
+#### #21 — Open WebUI 데이터 export 스크립트
+- **무엇을**: `/ops/export-{chats,skills,usage,audit}.py` 스크립트 작성.
+- **왜**: Open WebUI 벤더 락인 완화. 향후 LibreChat·Cherry Studio 등 마이그레이션 옵션 확보.
+- **어떻게**: Postgres/RDS SELECT → JSONL/CSV/Parquet export. 개인 요청 시 90일 이내 대화 추출.
+- **Depends on**: Phase 1 안정 운영 30일
+- **Pros**: 조달 리스크 완화. ISMS-P 데이터 권리 대응.
+
+#### #22 — Skills governance 스키마 및 승인 워크플로
+- **무엇을**: `skills` 테이블 `approval_status`, `approved_by`, `version`, `skills_history` 테이블 추가. Admin Dashboard 스킬 승인 UI.
+- **왜**: PIPA·ISMS-P 요구사항. SoD(직무분리) 확보.
+- **어떻게**: Alembic migration + Admin UI 페이지 + 승인/반려 이메일 알림.
+- **Depends on**: #11 Alembic 정식화, Phase 1 완료
+- **Pros**: 컴플라이언스 충족.
+
+### Phase Gate 요약
+- Phase 0 Blockers: #5, #11, #17, #18, #20, #24 (총 6건)
+- Phase 1 보완: #19, #23
+- Phase 2 확장: #21, #22
