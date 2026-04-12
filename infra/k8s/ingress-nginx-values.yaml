@@ -103,15 +103,29 @@ controller:
 
   # ──────────────────────────────────────────────────────────────────────────
   # 서비스: LoadBalancer (AWS NLB)
+  # ⚠️ 기존 배포(revision 2)에서 가져온 SSL 인증서 설정 유지 필수.
+  #    이 설정 없이 helm upgrade 시 HTTPS 중단됨.
   # ──────────────────────────────────────────────────────────────────────────
   service:
     type: LoadBalancer
+    # TLS 오프로드: NLB → 컨트롤러로 HTTP 포워딩 (ssl-passthrough 아님)
+    targetPorts:
+      https: http
     annotations:
       # AWS NLB 사용 (ALB와 달리 L4, WebSocket에 더 적합)
       service.beta.kubernetes.io/aws-load-balancer-type: nlb
+      # 인터넷 접근 (internet-facing NLB) — 생략 시 internal로 변경됨
+      service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+      # L4 TCP 프로토콜 (HTTP/2 + WebSocket 모두 처리)
+      service.beta.kubernetes.io/aws-load-balancer-backend-protocol: tcp
+      # ACM SSL 인증서 — 삭제 시 HTTPS 중단. arn 변경 금지.
+      service.beta.kubernetes.io/aws-load-balancer-ssl-cert: arn:aws:acm:ap-northeast-2:680877507363:certificate/b6a872e7-8f6a-43c5-9428-ea2687d4796f
+      # 443 포트만 SSL 오프로드 (80은 HTTP 그대로)
+      service.beta.kubernetes.io/aws-load-balancer-ssl-ports: "443"
+      # AZ 간 교차 분산 (NLB 기본 OFF → 명시적 활성화)
       service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
       # 필수 태그 (AWS 리소스 태그 정책)
-      service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags: >
+      service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags: >-
         Owner=N1102359,Service=bedrock-claude-platform,Env=prod
 
   # ──────────────────────────────────────────────────────────────────────────
