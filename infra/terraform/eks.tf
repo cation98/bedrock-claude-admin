@@ -186,7 +186,7 @@ resource "aws_eks_node_group" "main" {
   cluster_name    = aws_eks_cluster.main.name
   node_group_name = "${var.project_name}-nodes"
   node_role_arn   = aws_iam_role.eks_nodes.arn
-  subnet_ids      = aws_subnet.eks_private[*].id  # 신규 생성한 EKS 전용 private 서브넷
+  subnet_ids      = aws_subnet.eks_private[*].id # 신규 생성한 EKS 전용 private 서브넷
 
   instance_types = var.eks_node_instance_types
 
@@ -210,9 +210,121 @@ resource "aws_eks_node_group" "main" {
   tags = {
     "k8s.io/cluster-autoscaler/enabled"                 = "true"
     "k8s.io/cluster-autoscaler/${var.project_name}-eks" = "owned"
-    Owner   = "N1102359"
-    Env     = var.environment
-    Service = "sko-claude-ai-agent"
+    Owner                                               = "N1102359"
+    Env                                                 = var.environment
+    Service                                             = "sko-claude-ai-agent"
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.eks_worker_node_policy,
+    aws_iam_role_policy_attachment.eks_cni_policy,
+    aws_iam_role_policy_attachment.eks_container_registry,
+  ]
+}
+
+# ----- System Node Group (t3.large) — auth-gateway 전용 pair -----
+# CLAUDE.md 설계 제약: auth-gateway 전용 2노드 pair (hard anti-affinity)
+# - auth-gateway replica 1, 2를 각각 별개 노드에 배치 (동일 노드 불가)
+# - ingress-nginx는 별도 ingress-workers 그룹으로 분리됨 (Phase 0 신설)
+#
+# 노드 taint: dedicated=system:NoSchedule
+#   → auth-gateway Pod만 toleration으로 허용, 다른 Pod는 이 노드에 스케줄 불가
+# 이 taint/toleration 설정은 infra/k8s/ 매니페스트(k8s팀 T6)와 대응됨
+
+resource "aws_eks_node_group" "system" {
+  cluster_name    = aws_eks_cluster.main.name
+  node_group_name = "${var.project_name}-system-nodes"
+  node_role_arn   = aws_iam_role.eks_nodes.arn
+  subnet_ids      = aws_subnet.eks_private[*].id
+
+  instance_types = var.eks_system_node_instance_types
+
+  scaling_config {
+    desired_size = var.eks_system_node_desired_size
+    min_size     = var.eks_system_node_min_size
+    max_size     = var.eks_system_node_max_size
+  }
+
+  update_config {
+    max_unavailable = 1
+  }
+
+  # K8s 레이블: 이 노드에 스케줄될 Pod의 nodeSelector와 대응
+  labels = {
+    role = "system"
+  }
+
+  # taint: auth-gateway Pod 외 다른 워크로드 차단
+  # K8s 매니페스트에서 toleration으로 명시한 Pod만 이 노드에 배치 가능
+  taint {
+    key    = "dedicated"
+    value  = "system"
+    effect = "NO_SCHEDULE"
+  }
+
+  # Cluster Autoscaler 자동 탐색 태그
+  tags = {
+    "k8s.io/cluster-autoscaler/enabled"                 = "true"
+    "k8s.io/cluster-autoscaler/${var.project_name}-eks" = "owned"
+    Name                                                = "${var.project_name}-system-nodes"
+    Owner                                               = "N1102359"
+    Env                                                 = var.environment
+    Service                                             = "sko-claude-ai-agent"
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.eks_worker_node_policy,
+    aws_iam_role_policy_attachment.eks_cni_policy,
+    aws_iam_role_policy_attachment.eks_container_registry,
+  ]
+}
+
+# ----- Ingress Node Group (t3.large) — ingress-nginx 전용 -----
+# Phase 0 신설: ingress-nginx를 system 노드에서 분리하여 전용 그룹으로 이동
+# 이유: Open WebUI WebSocket 스트리밍(2000명 규모) 트래픽 대응을 위해
+#       ingress 레이어를 system 노드와 독립적으로 수평 확장 필요
+#
+# min=2: HA 필수 (ingress 장애 시 전체 트래픽 차단)
+# max=6: 500 concurrent 세션 × WebSocket keepalive 고려한 상한
+#
+# 노드 taint: dedicated=ingress:NoSchedule
+#   → ingress-nginx Pod만 이 노드에 스케줄 가능
+
+resource "aws_eks_node_group" "ingress" {
+  cluster_name    = aws_eks_cluster.main.name
+  node_group_name = "${var.project_name}-ingress-nodes"
+  node_role_arn   = aws_iam_role.eks_nodes.arn
+  subnet_ids      = aws_subnet.eks_private[*].id
+
+  instance_types = var.eks_ingress_node_instance_types
+
+  scaling_config {
+    desired_size = var.eks_ingress_node_desired_size
+    min_size     = var.eks_ingress_node_min_size
+    max_size     = var.eks_ingress_node_max_size
+  }
+
+  update_config {
+    max_unavailable = 1
+  }
+
+  labels = {
+    role = "ingress"
+  }
+
+  taint {
+    key    = "dedicated"
+    value  = "ingress"
+    effect = "NO_SCHEDULE"
+  }
+
+  tags = {
+    "k8s.io/cluster-autoscaler/enabled"                 = "true"
+    "k8s.io/cluster-autoscaler/${var.project_name}-eks" = "owned"
+    Name                                                = "${var.project_name}-ingress-nodes"
+    Owner                                               = "N1102359"
+    Env                                                 = var.environment
+    Service                                             = "sko-claude-ai-agent"
   }
 
   depends_on = [
@@ -225,6 +337,7 @@ resource "aws_eks_node_group" "main" {
 # ----- 1:1 전용 Node Group (t3.medium) -----
 # 사용자별 노드 1대 전용 할당 — Pod 간 리소스 간섭 원천 제거
 # Pod Anti-Affinity(k8s_service.py)와 함께 1-node-1-pod 모델 구현
+# Phase 2 (2000명): 개발자 200명 × 50% 동시 접속 = 100 max
 
 resource "aws_eks_node_group" "dedicated" {
   cluster_name    = aws_eks_cluster.main.name
@@ -253,9 +366,9 @@ resource "aws_eks_node_group" "dedicated" {
   tags = {
     "k8s.io/cluster-autoscaler/enabled"                 = "true"
     "k8s.io/cluster-autoscaler/${var.project_name}-eks" = "owned"
-    Owner   = "N1102359"
-    Env     = var.environment
-    Service = "sko-claude-ai-agent"
+    Owner                                               = "N1102359"
+    Env                                                 = var.environment
+    Service                                             = "sko-claude-ai-agent"
   }
 
   depends_on = [
