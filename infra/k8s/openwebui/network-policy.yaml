@@ -108,19 +108,11 @@ spec:
         - port: 8000
           protocol: TCP
 
-    # Redis (platform ns) — jti 블랙리스트 확인 (auth-gateway가 관리)
-    # Phase 1: auth-gateway가 Redis와 직접 통신, Open WebUI는 AG API 경유
-    # Phase 2: 직접 연결 여부 재검토
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: platform
-          podSelector:
-            matchLabels:
-              app: redis
-      ports:
-        - port: 6379
-          protocol: TCP
+    # Redis egress: Phase 1에서 Open WebUI는 Redis에 직접 접속하지 않음.
+    # jti 블랙리스트 조회는 auth-gateway가 담당.
+    # usage_events Redis Stream 푸시는 openwebui-pipelines 사이드카가 담당.
+    # → 이 규칙은 의도적으로 존재하지 않음 (최소 권한 원칙).
+    # Phase 2에서 Open WebUI 직접 Redis 접속 필요 시 해당 시점에 추가.
 
 ---
 # =============================================================================
