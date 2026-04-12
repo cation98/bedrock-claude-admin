@@ -902,11 +902,14 @@ async def onlyoffice_callback(
         raise HTTPException(status_code=403, detail="Invalid callback token")
 
     # JWT 클레임이 곧 최종 진실. verified body로 치환.
-    # P2-iter3 #5: OnlyOffice CE는 flat claim 만 사용 — envelope 분기 제거.
-    # Enterprise Edition 이 {"payload": {...}} 래핑을 쓴다면 여기를 다시 되살린다.
+    # P2-BUG1 (envelope 복원): OnlyOffice 9.x 및 일부 8.x outbox 는 callback JWT 를
+    # envelope `{"payload": {status, key, url, ...}, "exp": ...}` 로 서명한다.
+    # P2-iter3 #5 에서 "CE 는 flat 만 사용" 이라는 가정 아래 envelope 분기를
+    # 제거했으나, 실환경(9.3.1)에서 envelope 이 사용됨이 확인돼 복원. flat/envelope
+    # 두 포맷 모두 수용 — envelope 우선, 없으면 flat claim 사용.
     if not isinstance(decoded, dict):
         raise HTTPException(status_code=403, detail="Invalid callback token payload")
-    body = decoded
+    body = decoded.get("payload", decoded) if isinstance(decoded.get("payload"), dict) else decoded
 
     status = int(body.get("status", 0))
     document_key = body.get("key", "")

@@ -715,6 +715,57 @@ class TestCallbackSaveFlow:
         assert updated.last_error is not None
         assert "kubectl cp failed" in updated.last_error
 
+    def test_callback_accepts_envelope_format(self, client, db_session, monkeypatch):
+        """Envelope JWT (``{"payload": {...}}``) 수용 — OnlyOffice 9.x outbox 형식.
+
+        P2-BUG1 재현 조건: 9.3.1 이 outbox callback JWT 를 envelope 로 서명해
+        보낸다. P2-iter3 #5 에서 envelope 분기를 dead path 로 오판해 제거했고
+        그 결과 모든 status/key 추출이 실패 → 콜백이 전부 ignored.
+        flat 과 envelope 두 포맷 모두 동작해야 한다.
+        """
+        from jose import jwt as jose_jwt
+        import time
+
+        session = _mk_edit_session(db_session, file_path="envelope.xlsx", version=1)
+        original_key = session.document_key
+        session_id = session.id
+
+        calls: list[tuple] = []
+
+        async def _fake_save(sess, url, filetype):
+            calls.append((sess.document_key, url, filetype))
+
+        monkeypatch.setattr(viewers_router, "_save_edited_file", _fake_save)
+
+        envelope_claims = {
+            "payload": {
+                "status": 2,
+                "key": original_key,
+                "url": "http://documentserver.claude-sessions.svc.cluster.local/e.xlsx",
+                "filetype": "xlsx",
+            },
+            "exp": int(time.time()) + 60,
+        }
+        token = jose_jwt.encode(
+            envelope_claims, _DEFAULT_TEST_JWT_SECRET, algorithm="HS256"
+        )
+        resp = client.post(
+            "/api/v1/viewers/onlyoffice/callback",
+            json={},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"error": 0}
+        assert len(calls) == 1, "envelope 포맷에서 _save_edited_file 가 호출되지 않음"
+        assert calls[0][0] == original_key
+        assert calls[0][2] == "xlsx"
+
+        db_session.expire_all()
+        assert (
+            db_session.query(EditSession).filter_by(id=session_id).first() is None
+        )
+
 
 class TestEditModeConfig:
     """Priority 2: /edit /shared 엔드포인트의 편집 모드 config."""
