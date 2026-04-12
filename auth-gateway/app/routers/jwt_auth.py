@@ -19,9 +19,10 @@ Security:
 import hashlib
 import logging
 import secrets
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from jose import JWTError
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -323,3 +324,26 @@ async def logout(
     response.delete_cookie(key=REFRESH_COOKIE_NAME, domain=COOKIE_DOMAIN, path="/")
 
     return {"message": "Logged out successfully"}
+
+
+# ─── Auth Expired Page ────────────────────────────────────────────────────────
+
+_STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+
+
+@router.get("/expired")
+async def auth_expired_page():
+    """JWT 만료 안내 페이지 반환.
+
+    nginx Ingress error_page 설정에서 401 응답을 이 경로로 리다이렉트:
+      error_page 401 = @auth_expired;
+      location @auth_expired { return 302 /auth/expired; }
+
+    브라우저가 /auth/expired에 접근 시 auth-expired.html을 서빙.
+    JS가 /auth/refresh를 시도하고, 성공 시 원래 경로로 복귀.
+    설계 §2 참고: 'Open WebUI 코어 수정 없이 브라우저 레벨 refresh 구현'.
+    """
+    html_path = _STATIC_DIR / "auth-expired.html"
+    if not html_path.exists():
+        raise HTTPException(status_code=404, detail="auth-expired.html not found")
+    return FileResponse(html_path, media_type="text/html")
