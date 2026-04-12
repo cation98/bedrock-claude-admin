@@ -21,7 +21,8 @@ spec:
     spec:
       containers:
         - name: onlyoffice
-          image: onlyoffice/documentserver:latest
+          # P2-iter3 #2: 상용(platform)과 동일 버전으로 고정.
+          image: onlyoffice/documentserver:8.2.2
           ports:
             - containerPort: 80
               name: http

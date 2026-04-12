@@ -40,7 +40,10 @@ spec:
     spec:
       containers:
       - name: onlyoffice
-        image: onlyoffice/documentserver:latest
+        # P2-iter3 #2: 태그 pinning — supply-chain risk 차단.
+        # 버전 업데이트 시: (1) 릴리스 노트 검증, (2) 이 값 교체, (3) rollout 후
+        # `kubectl describe pod` 로 digest 고정 여부 확인.
+        image: onlyoffice/documentserver:8.2.2
         ports:
         - containerPort: 80
           name: http
