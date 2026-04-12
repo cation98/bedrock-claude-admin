@@ -1,0 +1,122 @@
+# =============================================================================
+# T9 NetworkPolicy Draft — Console Pod AWS SDK → HTTP Proxy 마이그레이션
+#
+# ⚠️  DRAFT: T2 (Redis/ElastiCache) + api 팀 T4 (auth-gateway HTTP proxy 엔드포인트)
+#             완료 후 적용. 사전 적용 시 Console Pod가 Bedrock 호출 불가.
+#
+# 변경 목적:
+#   Claude Code CLI가 AWS SDK로 Bedrock 직접 호출하던 것을
+#   auth-gateway:3128 CONNECT 프록시를 통해 HTTP로 우회.
+#   → 전체 Bedrock 트래픽이 auth-gateway 로그/통계에 기록됨
+#   → AWS SDK 자격증명을 Pod에 주입할 필요 없음 (보안 강화)
+#
+# 적용 절차:
+#   1. T2 완료 (Redis Stream + JWT 인프라 준비)
+#   2. T4 완료 (auth-gateway에 CONNECT 프록시 :3128 엔드포인트 활성화)
+#   3. api 팀에 "프록시 준비 완료" 확인 수령
+#   4. 카나리 테스트: isolate-terminal-pods 적용 → 기존 allow-user-pod-traffic과 공존
+#   5. 1개 Pod로 프록시 경유 동작 확인
+#   6. 기존 allow-user-pod-traffic 삭제 (443 직접 허용 정책 제거)
+#
+# ⚠️  OnlyOffice 회귀 방지 (P2-BUG2 교훈):
+#   - 이 파일의 변경 대상은 claude-sessions ns의 claude-terminal Pod만.
+#   - allow-onlyoffice-traffic (claude-sessions ns) 정책은 절대 수정 금지.
+#   - OO callback: OnlyOffice → auth-gateway.platform.svc:8000 경로는 유지.
+#   - SSRF allowlist 우회 경로가 생기지 않도록 to: [] 허용은 egress:53만 유지.
+# =============================================================================
+
+# =============================================================================
+# 기존 정책 삭제 대상 (T9 적용 시 함께 삭제):
+#   kubectl delete networkpolicy allow-user-pod-traffic -n claude-sessions
+#
+# 삭제 전 반드시 아래 신규 정책으로 대체 확인 후 삭제
+# =============================================================================
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: isolate-terminal-pods
+  namespace: claude-sessions
+  annotations:
+    description: "T9: Console Pod Bedrock 직접 접근 차단, HTTP proxy 경유로 전환"
+spec:
+  # claude-terminal Pod (사용자 ttyd 터미널)에만 적용
+  # ⚠️  onlyoffice Pod는 별도 allow-onlyoffice-traffic 정책 유지 — 건드리지 않음
+  podSelector:
+    matchLabels:
+      app: claude-terminal
+
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # ingress-nginx에서 오는 웹 터미널(ttyd) 접속만 허용
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - port: 7681     # ttyd 웹 터미널
+          protocol: TCP
+        - port: 8080     # 미래 확장 (텔레그램 봇 webhook 등)
+          protocol: TCP
+
+    # platform 네임스페이스에서 오는 인바운드 (텔레그램 봇 webhook)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: platform
+      ports:
+        - port: 8080
+          protocol: TCP
+
+  egress:
+    # DNS 조회 (K8s 내부 DNS 포함)
+    # to: [] → 목적지 제한 없음 (kube-dns는 어떤 IP에서도 응답 가능)
+    - to: []
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+    # ── [변경 핵심] AWS Bedrock 직접 443 호출 제거 ──────────────────────────
+    # 기존: - to: [] ports: - port: 443  ← 삭제
+    # 대체: auth-gateway CONNECT 프록시(3128)를 통해 허용된 도메인만 접근
+    # Claude Code CLI가 ANTHROPIC_BASE_URL=http://bedrock-ag.internal 환경변수로
+    # auth-gateway 프록시를 통해 Bedrock Access Gateway 호출.
+    # ────────────────────────────────────────────────────────────────────────
+
+    # Auth Gateway 내부 통신 (API: 8000, CONNECT 프록시: 3128)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: platform
+      ports:
+        - port: 8000     # Auth Gateway API (토큰 검증, 파일 업로드)
+          protocol: TCP
+        - port: 3128     # CONNECT 프록시 — 외부 Bedrock AG 호출 중계
+          protocol: TCP
+
+    # RDS ReadOnly Replica (Private Subnet 내)
+    # 실습 데이터 접근 — IP 블록으로 허용 (RDS는 Pod가 아니므로 podSelector 불가)
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/16
+      ports:
+        - port: 5432     # PostgreSQL
+          protocol: TCP
+
+# =============================================================================
+# 참고: 이 파일 적용 후 유지되어야 할 기존 정책들
+# =============================================================================
+# 아래 정책들은 T9 적용 시 삭제하지 않고 유지:
+#
+# 1. default-deny-all (claude-sessions ns) — 유지
+# 2. allow-onlyoffice-traffic (claude-sessions ns) — 유지 ← 절대 수정 금지
+#    - OnlyOffice egress: auth-gateway:8000 허용 (OO callback 필수)
+#    - 이 정책이 사라지면 OnlyOffice 편집 모드 전체 중단 (P2-BUG2 교훈)
+#
+# 삭제 대상:
+# 3. allow-user-pod-traffic (claude-sessions ns) — 이 정책으로 대체 후 삭제

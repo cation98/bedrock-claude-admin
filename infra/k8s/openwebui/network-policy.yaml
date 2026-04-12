@@ -1,0 +1,304 @@
+# =============================================================================
+# NetworkPolicy — openwebui 네임스페이스
+#
+# 적용 대상:
+#   1. open-webui Pod
+#   2. bedrock-access-gateway Pod
+#   3. openwebui-postgres Pod
+#
+# 설계 원칙 (design doc 필수 요건):
+#   - openwebui namespace ingress는 ingress-nginx pod에서만 허용
+#   - openwebui ↔ onlyoffice 간 MCP 포트만 허용 (Phase 1: 미구현)
+#   - Bedrock AG만 외부 AWS 호출 허용, Open WebUI는 AG 경유
+#   - 외부 헤더 위조 방지: ingress-nginx annotation으로 처리 (ingress.yaml)
+#
+# 배포 순서: Open WebUI Pod 배포 전에 반드시 먼저 적용
+#   kubectl apply -f infra/k8s/openwebui/network-policy.yaml
+# =============================================================================
+
+# =============================================================================
+# 1. 기본 차단 정책 — openwebui 네임스페이스 전체
+# =============================================================================
+# 화이트리스트 방식: 아래 allow 정책에서 명시적으로 허용한 것만 통과
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: openwebui
+spec:
+  podSelector: {}          # 네임스페이스 내 모든 Pod에 적용
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# =============================================================================
+# 2. Open WebUI Pod 트래픽 허용 정책
+# =============================================================================
+# [Ingress]
+#   - ingress-nginx 네임스페이스 Pod → 포트 8080 (Open WebUI 기본 포트)
+#
+# [Egress]
+#   - DNS (53): 도메인 해석
+#   - bedrock-access-gateway (같은 ns): 포트 8080 (LLM API 호출)
+#   - openwebui-postgres (같은 ns): 포트 5432 (대화 이력 저장)
+#   - auth-gateway (platform ns): 포트 8000 (JWT 검증, 미래 확장용)
+#   - Redis (platform ns): 포트 6379 (jti 블랙리스트 조회)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-open-webui-traffic
+  namespace: openwebui
+spec:
+  podSelector:
+    matchLabels:
+      app: open-webui
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # ingress-nginx 컨트롤러에서만 인바운드 허용
+    # X-SKO-Email 헤더 위조 방지는 ingress-nginx annotation 레벨에서 처리 (ingress.yaml)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - port: 8080
+          protocol: TCP
+
+  egress:
+    # DNS 해석
+    - to: []
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+    # Bedrock Access Gateway (LLM API 호출)
+    # Open WebUI는 Bedrock에 직접 접속하지 않고 AG를 경유
+    - to:
+        - podSelector:
+            matchLabels:
+              app: bedrock-access-gateway
+      ports:
+        - port: 8080
+          protocol: TCP
+
+    # Open WebUI 전용 PostgreSQL (대화 이력, 사용자 설정)
+    - to:
+        - podSelector:
+            matchLabels:
+              app: openwebui-postgres
+      ports:
+        - port: 5432
+          protocol: TCP
+
+    # Pipelines 사이드카 (같은 ns) — LLM 요청 전처리 (user injection, budget gate, usage emit)
+    # Open WebUI의 OPENAI_API_BASE_URL이 Pipelines(9099)를 가리키므로 필수 egress.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: openwebui-pipelines
+      ports:
+        - port: 9099
+          protocol: TCP
+
+    # Auth Gateway (platform ns) — JWT 검증, 사용자 프로파일 조회
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: platform
+          podSelector:
+            matchLabels:
+              app: auth-gateway
+      ports:
+        - port: 8000
+          protocol: TCP
+
+    # Redis egress: Phase 1에서 Open WebUI는 Redis에 직접 접속하지 않음.
+    # jti 블랙리스트 조회는 auth-gateway가 담당.
+    # usage_events Redis Stream 푸시는 openwebui-pipelines 사이드카가 담당.
+    # → 이 규칙은 의도적으로 존재하지 않음 (최소 권한 원칙).
+    # Phase 2에서 Open WebUI 직접 Redis 접속 필요 시 해당 시점에 추가.
+
+---
+# =============================================================================
+# 3. Bedrock Access Gateway Pod 트래픽 허용 정책
+# =============================================================================
+# [Ingress]
+#   - open-webui Pod (같은 ns) → 포트 8080
+#   - Pipelines 사이드카 (같은 ns) → 포트 8080 (usage emit, budget gate)
+#
+# [Egress]
+#   - DNS (53): AWS 엔드포인트 해석
+#   - AWS Bedrock (443): 실제 LLM 호출 (IRSA로 SigV4 서명)
+#   - Redis/Platform (platform ns): usage_events Stream 푸시
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-bedrock-ag-traffic
+  namespace: openwebui
+spec:
+  podSelector:
+    matchLabels:
+      app: bedrock-access-gateway
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # Open WebUI에서의 LLM API 요청
+    - from:
+        - podSelector:
+            matchLabels:
+              app: open-webui
+      ports:
+        - port: 8080
+          protocol: TCP
+
+    # Pipelines 사이드카에서의 요청 (usage emit, budget gate, user injection)
+    - from:
+        - podSelector:
+            matchLabels:
+              app: openwebui-pipelines
+      ports:
+        - port: 8080
+          protocol: TCP
+
+  egress:
+    # DNS 해석 (AWS 리전별 Bedrock 엔드포인트 동적 해석)
+    - to: []
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+    # AWS Bedrock (us-east-1 cross-region inference)
+    # IRSA로 SigV4 서명, Pod에 AWS SDK 자격증명 불필요
+    - to: []
+      ports:
+        - port: 443
+          protocol: TCP
+
+    # AWS ElastiCache Redis Stream — usage_events 푸시
+    # ElastiCache는 K8s Pod가 아니므로 podSelector 불가 → ipBlock 사용.
+    # primary: bedrock-claude-redis.khpawo.0001.apn2.cache.amazonaws.com → 10.0.10.208
+    # SecurityGroup(redis SG)이 EKS private 서브넷에서만 6379 허용 → 이중 방어.
+    # replica failover 시: replica IP 포함 위해 /24 유지 (failover → 같은 서브넷 내 다른 IP)
+    - to:
+        - ipBlock:
+            cidr: 10.0.10.0/24   # ap-northeast-2a: primary(10.0.10.208) + failover 포함
+        - ipBlock:
+            cidr: 10.0.20.0/24   # ap-northeast-2c: replica 포함
+      ports:
+        - port: 6379
+          protocol: TCP
+
+---
+# =============================================================================
+# 4. OpenWebUI Pipelines 사이드카 트래픽 허용 정책
+# =============================================================================
+# Pipelines는 Open WebUI의 확장 포인트: user injection, usage emit, budget gate
+#
+# [Ingress]
+#   - open-webui Pod → 포트 9099 (Pipelines API 기본 포트)
+#
+# [Egress]
+#   - bedrock-access-gateway → 포트 8080 (budget_gate: 잔여 예산 확인)
+#   - platform ns Redis → 포트 6379 (usage_emit: Stream 푸시)
+#   - DNS (53)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-pipelines-traffic
+  namespace: openwebui
+spec:
+  podSelector:
+    matchLabels:
+      app: openwebui-pipelines
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: open-webui
+      ports:
+        - port: 9099
+          protocol: TCP
+
+  egress:
+    - to: []
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+    # Budget gate: Bedrock AG 잔여 예산 확인 전 reservation 선작성
+    - to:
+        - podSelector:
+            matchLabels:
+              app: bedrock-access-gateway
+      ports:
+        - port: 8080
+          protocol: TCP
+
+    # AWS ElastiCache Redis Stream 푸시 (usage_emit)
+    # ElastiCache는 K8s Pod가 아니므로 podSelector 불가 → ipBlock 사용.
+    # primary: 10.0.10.208, replica: 10.0.20.x (failover 포함 위해 /24 유지)
+    - to:
+        - ipBlock:
+            cidr: 10.0.10.0/24   # ap-northeast-2a: primary(10.0.10.208) + failover 포함
+        - ipBlock:
+            cidr: 10.0.20.0/24   # ap-northeast-2c: replica 포함
+      ports:
+        - port: 6379
+          protocol: TCP
+
+---
+# =============================================================================
+# 5. OpenWebUI PostgreSQL 트래픽 허용 정책
+# =============================================================================
+# Open WebUI 전용 DB: 대화 이력, 사용자 설정, Skills (Phase 1)
+#
+# [Ingress]
+#   - open-webui Pod 전용 (포트 5432)
+#
+# [Egress]
+#   - DNS만 (내부 통신 전용)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-openwebui-postgres-traffic
+  namespace: openwebui
+spec:
+  podSelector:
+    matchLabels:
+      app: openwebui-postgres
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: open-webui
+      ports:
+        - port: 5432
+          protocol: TCP
+
+  egress:
+    - to: []
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP

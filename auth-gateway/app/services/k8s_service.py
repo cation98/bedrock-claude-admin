@@ -269,6 +269,19 @@ class K8sService:
                 ),
             ))
 
+        # T20: Bedrock AG HTTP proxy 활성화
+        # pod_token이 있고 로컬이 아닌 경우 ANTHROPIC_BASE_URL을 Auth Gateway /v1으로 고정.
+        # entrypoint.sh가 이 변수를 감지하면:
+        #   1. pod-token-exchange → JWT 획득
+        #   2. ANTHROPIC_API_KEY = JWT (Bearer)
+        #   3. CLAUDE_CODE_USE_BEDROCK unset (HTTP proxy 모드로 전환)
+        # 결과: Claude CLI → Auth Gateway → Bedrock (AWS SDK 직접 호출 차단)
+        if pod_token and not is_local:
+            env_vars.append(client.V1EnvVar(
+                name="ANTHROPIC_BASE_URL",
+                value="http://auth-gateway.platform.svc.cluster.local/v1",
+            ))
+
         # 프록시 환경변수 — Pod에서 외부 API 접근 시 Auth Gateway 프록시를 거치도록 설정
         # HTTPS_PROXY/HTTP_PROXY: curl, pip, npm 등이 자동으로 프록시를 사용
         # NO_PROXY: 클러스터 내부 통신은 프록시를 우회

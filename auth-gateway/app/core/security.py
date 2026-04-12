@@ -45,29 +45,40 @@ def create_access_token(
     settings: Settings | None = None,
     expires_delta: timedelta | None = None,
 ) -> str:
-    """JWT 액세스 토큰 생성."""
+    """RS256 JWT 액세스 토큰 생성 (커스텀 클레임 경로용).
+
+    일반 사용자 로그인은 jwt_rs256.create_access_token 사용 권장.
+    file_share 등 커스텀 클레임이 필요한 특수 목적 토큰에 사용.
+    """
+    from app.core.jwt_rs256 import _private_key_pem_bytes as _rs256_key
+
     if settings is None:
         settings = get_settings()
 
     to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + (
+    now = datetime.now(timezone.utc)
+    expire = now + (
         expires_delta or timedelta(minutes=settings.jwt_access_token_expire_minutes)
     )
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+    to_encode.update({"exp": expire, "iat": now})
+    return jwt.encode(to_encode, _rs256_key(), algorithm="RS256")
 
 
 def verify_token(token: str, settings: Settings | None = None) -> dict:
-    """JWT 토큰 검증 및 페이로드 반환.
+    """RS256 JWT 토큰 검증 및 페이로드 반환.
 
     실패 시 HTTPException(401)을 발생시킨다.
     예외를 던지지 않는 버전이 필요하면 decode_token()을 사용.
     """
-    if settings is None:
-        settings = get_settings()
+    from app.core.jwt_rs256 import _public_key_pem_bytes as _rs256_pub
 
     try:
-        payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
+        payload = jwt.decode(
+            token,
+            _rs256_pub(),
+            algorithms=["RS256"],
+            options={"verify_aud": False},
+        )
         return payload
     except JWTError:
         raise HTTPException(
@@ -77,26 +88,48 @@ def verify_token(token: str, settings: Settings | None = None) -> dict:
 
 
 def decode_token(token: str, settings: Settings | None = None) -> dict | None:
-    """JWT 토큰 디코딩 (실패 시 None 반환).
+    """RS256 JWT 토큰 디코딩 (실패 시 None 반환).
 
-    verify_token()과 동일한 로직이지만, 예외 대신 None을 반환한다.
+    verify_token()과 달리 예외 대신 None을 반환한다.
     Auth Proxy처럼 인증 실패를 리다이렉트로 처리해야 하는 곳에서 사용.
+    token type 미확인 — access/share_access 모두 수용.
     """
-    if settings is None:
-        settings = get_settings()
+    from app.core.jwt_rs256 import _public_key_pem_bytes as _rs256_pub
 
     try:
-        return jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
+        return jwt.decode(
+            token,
+            _rs256_pub(),
+            algorithms=["RS256"],
+            options={"verify_aud": False},
+        )
     except JWTError:
         return None
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security_scheme),
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(security_scheme_optional),
     settings: Settings = Depends(get_settings),
 ) -> dict:
-    """현재 인증된 사용자 정보를 반환하는 FastAPI dependency."""
-    return verify_token(credentials.credentials, settings)
+    """현재 인증된 사용자 정보를 반환하는 FastAPI dependency.
+
+    인증 우선순위:
+    1. Authorization: Bearer 헤더 (CLI / API 클라이언트)
+    2. bedrock_jwt 쿠키 (portal.html credentials:'include' 방식)
+    3. claude_token 쿠키 (레거시 fallback)
+    """
+    # 1) Bearer 헤더 우선
+    if credentials and credentials.credentials:
+        return verify_token(credentials.credentials, settings)
+    # 2) 쿠키 fallback — portal.html apiFetch() credentials:'include' 방식
+    token = request.cookies.get("bedrock_jwt") or request.cookies.get("claude_token", "")
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    return verify_token(token, settings)
 
 
 async def get_current_user_or_pod(

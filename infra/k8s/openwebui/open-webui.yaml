@@ -1,0 +1,201 @@
+# =============================================================================
+# Open WebUI — Chat 프론트엔드 (Phase 0)
+#
+# 역할:
+#   사용자 → chat.skons.net → ingress-nginx → Open WebUI(8080)
+#              → Pipelines(9099) → Bedrock AG(8080) → AWS Bedrock
+#
+# 인증 플로우:
+#   ingress-nginx X-SKO-Email 헤더 주입
+#   → Open WebUI WEBUI_AUTH_TRUSTED_EMAIL_HEADER 인식
+#   → 자동 사용자 생성/로그인 (SSO 단일 통합)
+#
+# 배포 전 필수:
+#   pipelines-secret이 openwebui namespace에 존재해야 함.
+#   (PIPELINES_API_KEY = Open WebUI ↔ Pipelines 공유 키)
+#
+# 데이터 영속성:
+#   EFS PV → /app/backend/data (SQLite DB, 대화 기록, 모델 설정)
+#   Pod 재시작 시 데이터 유지.
+# =============================================================================
+
+# ----- EFS PersistentVolume (Open WebUI 전용) -----
+# 기존 PV 패턴(efs-user-workspaces, efs-app-workspaces)과 동일.
+# subPath: openwebui-data/ → EFS 루트 내 격리 디렉터리 사용.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: efs-openwebui-data
+spec:
+  capacity:
+    storage: 10Gi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: efs-sc
+  csi:
+    driver: efs.csi.aws.com
+    volumeHandle: fs-0a2b5924041425002  # terraform output: efs_file_system_id
+
+---
+# ----- PersistentVolumeClaim -----
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: openwebui-data-pvc
+  namespace: openwebui
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: efs-sc
+  resources:
+    requests:
+      storage: 10Gi
+  volumeName: efs-openwebui-data  # 위 PV에 직접 바인딩
+
+---
+# ----- Deployment -----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open-webui
+  namespace: openwebui
+  labels:
+    app: open-webui
+    version: "phase0"
+spec:
+  # Phase 0: 1 replica (SQLite는 단일 writer 필요)
+  # Phase 1: PostgreSQL 전환 후 2+ replicas 가능
+  replicas: 1
+  # Recreate: SQLite on EFS — 구 pod 완전 종료 후 신 pod 시작
+  # (RollingUpdate 시 두 pod가 동시에 SQLite write → 파일 잠금 충돌)
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: open-webui
+  template:
+    metadata:
+      labels:
+        app: open-webui
+    spec:
+      nodeSelector:
+        role: claude-terminal  # main worker nodegroup
+
+      containers:
+        - name: open-webui
+          image: ghcr.io/open-webui/open-webui:main
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+              name: http
+
+          env:
+            # ── 인증: Trusted Header (SSO 연동) ──────────────────────────────
+            # ingress-nginx가 X-SKO-Email 헤더를 주입하면
+            # Open WebUI가 해당 이메일로 자동 로그인/생성
+            - name: WEBUI_AUTH_TRUSTED_EMAIL_HEADER
+              value: "X-SKO-Email"
+            # 사용자 표시 이름 (선택)
+            # - name: WEBUI_AUTH_TRUSTED_NAME_HEADER
+            #   value: "X-SKO-User-Name"
+
+            # ── Pipelines 연결 (AI 백엔드) ────────────────────────────────────
+            # Open WebUI → Pipelines → Bedrock AG → Claude
+            - name: OPENAI_API_BASE_URL
+              value: "http://openwebui-pipelines:9099"
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: pipelines-secret
+                  key: PIPELINES_API_KEY
+
+            # ── 사용자 등록 제한 ──────────────────────────────────────────────
+            # ENABLE_SIGNUP=false는 /auth/signup 폼 접근만 차단.
+            # Trusted header auth(WEBUI_AUTH_TRUSTED_EMAIL_HEADER)를 통한
+            # 신규 사용자 자동 생성은 이 설정과 무관하게 동작.
+            # SSO 첫 방문 사용자는 자동으로 계정이 생성되며,
+            # 첫 번째 등록 사용자는 admin 역할이 자동 부여됨.
+            # Fallback: webui-verify 미동작 시 임시로 true → 관리자 등록 → false 복원
+            - name: ENABLE_SIGNUP
+              value: "false"
+
+            # ── 기본 사용자 역할 ──────────────────────────────────────────────
+            # SSO 신규 사용자 자동 생성 시 기본 역할 (첫 번째 사용자는 admin으로 override됨)
+            - name: DEFAULT_USER_ROLE
+              value: "user"
+
+            # ── 데이터 저장 경로 ──────────────────────────────────────────────
+            - name: DATA_DIR
+              value: "/app/backend/data"
+
+            # ── 세션 쿠키 보안 ────────────────────────────────────────────────
+            - name: WEBUI_SESSION_COOKIE_SAME_SITE
+              value: "lax"
+            - name: WEBUI_SESSION_COOKIE_SECURE
+              value: "true"
+
+            # ── 기본 모델 ─────────────────────────────────────────────────────
+            # Pipelines bedrock_ag_pipe manifold prefix + BAG 모델 ID
+            # 형식: "{manifold_id}.{bag_model_id}"
+            - name: DEFAULT_MODELS
+              value: "bedrock_ag_pipe.us.anthropic.claude-sonnet-4-6"
+
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+
+          volumeMounts:
+            # EFS subPath: 여러 PV가 동일 EFS FS를 공유하므로 하위 디렉터리 격리
+            - name: openwebui-data
+              mountPath: /app/backend/data
+              subPath: openwebui-data
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            # HuggingFace 모델 파일 30개 초기 다운로드에 최대 5분 소요
+            # EFS 영속 저장이므로 두 번째 시작부터는 즉시 Ready
+            initialDelaySeconds: 300
+            periodSeconds: 30
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 6
+
+      volumes:
+        - name: openwebui-data
+          persistentVolumeClaim:
+            claimName: openwebui-data-pvc
+
+---
+# ----- Service -----
+# ingress → open-webui (ClusterIP, 8080)
+apiVersion: v1
+kind: Service
+metadata:
+  name: open-webui
+  namespace: openwebui
+  labels:
+    app: open-webui
+spec:
+  selector:
+    app: open-webui
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+  type: ClusterIP

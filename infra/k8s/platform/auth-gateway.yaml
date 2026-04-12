@@ -36,7 +36,9 @@ spec:
           operator: "Equal"
           value: "system"
           effect: "NoSchedule"
-      # auth-gateway HA: 서로 다른 노드 + ingress-nginx와 같은 노드 페어링
+      # auth-gateway HA: 서로 다른 노드에 분산 (hard anti-affinity)
+      # 참고: ingress-nginx는 별도 ingress-workers nodegroup으로 분리됨 (T6)
+      #       이전의 ingress-nginx pod affinity(근접 선호)는 제거 — 다른 nodegroup
       affinity:
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -47,35 +49,20 @@ spec:
                     values:
                       - auth-gateway
               topologyKey: kubernetes.io/hostname
-        podAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                labelSelector:
-                  matchExpressions:
-                    - key: app.kubernetes.io/name
-                      operator: In
-                      values:
-                        - ingress-nginx
-                topologyKey: kubernetes.io/hostname
       containers:
         - name: auth-gateway
           image: 680877507363.dkr.ecr.ap-northeast-2.amazonaws.com/bedrock-claude/auth-gateway:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 8000
             - containerPort: 3128
           env:
-            # ── Secrets (from K8s Secret: auth-gateway-secrets) ──
+            # ── Secrets (from K8s Secret: auth-gateway-secrets) ──────────────
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: auth-gateway-secrets
                   key: DATABASE_URL
-            - name: JWT_SECRET_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: auth-gateway-secrets
-                  key: JWT_SECRET_KEY
             - name: SSO_AUTH_URL
               valueFrom:
                 secretKeyRef:
@@ -111,15 +98,59 @@ spec:
                 secretKeyRef:
                   name: auth-gateway-secrets
                   key: TANGO_DATABASE_URL
+            - name: DOCULOG_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-secrets
+                  key: DOCULOG_DATABASE_URL
+            - name: SMS_GATEWAY_URL
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-secrets
+                  key: SMS_GATEWAY_URL
+            - name: SMS_AUTH_STRING
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-secrets
+                  key: SMS_AUTH_STRING
+            - name: TELEGRAM_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-secrets
+                  key: TELEGRAM_BOT_TOKEN
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-secrets
+                  key: REDIS_URL
+            - name: S3_VAULT_KMS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-secrets
+                  key: S3_VAULT_KMS_KEY_ID
 
-            # ── OnlyOffice JWT Secret (필수 — placeholder 시 앱 시작 실패) ──
+            # ── Phase 0 RS256 Private Key (Secret: auth-gateway-rs256-key) ──
+            # 프로덕션 다중 레플리카에서는 반드시 설정. 미설정 시 ephemeral 키 사용.
+            # kubectl create secret generic auth-gateway-rs256-key \
+            #   --from-literal=JWT_RS256_PRIVATE_KEY="$(cat rsa_private.pem)"
+            - name: JWT_RS256_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-rs256-key
+                  key: JWT_RS256_PRIVATE_KEY
+                  optional: true  # 미존재 시 ephemeral 키로 fallback (개발용)
+
+            # ── OnlyOffice JWT Secret ─────────────────────────────────────────
+            # Secret 이름: onlyoffice-jwt-secret, key: secret
+            # kubectl create secret generic onlyoffice-jwt-secret \
+            #   --from-literal=secret="<32자 이상 랜덤 문자열>"
             - name: ONLYOFFICE_JWT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: onlyoffice-jwt-secret
                   key: secret
 
-            # ── Non-secret SSO config ──
+            # ── SSO Config ───────────────────────────────────────────────────
             - name: SSO_AUTH_METHOD
               value: "4302010"
             - name: SSO_SCOPES
@@ -127,7 +158,22 @@ spec:
             - name: SSO_TOKEN_KEY
               value: RequestTokenResult
 
-            # ── Kubernetes (EKS 내부에서 실행) ──
+            # ── 2FA ──────────────────────────────────────────────────────────
+            - name: TWO_FACTOR_ENABLED
+              value: "true"
+
+            # ── SMS ──────────────────────────────────────────────────────────
+            - name: SMS_CALLBACK_NUMBER
+              value: "02-6123-2200"
+
+            # ── Telegram ─────────────────────────────────────────────────────
+            - name: TELEGRAM_BOT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-secrets
+                  key: TELEGRAM_BOT_USERNAME
+
+            # ── Kubernetes (EKS 내부에서 실행) ──────────────────────────────
             - name: K8S_IN_CLUSTER
               value: "true"
             - name: K8S_NAMESPACE
@@ -137,7 +183,7 @@ spec:
             - name: K8S_SERVICE_ACCOUNT
               value: claude-terminal-sa
 
-            # ── Bedrock ──
+            # ── Bedrock (Pod에 주입할 환경변수) ─────────────────────────────
             - name: BEDROCK_REGION
               value: ap-northeast-2
             - name: BEDROCK_SONNET_MODEL
@@ -145,12 +191,47 @@ spec:
             - name: BEDROCK_HAIKU_MODEL
               value: global.anthropic.claude-haiku-4-5-20251001-v1:0
 
+            # ── S3 Vault ─────────────────────────────────────────────────────
+            - name: S3_VAULT_BUCKET
+              value: "bedrock-claude-vault"
+            - name: S3_VAULT_REGION
+              value: "ap-northeast-2"
+
+            # ── OnlyOffice Document Server ────────────────────────────────────
+            - name: ONLYOFFICE_URL
+              value: "http://onlyoffice.claude-sessions.svc.cluster.local"
+
+            # ── JWT RS256 TTL (Phase 0) ───────────────────────────────────────
+            - name: JWT_RS256_ACCESS_EXPIRE_MINUTES
+              value: "15"
+            - name: JWT_REFRESH_TOKEN_EXPIRE_HOURS
+              value: "12"
+
+            # ── 유휴 Pod 자동 정리 ────────────────────────────────────────────
+            - name: IDLE_TIMEOUT_MINUTES
+              value: "60"
+            - name: IDLE_CHECK_INTERVAL_SECONDS
+              value: "600"
+
+            # ── QA 테스트 사용자 bypass (Phase 0 한정) ───────────────────────
+            # true 시 TEST* prefix 사용자는 password=test2026으로 SSO 우회 로그인.
+            # 프로덕션 전 반드시 false로 변경 또는 제거.
+            - name: ALLOW_TEST_USERS
+              value: "true"
+
           readinessProbe:
             httpGet:
               path: /health
               port: 8000
             initialDelaySeconds: 5
             periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 3
           resources:
             requests:
               cpu: 250m

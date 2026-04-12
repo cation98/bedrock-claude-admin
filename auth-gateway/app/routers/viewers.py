@@ -35,9 +35,10 @@ logger = logging.getLogger(__name__)
 
 
 async def _get_viewer_user(request: Request, settings: Settings = Depends(get_settings)) -> dict:
-    """뷰어 전용 인증 — Bearer 토큰 + claude_token 쿠키 둘 다 지원.
+    """뷰어 전용 인증 — Bearer 토큰 + 쿠키(bedrock_jwt 우선, claude_token fallback).
 
     window.open()으로 열리는 뷰어는 Authorization 헤더가 없으므로 쿠키 필수.
+    T10: bedrock_jwt(Phase 0 RS256) 우선 파싱, claude_token(legacy) fallback.
     """
     # 1. Authorization Bearer 토큰
     auth_header = request.headers.get("Authorization", "")
@@ -46,7 +47,14 @@ async def _get_viewer_user(request: Request, settings: Settings = Depends(get_se
         if payload:
             return payload
 
-    # 2. claude_token 쿠키
+    # 2. bedrock_jwt 쿠키 (Phase 0 RS256 신규 쿠키 — 우선)
+    token = request.cookies.get("bedrock_jwt", "")
+    if token:
+        payload = decode_token(token, settings)
+        if payload:
+            return payload
+
+    # 3. claude_token 쿠키 (legacy fallback)
     token = request.cookies.get("claude_token", "")
     if token:
         payload = decode_token(token, settings)

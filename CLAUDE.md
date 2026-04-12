@@ -103,25 +103,34 @@ DATABASE_URL=         # Platform PostgreSQL
 
 ## Infrastructure Design Constraints
 
-### System Node Pair 운용 (필수)
+### System Node 운용 (필수)
 
-시스템 노드 2대에 auth-gateway + ingress-nginx를 **pair로 배치**한다. 이것은 본 프로젝트의 기본 설계이며 반드시 지켜야 한다.
+auth-gateway와 ingress-nginx는 **별도 nodegroup으로 분리**하여 운용한다. 이것은 Phase 0 engineering review 후 확정된 설계이며 반드시 지켜야 한다.
 
 ```
-System Node A: auth-gateway replica-1 + ingress-nginx replica-1
-System Node B: auth-gateway replica-2 + ingress-nginx replica-2
+[system-node-large] Node A: auth-gateway replica-1
+[system-node-large] Node B: auth-gateway replica-2
+
+[ingress-workers] Node 1~N (min 2 / max 6): ingress-nginx
 ```
 
-**구현 방법:**
-- auth-gateway: `requiredDuringSchedulingIgnoredDuringExecution` anti-affinity (hard) — 동일 노드 배치 금지
-- auth-gateway: `preferredDuringSchedulingIgnoredDuringExecution` pod affinity — ingress-nginx 근접 선호
-- ingress-nginx: `requiredDuringSchedulingIgnoredDuringExecution` anti-affinity (hard) — 동일 노드 배치 금지
-- system nodegroup: `system-node-large` (t3.large), desired=2, max=3
+#### auth-gateway (system-node-large nodegroup)
+
+- nodegroup: `system-node-large` (t3.large), desired=2, max=3
+- anti-affinity: `requiredDuringSchedulingIgnoredDuringExecution` (hard) — 동일 노드 배치 금지
+- nodeSelector: `role: system` + toleration `dedicated=system:NoSchedule`
+
+#### ingress-nginx (ingress-workers nodegroup) — Phase 0 신설
+
+- nodegroup: `ingress-workers` (t3.large), min=2, max=6
+- Open WebUI WebSocket 트래픽 대응을 위해 최대 6노드까지 확장 허용
+- anti-affinity: `requiredDuringSchedulingIgnoredDuringExecution` (hard) — 동일 노드 배치 금지
+- nodeSelector: `role: ingress` + toleration `dedicated=ingress:NoSchedule`
 
 **주의:**
-- 이미지 배포(rollout restart) 시 일시적으로 pair가 깨질 수 있으나, 안정 운용 시 반드시 pair 상태를 유지해야 함
-- 시스템 노드를 3대 이상으로 늘리지 않음 (비용 최적화)
-- anti-affinity를 soft(preferred)로 변경하지 않음 — 동일 노드 몰림 방지가 목적
+- auth-gateway와 ingress-nginx 간 pod affinity(근접 선호)는 제거됨 — 서로 다른 nodegroup에 위치
+- auth-gateway anti-affinity는 soft(preferred)로 변경 금지 — 동일 노드 몰림 방지가 목적
+- 이미지 배포(rollout restart) 시 일시적으로 anti-affinity가 깨질 수 있으나 안정 운용 시 각 노드에 분산 유지
 
 ## Design System
 Always read DESIGN.md before making any visual or UI decisions.

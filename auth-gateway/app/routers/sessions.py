@@ -8,6 +8,7 @@ Endpoints:
   GET    /api/v1/sessions/active   — 모든 활성 세션 (관리자)
   POST   /api/v1/sessions/bulk     — 일괄 세션 생성 (관리자)
   DELETE /api/v1/sessions/bulk     — 일괄 세션 종료 (관리자)
+  POST   /api/v1/sessions/ui-source — UI 소스 사용 이벤트 기록 (T23)
 """
 
 import hashlib
@@ -30,6 +31,7 @@ from app.schemas.session import (
     SessionCreateRequest,
     SessionListResponse,
     SessionResponse,
+    UiSourceRequest,
 )
 from app.schemas.user import POD_TTL_SECONDS_MAP
 from app.services.k8s_service import K8sService, K8sServiceError
@@ -714,6 +716,30 @@ async def heartbeat(
     session.last_active_at = datetime.now(timezone.utc)
     db.commit()
     return {"ok": True, "last_active_at": session.last_active_at.isoformat()}
+
+
+@router.post("/ui-source", status_code=200)
+async def record_ui_source(
+    body: UiSourceRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """UI 소스 사용 이벤트 기록 — T23.
+
+    Hub 포탈이 webchat ↔ console 탭 전환 시 호출.
+    Admin Dashboard /analytics/ui-split 페이지의 주간/월간 집계 기반으로 사용.
+
+    Request:
+        source: "webchat" | "console"
+    """
+    from app.models.ui_source_event import UiSourceEvent
+    event = UiSourceEvent(
+        username=current_user["sub"],
+        source=body.source,
+    )
+    db.add(event)
+    db.commit()
+    return {"ok": True, "source": body.source}
 
 
 @router.delete("/", response_model=SessionResponse)

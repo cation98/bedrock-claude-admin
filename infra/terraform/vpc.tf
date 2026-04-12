@@ -44,9 +44,9 @@ resource "aws_subnet" "eks_private" {
   availability_zone = var.eks_private_subnet_azs[count.index]
 
   tags = {
-    Name                                               = "${var.project_name}-eks-private-${var.eks_private_subnet_azs[count.index]}"
-    "kubernetes.io/role/internal-elb"                   = "1"
-    "kubernetes.io/cluster/${var.project_name}-eks"     = "shared"
+    Name                                            = "${var.project_name}-eks-private-${var.eks_private_subnet_azs[count.index]}"
+    "kubernetes.io/role/internal-elb"               = "1"
+    "kubernetes.io/cluster/${var.project_name}-eks" = "shared"
   }
 }
 
@@ -54,7 +54,7 @@ resource "aws_subnet" "eks_private" {
 # NAT Instance + Bedrock Endpoint 라우팅을 그대로 상속
 
 resource "aws_route_table_association" "eks_private" {
-  count          = length(aws_subnet.eks_private)
+  count          = length(var.eks_private_subnet_cidrs)
   subnet_id      = aws_subnet.eks_private[count.index].id
   route_table_id = data.aws_route_table.private.id
 }
