@@ -76,6 +76,17 @@ class Settings(BaseSettings):
     idle_timeout_minutes: int = 60          # 이 시간 이상 유휴 상태면 Pod 해제
     idle_check_interval_seconds: int = 600  # 유휴 체크 주기 (10분)
 
+    # ----- JWT RS256 (Open WebUI 통합 허브 — Phase 0) -----
+    # RSA 2048-bit private key (PEM 문자열).
+    # 비어 있으면 기동 시 ephemeral 키 생성 (개발/단일 레플리카용).
+    # 프로덕션 다중 레플리카 환경에서는 반드시 설정해야 한다.
+    jwt_rs256_private_key: str = ""
+
+    # access token: 15분 (설계 §2 JWT 라이프사이클)
+    jwt_rs256_access_expire_minutes: int = 15
+    # refresh token: 12시간 (설계 §2 JWT 라이프사이클)
+    jwt_refresh_token_expire_hours: int = 12
+
     # ----- Redis -----
     redis_url: str = ""  # e.g. redis://localhost:6379/0 — 비어 있으면 Redis 비활성화
 
