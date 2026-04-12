@@ -213,6 +213,12 @@ spec:
             - name: IDLE_CHECK_INTERVAL_SECONDS
               value: "600"
 
+            # ── QA 테스트 사용자 bypass (Phase 0 한정) ───────────────────────
+            # true 시 TEST* prefix 사용자는 password=test2026으로 SSO 우회 로그인.
+            # 프로덕션 전 반드시 false로 변경 또는 제거.
+            - name: ALLOW_TEST_USERS
+              value: "true"
+
           readinessProbe:
             httpGet:
               path: /health

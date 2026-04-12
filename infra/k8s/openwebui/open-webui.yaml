@@ -138,9 +138,10 @@ spec:
               value: "true"
 
             # ── 기본 모델 ─────────────────────────────────────────────────────
-            # Pipelines 등록 후 Open WebUI 모델 목록에 노출됨
+            # Pipelines bedrock_ag_pipe manifold prefix + BAG 모델 ID
+            # 형식: "{manifold_id}.{bag_model_id}"
             - name: DEFAULT_MODELS
-              value: "us.anthropic.claude-sonnet-4-6"
+              value: "bedrock_ag_pipe.us.anthropic.claude-sonnet-4-6"
 
           resources:
             requests:

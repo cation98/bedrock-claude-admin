@@ -156,7 +156,7 @@ class TestWebChatFlow:
             "Content-Type": "application/json",
         }
         payload = {
-            "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            "model": "bedrock_ag_pipe.us.anthropic.claude-sonnet-4-6",
             "messages": [{"role": "user", "content": "안녕하세요. 한 단어만 응답해주세요."}],
             "stream": True,
         }
@@ -208,7 +208,7 @@ class TestWebChatFlow:
 
         headers = {"Authorization": f"Bearer {ow_token}"}
         payload = {
-            "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            "model": "bedrock_ag_pipe.us.anthropic.claude-sonnet-4-6",
             "messages": [{"role": "user", "content": "1부터 5까지 세어주세요. 각 숫자만 한 줄씩."}],
             "stream": True,
         }
@@ -296,7 +296,7 @@ class TestPodBootToBedrockFlow:
                 f"{bedrock_ag_url}/api/v1/chat/completions",
                 headers={"Authorization": f"Bearer {TEST_USER_TOKEN}"},
                 json={
-                    "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+                    "model": "bedrock_ag_pipe.us.anthropic.claude-sonnet-4-6",
                     "messages": [{"role": "user", "content": "ping"}],
                     "max_tokens": 5,
                 },
@@ -365,7 +365,7 @@ class TestBudgetEnforcement:
                 f"{OPEN_WEBUI_URL}/api/chat/completions",
                 headers={"Authorization": f"Bearer {ob_ow_token}"},
                 json={
-                    "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+                    "model": "bedrock_ag_pipe.us.anthropic.claude-sonnet-4-6",
                     "messages": [{"role": "user", "content": "hello"}],
                 },
             )
