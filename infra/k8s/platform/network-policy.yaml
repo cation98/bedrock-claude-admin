@@ -196,6 +196,19 @@ spec:
         - port: 8000
           protocol: TCP
 
+    # Open WebUI(openwebui ns)에서 오는 JWT 검증 요청
+    # Open WebUI: JWKS 엔드포인트(/auth/.well-known/jwks.json) 조회
+    # Bedrock AG: 예산 초과 시 사용자 역할 검증 (선택)
+    # NOTE: openwebui ingress에 auth_url 추가 시 ingress-nginx가 대신 처리하므로
+    #       직접 Pod-to-Pod 경로도 허용 (이중 방어)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openwebui
+      ports:
+        - port: 8000
+          protocol: TCP
+
   egress:
     # DNS 해석 허용
     - to: []
