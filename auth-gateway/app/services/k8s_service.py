@@ -9,10 +9,14 @@ K8s 개념 정리:
   - Label: Pod에 메타데이터 부착 (사용자명, 세션 타입 등)
 """
 
+import asyncio
 import hashlib
 import json as _json
 import logging
+import os
+import re
 import secrets
+import tempfile
 from datetime import datetime, timezone
 
 from kubernetes import client, config
@@ -776,6 +780,103 @@ class K8sService:
         except ApiException as e:
             logger.error(f"Failed to list pods: {e}")
             raise K8sServiceError(f"Failed to list pods: {e.reason}")
+
+    # -----------------------------------------------------------------
+    # 파일 쓰기 (OnlyOffice 편집 저장용)
+    # -----------------------------------------------------------------
+
+    _KUBECTL_TIMEOUT_SECONDS = 120
+    _CONTAINER_NAME = "terminal"
+
+    @staticmethod
+    def _validate_container_path(path: str) -> str:
+        """Pod 내부 절대 경로 검증."""
+        if not path or not path.startswith("/"):
+            raise K8sServiceError("container_path must be absolute")
+        normalized = os.path.normpath(path)
+        if ".." in normalized.split("/"):
+            raise K8sServiceError("container_path must not contain '..'")
+        if re.search(r"[\x00-\x1f]", normalized):
+            raise K8sServiceError("container_path contains control characters")
+        return normalized
+
+    async def write_file_to_pod(
+        self,
+        username: str,
+        container_path: str,
+        content: bytes,
+    ) -> None:
+        """사용자 Pod 내부에 파일 기록 — OnlyOffice 콜백 저장 경로.
+
+        asyncio.create_subprocess_exec를 사용하여 kubectl을 직접 호출(argv 기반, 쉘 없음).
+        """
+        pod_name = self._pod_name(username)
+        safe_path = self._validate_container_path(container_path)
+        parent = os.path.dirname(safe_path)
+
+        if parent and parent != "/":
+            await self._run_kubectl(
+                [
+                    "kubectl", "exec",
+                    "-n", self.namespace,
+                    "-c", self._CONTAINER_NAME,
+                    pod_name,
+                    "--",
+                    "mkdir", "-p", parent,
+                ],
+                step="mkdir",
+            )
+
+        fd, tmp_path = tempfile.mkstemp(prefix="onlyoffice-save-")
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(content)
+            await self._run_kubectl(
+                [
+                    "kubectl", "cp",
+                    "-n", self.namespace,
+                    "-c", self._CONTAINER_NAME,
+                    tmp_path,
+                    f"{pod_name}:{safe_path}",
+                ],
+                step="cp",
+            )
+            logger.info(f"Wrote {len(content)} bytes to {pod_name}:{safe_path}")
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+    async def _run_kubectl(self, argv: list[str], *, step: str) -> None:
+        """asyncio.create_subprocess_exec로 kubectl 호출. stderr 수집 + 타임아웃."""
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except FileNotFoundError as e:
+            raise K8sServiceError(f"kubectl not found on auth-gateway: {e}")
+
+        try:
+            _, stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=self._KUBECTL_TIMEOUT_SECONDS
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            try:
+                await proc.communicate()
+            except Exception:
+                pass
+            raise K8sServiceError(
+                f"kubectl {step} timed out after {self._KUBECTL_TIMEOUT_SECONDS}s"
+            )
+
+        if proc.returncode != 0:
+            err = (stderr or b"").decode(errors="replace").strip()
+            logger.error(f"kubectl {step} failed (rc={proc.returncode}): {err}")
+            raise K8sServiceError(f"kubectl {step} failed: {err or 'unknown error'}")
 
     def delete_all_pods(self, label_selector: str | None = None) -> int:
         """모든 터미널 Pod 일괄 삭제 (관리자용)."""
