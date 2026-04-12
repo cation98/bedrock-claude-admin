@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -80,7 +81,18 @@ class Settings(BaseSettings):
 
     # ----- OnlyOffice Document Server -----
     onlyoffice_url: str = "http://onlyoffice.claude-sessions.svc.cluster.local"
-    onlyoffice_jwt_secret: str = ""  # 비어 있으면 JWT 서명 비활성화
+    # JWT secret은 필수. 최소 32자, placeholder("CHANGE_ME_") 금지.
+    # env 미주입 또는 placeholder면 앱 시작 실패 — fail-fast.
+    onlyoffice_jwt_secret: str = Field(..., min_length=32)
+
+    @field_validator("onlyoffice_jwt_secret")
+    @classmethod
+    def _reject_placeholder_jwt_secret(cls, v: str) -> str:
+        if v.startswith("CHANGE_ME_"):
+            raise ValueError(
+                "onlyoffice_jwt_secret must be replaced — placeholder detected"
+            )
+        return v
 
     # ----- S3 Vault -----
     s3_vault_bucket: str = ""        # 민감 파일 격리 S3 버킷 이름

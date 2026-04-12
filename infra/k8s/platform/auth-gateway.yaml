@@ -112,6 +112,13 @@ spec:
                   name: auth-gateway-secrets
                   key: TANGO_DATABASE_URL
 
+            # ── OnlyOffice JWT Secret (필수 — placeholder 시 앱 시작 실패) ──
+            - name: ONLYOFFICE_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: onlyoffice-jwt-secret
+                  key: secret
+
             # ── Non-secret SSO config ──
             - name: SSO_AUTH_METHOD
               value: "4302010"

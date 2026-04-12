@@ -784,23 +784,27 @@ async def onlyoffice_callback(
     except Exception:
         body = {}
 
-    # JWT 검증
-    if settings.onlyoffice_jwt_secret:
-        token = None
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer "):
-            token = auth_header.split(" ", 1)[1]
-        if not token:
-            token = body.get("token")
-        if not token:
-            raise HTTPException(status_code=403, detail="Missing callback token")
-        try:
-            decoded = jose_jwt.decode(token, settings.onlyoffice_jwt_secret, algorithms=["HS256"])
-            # JWT payload가 실제 body를 감싸는 경우 (Document Server가 token 필드 안에 포함)
-            if isinstance(decoded, dict) and "payload" in decoded:
-                body = decoded["payload"]
-        except Exception:
-            raise HTTPException(status_code=403, detail="Invalid callback token")
+    # JWT 검증 — 항상 필수 (secret은 config.py에서 fail-fast 보장)
+    token = None
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header.split(" ", 1)[1]
+    if not token:
+        token = body.get("token")
+    if not token:
+        raise HTTPException(status_code=403, detail="Missing callback token")
+    try:
+        decoded = jose_jwt.decode(token, settings.onlyoffice_jwt_secret, algorithms=["HS256"])
+    except Exception:
+        raise HTTPException(status_code=403, detail="Invalid callback token")
+
+    # JWT 클레임이 곧 최종 진실. verified body로 치환.
+    # Document Server가 {"payload": {...}}로 래핑하는 경우와 평면 claim 모두 지원.
+    if not isinstance(decoded, dict):
+        raise HTTPException(status_code=403, detail="Invalid callback token payload")
+    body = decoded.get("payload", decoded)
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=403, detail="Invalid callback token payload")
 
     status = int(body.get("status", 0))
     document_key = body.get("key", "")

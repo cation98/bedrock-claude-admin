@@ -7,6 +7,15 @@ connects to PostgreSQL and starts background schedulers.
 """
 
 import json
+import os
+
+# ONLYOFFICE_JWT_SECRET은 Settings에서 필수 필드이므로, 개별 test_*.py 파일이
+# Settings()를 직접 인스턴스화할 때 env var가 없으면 실패한다. 테스트 부팅 시점에
+# placeholder가 아닌 dummy 값을 주입한다.
+os.environ.setdefault(
+    "ONLYOFFICE_JWT_SECRET", "test-onlyoffice-jwt-secret-32-chars-min-xx"
+)
+
 import pytest
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
@@ -111,6 +120,7 @@ def _test_settings() -> Settings:
         jwt_algorithm="HS256",
         jwt_access_token_expire_minutes=60,
         debug=False,
+        onlyoffice_jwt_secret="test-onlyoffice-jwt-secret-32-chars-min-xx",
     )
 
 
