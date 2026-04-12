@@ -35,6 +35,99 @@ metadata:
     app: openwebui-pipelines
 data:
   # ──────────────────────────────────────────────────────────────────────────
+  # 0. Bedrock AG Manifold Pipe (BAG 모델 노출 + 요청 프록시)
+  #
+  # 역할: Open WebUI → Pipelines /v1/models 에 BAG 모델 노출
+  #   - pipelines() : BAG /api/v1/models 에서 모델 목록 조회
+  #   - pipe()      : BAG /api/v1/chat/completions 로 요청 프록시 (스트리밍 포함)
+  #
+  # 모델 ID 형식: "bedrock_ag_pipe.{model_id}"
+  #   예) bedrock_ag_pipe.us.anthropic.claude-sonnet-4-6
+  #
+  # Open WebUI DEFAULT_MODELS 설정도 이 prefix에 맞춰야 함.
+  # filter pipeline(budget_gate/user_injection/usage_emit)은 ["*"]로 이 pipe에 자동 적용.
+  # ──────────────────────────────────────────────────────────────────────────
+  bedrock_ag_pipe.py: |
+    """
+    Bedrock AG Manifold Pipeline
+    BAG(Bedrock Access Gateway)를 통해 AWS Bedrock 모델을 Open WebUI에 노출하고
+    채팅 요청을 BAG로 프록시. filter pipeline(budget_gate, user_injection, usage_emit)이
+    이 pipe의 inlet/outlet에 우선순위 순서대로 적용됨.
+    """
+    import os
+    from typing import Generator, Iterator, List, Union
+
+    import requests
+    from pydantic import BaseModel
+
+
+    class Pipeline:
+        class Valves(BaseModel):
+            # 환경변수 기본값: Pipelines Deployment에서 주입
+            OPENAI_API_BASE_URL: str = os.environ.get(
+                "OPENAI_API_BASE_URL", "http://bedrock-access-gateway:8080/api/v1"
+            )
+            OPENAI_API_KEY: str = os.environ.get("OPENAI_API_KEY", "")
+
+        def __init__(self):
+            self.type = "manifold"
+            self.id = "bedrock_ag_pipe"
+            self.name = "Bedrock AG/"  # Open WebUI 모델 목록 표시 prefix
+            self.valves = self.Valves()
+
+        def pipelines(self) -> List[dict]:
+            """BAG에서 사용 가능한 모델 목록을 반환."""
+            try:
+                r = requests.get(
+                    f"{self.valves.OPENAI_API_BASE_URL}/models",
+                    headers={"Authorization": f"Bearer {self.valves.OPENAI_API_KEY}"},
+                    timeout=10,
+                )
+                r.raise_for_status()
+                return [
+                    {"id": m["id"], "name": m["id"]}
+                    for m in r.json().get("data", [])
+                ]
+            except Exception as e:
+                print(f"[bedrock_ag_pipe] model list error: {e}")
+                # fallback: EKS 배포 시 알려진 모델 직접 반환
+                return [{"id": "us.anthropic.claude-sonnet-4-6", "name": "Claude Sonnet 4.6"}]
+
+        def pipe(
+            self,
+            user_message: str,
+            model_id: str,
+            messages: List[dict],
+            body: dict,
+        ) -> Union[str, Generator, Iterator]:
+            """BAG로 채팅 요청 프록시 (스트리밍 지원)."""
+            headers = {
+                "Authorization": f"Bearer {self.valves.OPENAI_API_KEY}",
+                "Content-Type": "application/json",
+            }
+            # manifold prefix 제거: "bedrock_ag_pipe.us.anthropic.claude-sonnet-4-6"
+            #                    → "us.anthropic.claude-sonnet-4-6"
+            actual_model = model_id.split(".", 1)[-1] if "." in model_id else model_id
+            payload = {**body, "model": actual_model}
+            url = f"{self.valves.OPENAI_API_BASE_URL}/chat/completions"
+
+            try:
+                if body.get("stream"):
+                    with requests.post(
+                        url, headers=headers, json=payload, stream=True, timeout=300
+                    ) as r:
+                        r.raise_for_status()
+                        for chunk in r.iter_content(chunk_size=None):
+                            yield chunk
+                else:
+                    r = requests.post(url, headers=headers, json=payload, timeout=120)
+                    r.raise_for_status()
+                    return r.json()
+            except Exception as e:
+                print(f"[bedrock_ag_pipe] pipe error: {e}")
+                return f"Error: {e}"
+
+  # ──────────────────────────────────────────────────────────────────────────
   # 1. User ID Injection Pipeline (우선순위: 10 — 가장 먼저 실행)
   #
   # JWT trusted header auth에서 Open WebUI가 수립한 사용자 정보를
@@ -53,13 +146,16 @@ data:
     Open WebUI 사용자 컨텍스트의 Platform DB UUID를 OpenAI body.user에 주입.
     Bedrock AG가 이 값을 usage_events.user_id로 기록.
     """
-    from typing import Optional
+    from typing import List, Optional
     from pydantic import BaseModel
 
 
     class Pipeline:
         class Valves(BaseModel):
-            pass
+            # Pipelines framework 필수 필드: 이 filter가 적용될 pipe pipeline 목록
+            # ["*"] = 모든 pipe pipeline에 적용
+            pipelines: List[str] = ["*"]
+            priority: int = 10
 
         def __init__(self):
             self.type = "filter"
@@ -115,7 +211,7 @@ data:
     import os
     import time
     from datetime import datetime
-    from typing import Optional
+    from typing import List, Optional
 
     import redis.asyncio as aioredis
     from fastapi import HTTPException
@@ -124,6 +220,9 @@ data:
 
     class Pipeline:
         class Valves(BaseModel):
+            # Pipelines framework 필수 필드: 이 filter가 적용될 pipe pipeline 목록
+            pipelines: List[str] = ["*"]
+            priority: int = 5
             # 기본 월 한도 (tokens). 관리자가 Redis에서 사용자별 override 가능.
             default_monthly_limit: int = 3_000_000
             # max_tokens 미지정 시 강제 기본값 (Claude Sonnet 4.6 최대)
@@ -161,9 +260,16 @@ data:
             if "max_tokens" not in body:
                 body["max_tokens"] = self.valves.default_max_tokens
 
-            user_id = body.get("user") or (user.get("id") if user else None)
+            # QUALITY-F 수정: user_injection(priority=10)이 아직 실행되기 전이므로
+            # body["user"] 가 비어있을 수 있음 (budget_gate priority=5).
+            # user_injection 과 동일한 우선순위 로직 적용:
+            #   external_id(Platform UUID) > id(OW 내부 UUID)
+            # → budget_gate, usage_emit 이 항상 동일 user key 를 사용하도록 보장.
+            user_id = body.get("user") or (
+                (user.get("external_id") or user.get("id")) if user else None
+            )
             if not user_id or not self._redis:
-                return body  # Redis 미연결 시 pass-through (fail-open)
+                return body  # Redis 미연결 또는 user 없으면 pass-through (fail-open)
 
             try:
                 # 월 한도 조회 (사용자별 override → 기본값)
@@ -214,7 +320,7 @@ data:
     """
     import os
     import time
-    from typing import Optional
+    from typing import List, Optional
 
     import redis.asyncio as aioredis
     from pydantic import BaseModel
@@ -222,6 +328,9 @@ data:
 
     class Pipeline:
         class Valves(BaseModel):
+            # Pipelines framework 필수 필드: 이 filter가 적용될 pipe pipeline 목록
+            pipelines: List[str] = ["*"]
+            priority: int = 20
             stream_key: str = "stream:usage_events"
             stream_maxlen: int = 10_000  # 근사 trim (메모리 상한)
 
@@ -354,6 +463,14 @@ spec:
             # Pipelines는 다시 BAG를 가리킴
             - name: OPENAI_API_BASE_URL
               value: "http://bedrock-access-gateway:8080/api/v1"
+
+            # BAG API 인증키 — BAG의 /api/v1/models, /api/v1/chat/completions 요청 시 필요
+            # bedrock-ag-secret의 API_KEY와 동일 값
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: bedrock-ag-secret
+                  key: API_KEY
 
             # Open WebUI ↔ Pipelines 인증 키 (Secret에서 주입)
             - name: PIPELINES_API_KEY
