@@ -97,84 +97,40 @@ resource "aws_security_group_rule" "eks_to_redis" {
   description              = "EKS nodes to ElastiCache Redis"
 }
 
-# ----- ElastiCache Redis Replication Group (HA, Multi-AZ) -----
-# 기존 aws_elasticache_cluster(단일 노드) → aws_elasticache_replication_group으로 교체
+# ----- ElastiCache Redis (기존 standalone cluster 참조) -----
+# Phase 0: 기존 bedrock-claude-redis (cache.t3.micro, 단일 노드) 재활용
+# 이유: 동일 ID로 replication group 생성 불가 (AWS 제약)
+# Phase 1 업그레이드 경로: bedrock-claude-redis-ha(t3.medium, HA) 신규 생성 후
+#   auth-gateway + Pipelines REDIS_URL 전환 → 구 cluster 삭제
 #
-# 변경 이유:
-#   1. Phase 0에서 JWT jti 블랙리스트 + Redis Stream 추가로 단일 노드 SPOF 불가
-#   2. auth-gateway HPA 가동 중 Redis 재시작 → 전체 인증 차단 방지
-#   3. cache.t3.micro 메모리(0.5Gi)로는 jti blacklist + Stream 동시 운용 불충분
-#
-# primary: ap-northeast-2a (subnet 10.0.10.0/24)
-# replica: ap-northeast-2c (subnet 10.0.20.0/24)
-# automatic_failover: primary 장애 시 replica → primary 자동 승격
+# ⚠️  Phase 1 TODO: aws_elasticache_replication_group "redis_ha" 리소스로 교체
+#   - replication_group_id = "${var.project_name}-redis-ha"
+#   - node_type = "cache.t3.medium" (jti blacklist + Streams 동시 운용)
+#   - num_cache_clusters = 2 (primary + replica, Multi-AZ)
+#   - at_rest_encryption_enabled = true
 
-resource "aws_elasticache_replication_group" "redis" {
-  replication_group_id = "${var.project_name}-redis"
-  description          = "Redis HA: jti blacklist + Redis Streams + budget reservations (Phase 0)"
-
-  # cache.t3.medium: 2 vCPU, 3.09 Gi — jti/Stream/reservation 전부 수용
-  node_type = "cache.t3.medium"
-
-  # 2노드: primary(쓰기) + replica(읽기 + failover 대기)
-  # Cluster Mode 비활성화 (단일 샤드): Redis Streams는 단일 샤드에서 동작
-  num_cache_clusters = 2
-
-  # Redis 7.x: Streams, ACL, LMPOP 등 최신 기능 지원
-  engine_version       = "7.0"
-  parameter_group_name = "default.redis7"
-  port                 = 6379
-
-  # Multi-AZ: primary와 replica를 서로 다른 AZ에 배치
-  # subnet_group에 지정된 2개 서브넷(2a, 2c)에 각각 1노드씩 배치됨
-  automatic_failover_enabled = true
-  multi_az_enabled           = true
-
-  # 네트워크: EKS private 서브넷에 배치
-  subnet_group_name  = aws_elasticache_subnet_group.redis.name
-  security_group_ids = [aws_security_group.redis.id]
-
-  # 유지보수 윈도우: KST 기준 새벽 시간대
-  maintenance_window = "sun:18:00-sun:19:00"
-
-  # 스냅샷: jti blacklist는 재건 가능(TTL 기반)하나 Redis Stream WAL은 복구 필요
-  # 1일 보관으로 usage-worker 장애 복구 대응
-  snapshot_retention_limit = 1
-  snapshot_window          = "17:00-18:00" # UTC (KST 02:00-03:00)
-
-  # 저장 암호화: PIPA/ISMS-P 준수 — jti/사용자 식별자 at-rest 보호
-  at_rest_encryption_enabled = true
-
-  # 전송 암호화: Phase 1에서 활성화 예정 (현재 auth-gateway redis:// URL 대응)
-  # 활성화 시 auth-gateway REDIS_URL을 rediss://로 변경 필요
-  transit_encryption_enabled = false
-
-  tags = {
-    Name    = "${var.project_name}-redis"
-    Owner   = "N1102359"
-    Env     = var.environment
-    Service = "sko-claude-ai-agent"
-  }
+data "aws_elasticache_cluster" "redis" {
+  cluster_id = "${var.project_name}-redis"
 }
 
 # ----- Outputs -----
 
 output "redis_primary_endpoint" {
-  description = "Redis Primary 엔드포인트 (쓰기: auth-gateway, Pipelines)"
-  value       = aws_elasticache_replication_group.redis.primary_endpoint_address
+  description = "Redis 엔드포인트 (auth-gateway, Pipelines)"
+  value       = data.aws_elasticache_cluster.redis.cache_nodes[0].address
 }
 
 output "redis_reader_endpoint" {
-  description = "Redis Reader 엔드포인트 (읽기 전용 쿼리 optional)"
-  value       = aws_elasticache_replication_group.redis.reader_endpoint_address
+  description = "Redis 엔드포인트 (Phase 0: primary와 동일 — standalone cluster)"
+  value       = data.aws_elasticache_cluster.redis.cache_nodes[0].address
 }
 
 output "redis_port" {
   description = "Redis 포트"
-  value       = aws_elasticache_replication_group.redis.port
+  value       = data.aws_elasticache_cluster.redis.cache_nodes[0].port
 }
 
 output "redis_connection_url" {
-  description = "REDIS_URL 값 (redis://primary:port/0) — auth-gateway 환경변수에 사용"
-  value       = "redis://${aws_elasticache_replication_group.redis.primary_endpoint_address}:${aws_elasticache_replication_group.redis.port}/0"
+  description = "REDIS_URL 값 (redis://endpoint:port/0) — auth-gateway 환경변수에 사용"
+  value       = "redis://${data.aws_elasticache_cluster.redis.cache_nodes[0].address}:${data.aws_elasticache_cluster.redis.cache_nodes[0].port}/0"
 }

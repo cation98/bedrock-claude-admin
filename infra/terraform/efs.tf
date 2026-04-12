@@ -38,7 +38,7 @@ resource "aws_efs_file_system" "user_workspaces" {
 # 2개 AZ (ap-northeast-2a, 2c)에 각각 1개씩 생성
 
 resource "aws_efs_mount_target" "eks_private" {
-  count = length(aws_subnet.eks_private)
+  count = length(var.eks_private_subnet_cidrs)
 
   file_system_id  = aws_efs_file_system.user_workspaces.id
   subnet_id       = aws_subnet.eks_private[count.index].id
@@ -61,7 +61,7 @@ resource "aws_security_group" "efs" {
     from_port   = 2049
     to_port     = 2049
     protocol    = "tcp"
-    cidr_blocks = var.eks_private_subnet_cidrs  # ["10.0.10.0/24", "10.0.20.0/24"]
+    cidr_blocks = var.eks_private_subnet_cidrs # ["10.0.10.0/24", "10.0.20.0/24"]
     description = "NFS from EKS private subnets"
   }
 

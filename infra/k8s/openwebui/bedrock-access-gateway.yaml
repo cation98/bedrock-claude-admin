@@ -101,6 +101,13 @@ spec:
               value: "ap-northeast-2"  # 기본 리전 (KR)
             - name: AWS_DEFAULT_REGION
               value: "ap-northeast-2"
+            # BAG OpenAI 호환 API 인증 키 (Pipelines ↔ BAG 공유)
+            # PIPELINES_API_KEY와 동일 값 사용 (Pipelines가 forwarding 시 동일 key 전달)
+            - name: API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: bedrock-ag-secret
+                  key: API_KEY
 
           resources:
             requests:

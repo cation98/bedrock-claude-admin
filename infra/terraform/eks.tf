@@ -51,10 +51,17 @@ resource "aws_eks_cluster" "main" {
     endpoint_private_access = true
   }
 
+  # 기존 클러스터와 일치시키기 위해 명시적으로 false 설정
+  # 기본값(true)과 다르므로 생략하면 replacement 발생
+  bootstrap_self_managed_addons = false
+
   # OIDC Provider 활성화 (IRSA: Pod에 IAM 역할 부여 시 필요)
   # Pod 단위로 "이 Pod만 Bedrock API를 호출할 수 있다"를 설정할 수 있음
+  # bootstrap_cluster_creator_admin_permissions: 기존 클러스터(true) 값과 일치 필요
+  # 생략 시 null → replacement 발생하므로 명시적으로 기재
   access_config {
-    authentication_mode = "API_AND_CONFIG_MAP"
+    authentication_mode                         = "API_AND_CONFIG_MAP"
+    bootstrap_cluster_creator_admin_permissions = true
   }
 
   depends_on = [

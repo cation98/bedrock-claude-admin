@@ -68,6 +68,10 @@ spec:
   # Phase 0: 1 replica (SQLite는 단일 writer 필요)
   # Phase 1: PostgreSQL 전환 후 2+ replicas 가능
   replicas: 1
+  # Recreate: SQLite on EFS — 구 pod 완전 종료 후 신 pod 시작
+  # (RollingUpdate 시 두 pod가 동시에 SQLite write → 파일 잠금 충돌)
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: open-webui
