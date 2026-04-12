@@ -233,7 +233,9 @@ resource "aws_eks_node_group" "main" {
 
 resource "aws_eks_node_group" "system" {
   cluster_name    = aws_eks_cluster.main.name
-  node_group_name = "${var.project_name}-system-nodes"
+  # CLAUDE.md + k8s 팀 합의 naming: "system-node-large" (prefix 없음)
+  # T6 manifest nodeSelector/toleration과 일치해야 함
+  node_group_name = "system-node-large"
   node_role_arn   = aws_iam_role.eks_nodes.arn
   subnet_ids      = aws_subnet.eks_private[*].id
 
@@ -266,7 +268,7 @@ resource "aws_eks_node_group" "system" {
   tags = {
     "k8s.io/cluster-autoscaler/enabled"                 = "true"
     "k8s.io/cluster-autoscaler/${var.project_name}-eks" = "owned"
-    Name                                                = "${var.project_name}-system-nodes"
+    Name                                                = "system-node-large"
     Owner                                               = "N1102359"
     Env                                                 = var.environment
     Service                                             = "sko-claude-ai-agent"
@@ -292,7 +294,8 @@ resource "aws_eks_node_group" "system" {
 
 resource "aws_eks_node_group" "ingress" {
   cluster_name    = aws_eks_cluster.main.name
-  node_group_name = "${var.project_name}-ingress-nodes"
+  # CLAUDE.md + k8s 팀 합의 naming: "ingress-workers" (prefix 없음)
+  node_group_name = "ingress-workers"
   node_role_arn   = aws_iam_role.eks_nodes.arn
   subnet_ids      = aws_subnet.eks_private[*].id
 
@@ -321,7 +324,7 @@ resource "aws_eks_node_group" "ingress" {
   tags = {
     "k8s.io/cluster-autoscaler/enabled"                 = "true"
     "k8s.io/cluster-autoscaler/${var.project_name}-eks" = "owned"
-    Name                                                = "${var.project_name}-ingress-nodes"
+    Name                                                = "ingress-workers"
     Owner                                               = "N1102359"
     Env                                                 = var.environment
     Service                                             = "sko-claude-ai-agent"
