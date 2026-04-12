@@ -264,35 +264,73 @@ async def stream_file(
     pod_ip = _get_pod_ip(username, settings.k8s_namespace)
     download_url = f"http://{pod_ip}:8080/api/download"
 
+    import unicodedata
+    import urllib.parse
+
+    # 스트리밍 전송 — 전체 파일을 메모리에 버퍼링하지 않고 64KB 청크로 중계.
+    # 50MB 파일까지 지원하려면 timeout도 넉넉하게(120s). client/response의 생명주기는
+    # StreamingResponse의 generator가 책임지고 종료 시 aclose 한다.
+    http = httpx.AsyncClient(timeout=120.0)
+    resp: httpx.Response | None = None
     try:
-        async with httpx.AsyncClient(timeout=60.0) as http:
-            import unicodedata, urllib.parse
-            encoded = urllib.parse.quote(file_path, safe="/")
-            resp = await http.get(f"{download_url}?path={encoded}")
-            if resp.status_code == 404:
-                alt_form = "NFD" if file_path == unicodedata.normalize("NFC", file_path) else "NFC"
-                alt_path = unicodedata.normalize(alt_form, file_path)
-                alt_encoded = urllib.parse.quote(alt_path, safe="/")
-                resp = await http.get(f"{download_url}?path={alt_encoded}")
-            if resp.status_code != 200:
-                raise HTTPException(status_code=resp.status_code, detail="File not accessible")
+        encoded = urllib.parse.quote(file_path, safe="/")
+        req = http.build_request("GET", f"{download_url}?path={encoded}")
+        resp = await http.send(req, stream=True)
 
-            ext = os.path.splitext(file_path)[1].lower()
-            media_type = MIME_MAP.get(ext, "application/octet-stream")
-            basename = os.path.basename(file_path)
+        if resp.status_code == 404:
+            await resp.aclose()
+            alt_form = "NFD" if file_path == unicodedata.normalize("NFC", file_path) else "NFC"
+            alt_path = unicodedata.normalize(alt_form, file_path)
+            alt_encoded = urllib.parse.quote(alt_path, safe="/")
+            req = http.build_request("GET", f"{download_url}?path={alt_encoded}")
+            resp = await http.send(req, stream=True)
 
-            return StreamingResponse(
-                content=iter([resp.content]),
-                media_type=media_type,
-                headers={
-                    "Content-Disposition": f'inline; filename="{basename}"',
-                    "Content-Security-Policy": "sandbox",
-                    "X-Content-Type-Options": "nosniff",
-                },
-            )
+        if resp.status_code != 200:
+            status = resp.status_code
+            await resp.aclose()
+            await http.aclose()
+            raise HTTPException(status_code=status, detail="File not accessible")
     except httpx.RequestError as e:
+        if resp is not None:
+            await resp.aclose()
+        await http.aclose()
         logger.error(f"Pod proxy error: {e}")
         raise HTTPException(status_code=502, detail="Pod fileserver unreachable")
+    except HTTPException:
+        raise
+    except Exception:
+        if resp is not None:
+            await resp.aclose()
+        await http.aclose()
+        raise
+
+    ext = os.path.splitext(file_path)[1].lower()
+    media_type = MIME_MAP.get(ext, "application/octet-stream")
+    basename = os.path.basename(file_path)
+
+    fwd_headers = {
+        "Content-Disposition": f'inline; filename="{basename}"',
+        "Content-Security-Policy": "sandbox",
+        "X-Content-Type-Options": "nosniff",
+    }
+    # Content-Length를 전달해 브라우저가 진행률 표시 가능하게 한다
+    cl = resp.headers.get("content-length")
+    if cl:
+        fwd_headers["Content-Length"] = cl
+
+    async def _stream() -> "AsyncIterator[bytes]":  # type: ignore[name-defined]
+        try:
+            async for chunk in resp.aiter_bytes(chunk_size=65536):
+                yield chunk
+        finally:
+            await resp.aclose()
+            await http.aclose()
+
+    return StreamingResponse(
+        content=_stream(),
+        media_type=media_type,
+        headers=fwd_headers,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -873,13 +911,19 @@ async def _save_edited_file(session: EditSession, download_url: str, filetype: s
     실제 Pod 쓰기는 K8sService.write_file_to_pod(username, container_path, bytes)가 담당 (T4).
     네트워크 통신은 kubectl cp 기반이므로 50MB 파일 기준 60~120초 타임아웃 필요.
     """
+    # Document Server → auth-gateway 스트리밍 다운로드 (메모리 버퍼링 최소화)
+    # kubectl cp는 임시 파일을 받기 때문에 여기서 bytes로 모두 수집 후 전달한다.
+    # 향후 파일이 커지면 임시 파일 경로를 직접 주고받는 방식으로 개선 가능.
+    chunks: list[bytes] = []
     async with httpx.AsyncClient(timeout=120.0) as http:
-        resp = await http.get(download_url)
-        if resp.status_code != 200:
-            raise RuntimeError(
-                f"download failed: HTTP {resp.status_code} from {download_url}"
-            )
-        content = resp.content  # streaming 전환은 T3에서 처리
+        async with http.stream("GET", download_url) as resp:
+            if resp.status_code != 200:
+                raise RuntimeError(
+                    f"download failed: HTTP {resp.status_code} from {download_url}"
+                )
+            async for chunk in resp.aiter_bytes(chunk_size=65536):
+                chunks.append(chunk)
+    content = b"".join(chunks)
 
     # Pod 내부 경로 계산
     if session.is_shared:
