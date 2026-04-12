@@ -1024,11 +1024,11 @@
         });
 
         // ── Auth Helper ──
-        // Dual Cookie 방식 (api T4 확정):
-        //   bedrock_jwt_vis — JS readable, SameSite=Strict (username/role/exp 경량 페이로드)
-        //   bedrock_jwt     — HttpOnly, Secure, 서버 인증 전용 (JS 접근 불가 → fallback은 자동 skip)
+        // getToken(): 로그인 상태 확인 + 화면 표시용 사용자 정보 추출 전용
+        //   bedrock_jwt_vis — JS readable, SameSite=Lax (username/role/exp 경량 페이로드)
+        //                     실제 API 인증은 bedrock_jwt(HttpOnly) 쿠키가 자동 전송 — apiFetch() 참조
+        //   bedrock_jwt     — HttpOnly 전환 전 이행 기간 fallback (전환 후 자동 skip)
         //   claude_token    — 레거시 fallback (단계적 제거 예정)
-        // Authorization Bearer 헤더는 bedrock_jwt_vis 값 사용
         function getToken() {
             var m = document.cookie.match(/(?:^|;\s*)bedrock_jwt_vis=([^;]*)/);
             if (!m) m = document.cookie.match(/(?:^|;\s*)bedrock_jwt=([^;]*)/);
@@ -1038,11 +1038,13 @@
 
         function apiFetch(url, options) {
             options = options || {};
-            var token = getToken();
             var headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers || {});
-            if (token) headers['Authorization'] = 'Bearer ' + token;
-
-            return fetch(url, Object.assign({}, options, { headers: headers })).then(function(res) {
+            // Dual Cookie 방식: bedrock_jwt(HttpOnly)는 credentials:'include'로 자동 전송
+            // Authorization 헤더 수동 추가 불필요 — 서버가 쿠키로 인증
+            return fetch(url, Object.assign({}, options, {
+                headers: headers,
+                credentials: 'include'
+            })).then(function(res) {
                 if (res.status === 401) {
                     var returnUrl = encodeURIComponent(window.location.pathname);
                     window.location.href = '/webapp-login?return_url=' + returnUrl;
@@ -1053,10 +1055,11 @@
         }
 
         function loadUserInfo() {
-            var token = getToken();
-            if (!token) return;
+            // bedrock_jwt_vis: JS readable 경량 쿠키 (username/role/exp 포함, 화면 표시용)
+            var vis = getToken();
+            if (!vis) return;
             try {
-                var payload = JSON.parse(atob(token.split('.')[1]));
+                var payload = JSON.parse(atob(vis.split('.')[1]));
                 document.getElementById('usernameBadge').textContent = payload.name || payload.sub || '';
                 // admin 역할 감지 → 관리자 타일 표시
                 if (payload.role === 'admin') {
