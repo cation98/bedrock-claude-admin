@@ -227,23 +227,23 @@ def _check_approval(user: User) -> None:
 
 
 def _issue_jwt(user: User, settings: Settings, request: Request | None = None) -> LoginResponse:
-    """JWT 토큰 발급 + LoginResponse 반환.
+    """RS256 JWT 토큰 발급 + LoginResponse 반환.
 
-    Admin dashboard(claude-admin.skons.net)에서 요청 시 admin role 필수.
+    SEC-MED-6: admin 판별은 DB의 user.role claim 기반 — Origin/Referer 헤더 미사용.
+    admin dashboard 접근 제어는 admin dashboard 자체(JWT role 확인)에서 담당한다.
+
+    페이로드 구조(기존 경로 호환):
+      sub      = user.username  (사번, 기존 엔드포인트 호환)
+      user_id  = user.id
+      role     = user.role
+      type     = "access"
+    RS256 서명 — security.create_access_token이 jwt_rs256 private key로 서명.
     """
-    # Admin dashboard Origin 체크: admin이 아니면 로그인 거부
-    if request:
-        origin = request.headers.get("Origin", "") or request.headers.get("Referer", "")
-        if "claude-admin" in origin and user.role != "admin":
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="관리자 계정만 Admin Dashboard에 로그인할 수 있습니다.",
-            )
-
     token_data = {
         "sub": user.username,
         "user_id": user.id,
         "role": user.role,
+        "type": "access",
     }
     access_token = create_access_token(token_data, settings)
     return LoginResponse(

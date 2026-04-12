@@ -15,9 +15,11 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://postgres:postgres@localhost:5432/bedrock_claude"
 
     # ----- JWT -----
+    # jwt_secret_key / jwt_algorithm 은 레거시 필드로만 유지.
+    # 신규 토큰 발급·검증은 모두 RS256(jwt_rs256.py)으로 수행한다.
     jwt_secret_key: str = "change-me-in-production-use-256-bit-secret"
-    jwt_algorithm: str = "HS256"
-    jwt_access_token_expire_minutes: int = 480  # 8시간 (실습 세션 기준)
+    jwt_algorithm: str = "RS256"
+    jwt_access_token_expire_minutes: int = 15  # 15분 (설계 §2 JWT 라이프사이클)
 
     # ----- SSO (sso.skons.net) -----
     sso_auth_url: str = ""  # 인증 엔드포인트
