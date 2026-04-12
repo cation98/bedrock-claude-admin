@@ -1123,8 +1123,31 @@ async def _save_edited_file(session: EditSession, download_url: str, filetype: s
     SSRF 방어를 위해 download_url 호스트는 allowlist 검증 후에만 호출한다.
     """
     import tempfile as _tempfile
+    from urllib.parse import urlparse
 
     _validate_callback_download_url(download_url)
+
+    # P2-BUG2: OnlyOffice DS(8.2.2)는 자기 서버 이름을 `localhost`로 인식해
+    # callback body.url 을 `http://localhost/cache/files/...` 로 생성한다.
+    # auth-gateway Pod 에서 `localhost` = 자기 loopback(127.0.0.1) ≠ OnlyOffice Pod
+    # → httpx connect 실패. Allowlist 는 통과(`localhost` 포함)하지만 실제 다운로드
+    # 가 불가하므로 cluster DNS 로 rewrite 한다. 멱등, 실 localhost 개발환경은
+    # K8s 밖이라 영향 없음.
+    _parsed = urlparse(download_url)
+    if _parsed.hostname in ("localhost", "127.0.0.1"):
+        _port_suffix = (
+            f":{_parsed.port}" if _parsed.port and _parsed.port != 80 else ""
+        )
+        _rewritten = _parsed._replace(
+            netloc=f"onlyoffice.claude-sessions.svc.cluster.local{_port_suffix}"
+        ).geturl()
+        logger.warning(
+            f"Rewrote OO callback URL from {_parsed.hostname} loopback to cluster DNS: "
+            f"{download_url} → {_rewritten}"
+        )
+        download_url = _rewritten
+
+    logger.info(f"Downloading edited document from OO: {download_url}")
 
     # Pod 내부 경로 계산 (검증은 K8sService 내부에서)
     if session.is_shared:

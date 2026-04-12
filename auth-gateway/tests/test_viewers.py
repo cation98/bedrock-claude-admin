@@ -766,6 +766,86 @@ class TestCallbackSaveFlow:
             db_session.query(EditSession).filter_by(id=session_id).first() is None
         )
 
+    def test_save_rewrites_localhost_to_cluster_dns(self, db_session, monkeypatch):
+        """OnlyOffice DS 가 callback url 에 ``localhost`` host 를 넣어도
+        auth-gateway 는 cluster DNS 로 rewrite 하여 실제 OO Pod 에 도달해야 한다.
+
+        P2-BUG2 재현 조건: OO 8.2.2 가 nginx 로그에 ``[localhost]`` 로 자신을
+        인식 → callback body 의 ``url`` 을 ``http://localhost/cache/files/...`` 로
+        직렬화 → auth-gateway 가 자기 loopback(127.0.0.1) 에 httpx.GET 시도 →
+        ConnectError → 저장 실패. Rewrite 후에는 cluster DNS 로 가야 한다.
+        """
+        import asyncio
+        from app.routers import viewers as _v
+
+        captured: list[str] = []
+
+        class _FakeResp:
+            status_code = 200
+
+            async def aiter_bytes(self, chunk_size=65536):
+                if False:
+                    yield b""
+                return
+
+        class _FakeStreamCtx:
+            def __init__(self, url):
+                self.url = url
+
+            async def __aenter__(self):
+                return _FakeResp()
+
+            async def __aexit__(self, *a):
+                return False
+
+        class _FakeClient:
+            def __init__(self, *a, **kw):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            def stream(self, method, url):
+                captured.append(url)
+                return _FakeStreamCtx(url)
+
+        monkeypatch.setattr(_v.httpx, "AsyncClient", _FakeClient)
+
+        class _FakeK8s:
+            def __init__(self, *a, **kw):
+                pass
+
+            async def write_local_file_to_pod(self, *a, **kw):
+                return None
+
+        from app.services import k8s_service as _ksvc
+        monkeypatch.setattr(_ksvc, "K8sService", _FakeK8s)
+
+        session = _mk_edit_session(
+            db_session, file_path="uploads/rewrite.xlsx", version=1
+        )
+        session.is_shared = False
+        db_session.commit()
+
+        asyncio.get_event_loop().run_until_complete(
+            _v._save_edited_file(
+                session,
+                "http://localhost/cache/files/Editor.xlsx?token=abc",
+                "xlsx",
+            )
+        )
+
+        assert captured, "httpx.stream 이 호출되지 않음"
+        assert all("localhost" not in u for u in captured), (
+            f"localhost 가 rewrite 되지 않음: {captured}"
+        )
+        assert any(
+            "onlyoffice.claude-sessions.svc.cluster.local" in u for u in captured
+        ), f"cluster DNS 로 rewrite 되지 않음: {captured}"
+
 
 class TestEditModeConfig:
     """Priority 2: /edit /shared 엔드포인트의 편집 모드 config."""
