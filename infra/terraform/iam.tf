@@ -223,3 +223,86 @@ output "bedrock_ag_role_arn" {
   description = "Bedrock AG IRSA Role ARN (K8s ServiceAccount openwebui/bedrock-ag-sa에 연결)"
   value       = aws_iam_role.bedrock_ag_access.arn
 }
+
+# =============================================================================
+# IAM Role: Auth Gateway Bedrock IRSA (T20 선행 조건)
+#
+# auth-gateway의 bedrock_proxy.py가 Bedrock을 직접 호출하기 위한 IRSA.
+# Console Pod(T20)이 auth-gateway를 통해 Claude에 접근하는 경로:
+#   Console Pod → auth-gateway /v1/messages → Bedrock
+#
+# 연결 대상 ServiceAccount: platform/platform-admin-sa
+# (auth-gateway Deployment에서 사용 중인 SA)
+#
+# 주의: node role에 Bedrock 권한 미부여 → IRSA 없으면 502 AccessDenied
+# =============================================================================
+
+resource "aws_iam_role" "auth_gateway_bedrock" {
+  name = "${var.project_name}-auth-gateway-bedrock"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Federated = aws_iam_openid_connect_provider.eks.arn
+      }
+      Action = "sts:AssumeRoleWithWebIdentity"
+      Condition = {
+        StringEquals = {
+          # platform 네임스페이스의 platform-admin-sa ServiceAccount 전용
+          "${replace(aws_eks_cluster.main.identity[0].oidc[0].issuer, "https://", "")}:sub" = "system:serviceaccount:platform:platform-admin-sa"
+          "${replace(aws_eks_cluster.main.identity[0].oidc[0].issuer, "https://", "")}:aud" = "sts.amazonaws.com"
+        }
+      }
+    }]
+  })
+
+  tags = {
+    Name    = "${var.project_name}-auth-gateway-bedrock"
+    Owner   = "N1102359"
+    Env     = var.environment
+    Service = "sko-claude-ai-agent"
+  }
+}
+
+resource "aws_iam_role_policy" "auth_gateway_bedrock_invoke" {
+  name = "${var.project_name}-auth-gateway-bedrock-invoke"
+  role = aws_iam_role.auth_gateway_bedrock.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        # auth-gateway bedrock_proxy: Console Pod 대신 Bedrock InvokeModel 호출
+        Sid    = "AllowBedrockInvoke"
+        Effect = "Allow"
+        Action = [
+          "bedrock:InvokeModel",
+          "bedrock:InvokeModelWithResponseStream"
+        ]
+        Resource = [
+          "arn:aws:bedrock:*::foundation-model/anthropic.claude-*",
+          "arn:aws:bedrock:*:680877507363:inference-profile/us.anthropic.claude-*",
+          "arn:aws:bedrock:*:680877507363:inference-profile/global.anthropic.claude-*",
+          "arn:aws:bedrock:*::inference-profile/us.anthropic.claude-*",
+          "arn:aws:bedrock:*::inference-profile/global.anthropic.claude-*"
+        ]
+      },
+      {
+        Sid    = "AllowModelDiscovery"
+        Effect = "Allow"
+        Action = [
+          "bedrock:ListFoundationModels",
+          "bedrock:GetFoundationModel"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+output "auth_gateway_bedrock_role_arn" {
+  description = "Auth Gateway Bedrock IRSA Role ARN (platform/platform-admin-sa 연결)"
+  value       = aws_iam_role.auth_gateway_bedrock.arn
+}
