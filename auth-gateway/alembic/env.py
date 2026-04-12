@@ -57,6 +57,7 @@ from app.models.announcement import Announcement  # noqa: E402, F401
 from app.models.guide import Guide  # noqa: E402, F401
 from app.models.moderation import ModerationViolation  # noqa: E402, F401
 from app.services.sqlcipher_service import SQLCipherKey  # noqa: E402, F401
+from app.models.ui_source_event import UiSourceEvent  # noqa: E402, F401
 
 # The target metadata that Alembic uses for --autogenerate diffing.
 target_metadata = Base.metadata

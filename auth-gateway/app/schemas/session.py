@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -35,3 +36,8 @@ class BulkSessionRequest(BaseModel):
     """관리자용: 다수 사용자 일괄 세션 생성."""
     usernames: list[str]
     session_type: str = "workshop"
+
+
+class UiSourceRequest(BaseModel):
+    """UI 소스 사용 이벤트 기록 요청 — T23."""
+    source: Literal["webchat", "console"]
