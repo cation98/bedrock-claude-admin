@@ -937,6 +937,35 @@ def _extract_action(actions: list) -> tuple[str, str]:
     return str(first.get("userid", "")), str(first.get("type", ""))
 
 
+# SSRF 방어: 콜백 body의 download_url은 OnlyOffice Document Server 서비스 DNS만 허용.
+# JWT 검증이 1차 방어선이지만 secret 미설정 환경 / DS compromise 시나리오를 고려한 심층 방어.
+# 허용 호스트는 K8s svc DNS 또는 documentserver 호스트명 패턴으로 제한.
+_ALLOWED_CALLBACK_URL_HOSTS = {
+    "documentserver.claude-sessions.svc.cluster.local",
+    "documentserver",
+    "documentserver.claude-sessions",
+    "documentserver.claude-sessions.svc",
+    "localhost",  # 로컬 개발
+    "127.0.0.1",
+}
+
+
+def _validate_callback_download_url(url: str) -> None:
+    """콜백의 download URL이 신뢰 가능한 호스트인지 검증. 아니면 RuntimeError.
+
+    http/https만 허용, host는 allowlist. IMDS(169.254.169.254), K8s API,
+    다른 Pod IP 등으로의 SSRF를 원천 차단한다.
+    """
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise RuntimeError(f"disallowed scheme: {parsed.scheme}")
+    host = (parsed.hostname or "").lower()
+    if host not in _ALLOWED_CALLBACK_URL_HOSTS:
+        raise RuntimeError(f"disallowed callback download host: {host!r}")
+
+
 async def _save_edited_file(session: EditSession, download_url: str, filetype: str | None) -> None:
     """Document Server에서 수정 파일을 다운로드하여 Pod에 저장.
 
@@ -945,7 +974,10 @@ async def _save_edited_file(session: EditSession, download_url: str, filetype: s
 
     실제 Pod 쓰기는 K8sService.write_file_to_pod(username, container_path, bytes)가 담당 (T4).
     네트워크 통신은 kubectl cp 기반이므로 50MB 파일 기준 60~120초 타임아웃 필요.
+    SSRF 방어를 위해 download_url 호스트는 allowlist 검증 후에만 호출한다.
     """
+    _validate_callback_download_url(download_url)
+
     # Document Server → auth-gateway 스트리밍 다운로드 (메모리 버퍼링 최소화)
     # kubectl cp는 임시 파일을 받기 때문에 여기서 bytes로 모두 수집 후 전달한다.
     # 향후 파일이 커지면 임시 파일 경로를 직접 주고받는 방식으로 개선 가능.
