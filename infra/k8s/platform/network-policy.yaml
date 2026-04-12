@@ -182,6 +182,20 @@ spec:
         - port: 8000
           protocol: TCP
 
+    # OnlyOffice(claude-sessions ns)에서 오는 콜백 POST + 파일 초기 fetch
+    # OnlyOffice Document Server는 편집 완료 후 auth-gateway의 콜백 URL로
+    # POST를 보내고, document.url 기반으로 초기 파일을 GET 한다.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: claude-sessions
+          podSelector:
+            matchLabels:
+              app: onlyoffice
+      ports:
+        - port: 8000
+          protocol: TCP
+
   egress:
     # DNS 해석 허용
     - to: []
@@ -218,10 +232,15 @@ spec:
         - port: 6379
           protocol: TCP
 
-    # OnlyOffice 허용 (문서 편집, 향후 기능)
-    # Auth Gateway가 OnlyOffice API를 통해 문서 변환/편집 요청
+    # OnlyOffice 허용 (문서 편집)
+    # Auth Gateway → OnlyOffice: iframe config 프록시, 콜백 시 편집본 다운로드
+    # OnlyOffice는 claude-sessions 네임스페이스에 있으므로 namespaceSelector + podSelector 조합 필수
+    # (podSelector만 쓰면 같은 platform 네임스페이스로 제한되어 매칭 실패)
     - to:
-        - podSelector:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: claude-sessions
+          podSelector:
             matchLabels:
               app: onlyoffice
       ports:
@@ -233,15 +252,21 @@ spec:
 # 5. OnlyOffice 트래픽 허용 정책
 # =============================================================================
 # 대상: app=onlyoffice 라벨을 가진 Pod
+# 네임스페이스: claude-sessions (OnlyOffice Deployment가 실제 배포된 ns)
 #
-# 보안 원칙: Auth Gateway만 OnlyOffice에 접근 가능
+# 주의(과거 버그): 이 정책은 원래 namespace: platform으로 선언되어 있었으나
+# OnlyOffice Deployment는 claude-sessions에 있어 매칭되지 않았다.
+# claude-sessions에는 default-deny-all이 걸려 있으므로 이 정책이 없으면
+# OnlyOffice는 어떤 트래픽도 받을 수 없다.
+#
+# 보안 원칙: Auth Gateway(platform ns)만 OnlyOffice에 접근 가능
 # 사용자 Pod가 OnlyOffice에 직접 접근하는 것을 차단
-# (문서 내용이 사용자 간 노출되는 것을 방지)
+# (문서 내용이 사용자 간 노출되는 것을 방지 — iframe은 auth-gateway 프록시 경유)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-onlyoffice-traffic
-  namespace: platform
+  namespace: claude-sessions
 spec:
   podSelector:
     matchLabels:
@@ -251,9 +276,13 @@ spec:
     - Egress
 
   ingress:
-    # Auth Gateway에서만 접근 허용 (같은 platform 네임스페이스)
+    # Auth Gateway(platform ns)에서만 80 포트 접근 허용
+    # 크로스 네임스페이스: namespaceSelector + podSelector AND 조합
     - from:
-        - podSelector:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: platform
+          podSelector:
             matchLabels:
               app: auth-gateway
       ports:
@@ -261,10 +290,25 @@ spec:
           protocol: TCP
 
   egress:
-    # OnlyOffice도 DNS는 필요 (외부 폰트, 플러그인 등)
+    # DNS 해석 (UDP/TCP 53)
     - to: []
       ports:
         - port: 53
           protocol: UDP
         - port: 53
+          protocol: TCP
+
+    # Auth Gateway 호출 (편집 모드 필수)
+    # OnlyOffice가 document.url을 fetch해서 초기 파일을 로드할 때
+    # auth-gateway.platform.svc:8000 으로 요청한다.
+    # ALLOW_PRIVATE_IP_ADDRESS=true 설정과 짝을 이룬다.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: platform
+          podSelector:
+            matchLabels:
+              app: auth-gateway
+      ports:
+        - port: 8000
           protocol: TCP
