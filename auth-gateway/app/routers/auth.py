@@ -505,6 +505,14 @@ async def webui_verify(
       nginx.ingress.kubernetes.io/auth-url: "http://auth-gateway.platform.svc.cluster.local/api/v1/auth/webui-verify"
       nginx.ingress.kubernetes.io/auth-response-headers: "X-SKO-Email,X-SKO-User-Id"
       nginx.ingress.kubernetes.io/auth-signin: "https://portal.skons.net/login?redirect=$escaped_request_uri"
+
+    [설계 tradeoff] jti blacklist / is_user_revoked() 검사 의도적 제외:
+      NGINX auth_request는 모든 HTTP 요청(이미지, API, WebSocket 포함)마다 호출됨.
+      Redis jti 조회를 매 요청마다 수행하면 chat.skons.net 트래픽 전량이 Redis RTT
+      (≈1ms) 를 유발 → Open WebUI 응답성 저하 + Redis 부하 집중.
+      대신 access token 만료(ACCESS_TTL_SECONDS, 기본 900초)에 의존.
+      cascade revoke 후 최대 15분 내 Open WebUI 접근이 유지될 수 있음 — 허용된 tradeoff.
+      보안 요구사항이 강화되면 Phase 1에서 short-TTL token(5분) + 조용한 refresh로 전환 권장.
     """
     from app.core.security import decode_token
 
