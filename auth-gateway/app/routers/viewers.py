@@ -53,7 +53,10 @@ async def _get_viewer_user(request: Request, settings: Settings = Depends(get_se
         if payload:
             return payload
 
-    raise HTTPException(status_code=401, detail="Not authenticated")
+    # P2-iter3 #6: get_current_user_or_pod(/config 경로) 와 403 으로 통일.
+    # 프론트는 두 경로 모두 "인증 실패 → 로그인 리디렉션" 로 동일 처리하므로
+    # 상태 코드가 달라지면 분기 로직만 늘어나고 이득이 없다.
+    raise HTTPException(status_code=403, detail="Not authenticated")
 
 
 def _create_file_token(username: str, file_path: str, ttl_seconds: int = 300) -> str:
