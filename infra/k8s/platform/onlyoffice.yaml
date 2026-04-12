@@ -94,12 +94,18 @@ spec:
     targetPort: 80
     name: http
   type: ClusterIP
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: onlyoffice-jwt-secret
-  namespace: claude-sessions
-type: Opaque
-stringData:
-  secret: "CHANGE_ME_ONLYOFFICE_JWT_SECRET_32CHARS"  # 배포 시 교체 필요
+# ---
+# onlyoffice-jwt-secret 은 이 파일에서 관리하지 않는다 (P2-iter3 #1).
+# 평문/placeholder 가 저장소에 들어오는 것을 원천 차단하기 위해,
+# Secret 리소스는 배포 파이프라인 또는 운영자가 별도 프로비저닝해야 한다.
+#
+# 상용 프로비저닝 (32자 이상, random):
+#   openssl rand -hex 32 | xargs -I{} kubectl -n claude-sessions \
+#     create secret generic onlyoffice-jwt-secret --from-literal=secret={}
+#
+# 검증:
+#   kubectl -n claude-sessions get secret onlyoffice-jwt-secret \
+#     -o jsonpath='{.data.secret}' | base64 -d | wc -c   # >= 32
+#
+# 동일 secret 의 auth-gateway 주입은 `infra/k8s/platform/auth-gateway.yaml` 참조.
+# 로컬 개발 전용 값은 `infra/local-dev/07-onlyoffice.yaml` 에만 존재.
