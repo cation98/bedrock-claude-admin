@@ -171,9 +171,11 @@ def unauthenticated_client(db_session):
 # ---------------------------------------------------------------------------
 
 def _post_callback(client, payload: dict):
-    """콜백은 JWT 필수(P2 #1). payload를 서명된 Bearer 토큰으로 감싸 호출."""
+    """콜백은 JWT 필수(P2 #1) + exp claim 필수(P2-iter3 #4)."""
     from jose import jwt as jose_jwt
-    token = jose_jwt.encode(payload, _DEFAULT_TEST_JWT_SECRET, algorithm="HS256")
+    import time
+    signed = {**payload, "exp": int(time.time()) + 60}
+    token = jose_jwt.encode(signed, _DEFAULT_TEST_JWT_SECRET, algorithm="HS256")
     return client.post(
         "/api/v1/viewers/onlyoffice/callback",
         json=payload,
@@ -583,7 +585,12 @@ class TestOnlyOfficeCallback:
         _test_app.dependency_overrides[get_db] = _override_db
         _test_app.dependency_overrides[get_settings] = _settings_with_jwt
 
-        valid_token = jose_jwt.encode({"status": 1}, jwt_secret, algorithm="HS256")
+        import time
+        valid_token = jose_jwt.encode(
+            {"status": 1, "exp": int(time.time()) + 60},
+            jwt_secret,
+            algorithm="HS256",
+        )
 
         with TestClient(_test_app, raise_server_exceptions=False) as tc:
             resp = tc.post(
@@ -595,6 +602,37 @@ class TestOnlyOfficeCallback:
         _test_app.dependency_overrides.clear()
         assert resp.status_code == 200
         assert resp.json() == {"error": 0}
+
+    def test_callback_rejects_token_without_exp(self, client):
+        """P2-iter3 #4: exp claim 없는 JWT 는 replay 위험 → 403."""
+        from jose import jwt as jose_jwt
+        token = jose_jwt.encode(
+            {"status": 1, "key": "doc-noexp"},
+            _DEFAULT_TEST_JWT_SECRET,
+            algorithm="HS256",
+        )
+        resp = client.post(
+            "/api/v1/viewers/onlyoffice/callback",
+            json={"status": 1, "key": "doc-noexp"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 403
+
+    def test_callback_rejects_expired_token(self, client):
+        """P2-iter3 #4: 만료된 exp 를 가진 JWT 는 거부."""
+        from jose import jwt as jose_jwt
+        import time
+        token = jose_jwt.encode(
+            {"status": 1, "key": "doc-expired", "exp": int(time.time()) - 60},
+            _DEFAULT_TEST_JWT_SECRET,
+            algorithm="HS256",
+        )
+        resp = client.post(
+            "/api/v1/viewers/onlyoffice/callback",
+            json={"status": 1, "key": "doc-expired"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 403
 
 
 # ---------------------------------------------------------------------------

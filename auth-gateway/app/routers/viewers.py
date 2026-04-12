@@ -872,17 +872,23 @@ async def onlyoffice_callback(
     if not token:
         raise HTTPException(status_code=403, detail="Missing callback token")
     try:
-        decoded = jose_jwt.decode(token, settings.onlyoffice_jwt_secret, algorithms=["HS256"])
+        # P2-iter3 #4: exp 강제. exp 없는/만료된 토큰은 거부하여 replay window 최소화.
+        # python-jose 옵션 키는 `require_exp` (개별 claim 별 플래그).
+        decoded = jose_jwt.decode(
+            token,
+            settings.onlyoffice_jwt_secret,
+            algorithms=["HS256"],
+            options={"require_exp": True, "verify_exp": True},
+        )
     except Exception:
         raise HTTPException(status_code=403, detail="Invalid callback token")
 
     # JWT 클레임이 곧 최종 진실. verified body로 치환.
-    # Document Server가 {"payload": {...}}로 래핑하는 경우와 평면 claim 모두 지원.
+    # P2-iter3 #5: OnlyOffice CE는 flat claim 만 사용 — envelope 분기 제거.
+    # Enterprise Edition 이 {"payload": {...}} 래핑을 쓴다면 여기를 다시 되살린다.
     if not isinstance(decoded, dict):
         raise HTTPException(status_code=403, detail="Invalid callback token payload")
-    body = decoded.get("payload", decoded)
-    if not isinstance(body, dict):
-        raise HTTPException(status_code=403, detail="Invalid callback token payload")
+    body = decoded
 
     status = int(body.get("status", 0))
     document_key = body.get("key", "")
