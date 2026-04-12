@@ -73,34 +73,57 @@
 
 ## Recommended Approach — B
 
-### 구현 범위
+### 구현 범위 (Eng Review 2026-04-12 반영)
+
+#### D1: 직접 Bedrock (boto3 converse) — LiteLLM 배제
+- LiteLLM library 대신 `boto3.client('bedrock-runtime')` 직접 호출
+- 이유: multi-provider 불필요, AWS 고유 기능(Converse/Guardrails) native 사용, 의존성 0 추가
+- 구현 규모: ~130 LOC (schema 변환 30 + 스트리밍 50 + error 20 + handler 30)
+
+#### D2: client disconnect 처리 필수
+- `starlette.Request.is_disconnected()` 체크 + Bedrock stream `.close()`
+- 목적: OO 끊김 시 Bedrock 과금 지속 방지
+- 테스트 포함 (critical gap 해소)
+
+#### D3: 자체 플러그인 작성 + 법무 parallel confirm
+- 공식 AI 플러그인 fork 대신 plugin SDK로 자체 작성 (~500 LOC JS) — AGPL 리스크 회피
+- 법무는 parallel 진행: 데이터 거버넌스 question 서면 제출 (blocker 아님)
+
 1. **auth-gateway 변경**
    - `auth-gateway/app/routers/ai.py` 신규
      - `POST /api/v1/ai/chat/completions` (OpenAI schema, streaming + non-streaming)
      - `GET /api/v1/ai/models` (claude-sonnet-4-6, claude-haiku-4-5 노출)
    - `auth-gateway/app/services/bedrock_adapter.py` 신규
-     - OpenAI messages → Bedrock converse API 변환
-     - SSE 스트리밍 wrapping
-     - Token usage 집계 → `token_usage` 테이블 (기존 모델 재사용)
-   - `auth-gateway/app/models/` 수정 (필요 시 `ai_call_log` 추가 or `audit_log` 재사용)
+     - **boto3 direct** — `bedrock-runtime.converse_stream()` 사용
+     - OpenAI messages → Bedrock Converse API 변환 (user/assistant/system)
+     - Bedrock stream chunks → OpenAI SSE `chat.completion.chunk` 변환
+     - finish_reason 매핑: `end_turn`→`stop`, `max_tokens`→`length`, `stop_sequence`→`stop`
+     - error 매핑: `ThrottlingException`→`rate_limit_error(429)`, `ValidationException`→`invalid_request_error(400)`, else→`api_error(500)`
+     - **client disconnect 처리**: 매 chunk 전송 전 `request.is_disconnected()` 검사 → Bedrock stream `.close()` + audit log "aborted" 기록
+   - `auth-gateway/app/services/prompt_audit_service.py` 확장 (이중 로깅 금지 — AI 호출은 prompt_audit_service를 SSOT로 사용, audit_log는 prompt_audit 레코드 참조)
    - IRSA: auth-gateway SA에 `bedrock:InvokeModel`, `bedrock:InvokeModelWithResponseStream` 권한 부여
+   - 모델 ID 매핑: 기존 pod-template.yaml의 `ANTHROPIC_DEFAULT_SONNET_MODEL` 값을 single source (현재 `global.anthropic.claude-sonnet-4-6`). user-facing name ↔ Bedrock ID map을 config에 정의
 
-2. **OnlyOffice AI 플러그인 설치**
-   - `sdkjs-plugins/{AI-PLUGIN-UUID}/` 디렉토리 배치 (marketplace 파일 기반)
-   - `plugin-list-default.json`에 "ai" 항목 추가
-   - Custom provider config: `auth-gateway.platform.svc.cluster.local/api/v1/ai`
-   - Plugin config에 JWT 토큰 주입 (기존 claude_token 쿠키 또는 short-lived bearer)
+2. **OnlyOffice 자체 AI 플러그인 작성** (AGPL 회피 경로)
+   - `sdkjs-plugins/{자체-UUID}/` 신규 디렉토리 작성
+     - `config.json` (name="SK AI", version 등)
+     - `index.html` + `scripts/code.js` — OnlyOffice plugin SDK(window.Asc.plugin)로 selection 가져와서 auth-gateway API 호출
+     - 메뉴 항목: 선택영역 요약 / 한↔영 번역 / 문법 교정 / 보고서 초안 (4개 고정)
+   - `plugin-list-default.json`에 UUID 추가
+   - Kubernetes: ConfigMap + initContainer로 플러그인 파일을 OO pod의 `/var/www/onlyoffice/documentserver/sdkjs-plugins/` 에 주입
+   - Endpoint: `/api/v1/viewers/onlyoffice/config/...` 응답에 플러그인 JWT 토큰 주입
 
 3. **Demo 시나리오 (1주 내 구현)**
    - Excel 파일: 주간 팀 tracker (30명 × 진행/이슈 컬럼)
    - AI "선택영역 요약" → Word 새 문서에 보고서 템플릿 채우기
-   - OnlyOffice AI 플러그인 기본 메뉴(요약/번역/교정) 활성화
-   - 한글/영문 혼용 보고서 지원 (Bedrock converse 한국어 quality 검증)
+   - 4개 기본 메뉴 활성화
+   - 한글/영문 혼용 보고서 지원 (Bedrock 한국어 quality 검증)
 
-4. **거버넌스**
-   - 모든 AI 호출 → `audit_log` (prompt 해시, 응답 길이, 모델, 토큰 수)
-   - 기존 `prompt_audit_service` + `file_governance` 연계 — 문서 내용이 프롬프트에 포함되면 DLP 스캔
-   - 사용자별 일일 토큰 한도 (`token_quota` 테이블 재사용)
+4. **거버넌스 (prompt_audit_service SSOT)**
+   - 모든 AI 호출 → `prompt_audit_service` 단일 기록 (prompt 해시, 응답 길이 해시, 모델, 토큰 수, 문서 컨텍스트 hash, 사용자 ID)
+   - `file_governance`: 문서 컨텍스트가 프롬프트 포함 시 사전 DLP 스캔 (pre-prompt)
+   - `token_quota` 구체 한도 (초안): 실무자 100 req/h + 10k tokens/h, 팀장 200 req/h + 20k tokens/h, 임원 무제한 (감사만)
+   - audit 기록은 FastAPI BackgroundTask로 비동기 — response path를 block하지 않음
 
 ### 구체 Endpoint 계약
 
@@ -123,13 +146,40 @@ Content-Type: application/json
 
 이번 세션에선 Codex/subagent 2nd opinion은 생략 (intrapreneurship demo 시급성). 필요 시 Phase 6에서 `/plan-eng-review` 수행 권장.
 
+## Data Flow (Eng Review 추가)
+
+```
+ OO plugin (sdkjs-plugin/SK-AI)
+   │  sel.getSelectedText() → POST /api/v1/ai/chat/completions
+   │  Authorization: Bearer <claude_token>
+   ▼
+ auth-gateway (platform ns, 2 replicas)
+   │  1) JWT verify (existing)
+   │  2) token_quota check (existing token_quota)
+   │  3) prompt_audit pre-scan (DLP)
+   │  4) boto3 bedrock-runtime.converse_stream()
+   │          │
+   │          ▼
+   │     Bedrock VPC endpoint → Claude Sonnet 4.6
+   │          │
+   │          ▼ (chunks)
+   │  5) loop per chunk:
+   │        if request.is_disconnected(): stream.close(); audit "aborted"; return
+   │        else: yield OpenAI SSE chat.completion.chunk
+   │  6) BackgroundTask: prompt_audit_service.record(prompt_hash, tokens, ...)
+   ▼
+ OO plugin renders into editor selection
+```
+
 ## Open Questions
 
-1. OnlyOffice AI 플러그인 라이선스(CE vs EE) 확인 — 일부 기능이 EE 전용일 수 있음
-2. 문서 내용을 프롬프트에 포함할 때 DLP 정책을 프롬프트 전송 전에 적용할지, 응답 후에 적용할지
-3. Token quota: 전체 사용자 공용 vs 팀별 vs 역할별(임원/팀장/실무자)
-4. 한국어 Claude 품질 baseline — Sonnet 4.6이 충분한지 샘플 테스트 필요
-5. Streaming 응답 중 네트워크 끊김 시 재시도 정책 (OnlyOffice plugin이 idempotent 기대하는지)
+1. ~~OnlyOffice AI 플러그인 라이선스(CE vs EE)~~ — 자체 작성으로 해소 (D3)
+2. ~~DLP 적용 시점~~ — 프리-프롬프트 스캔으로 결정 (file_governance 연계)
+3. ~~Token quota 범위~~ — 역할별로 결정 (실무자 100/h, 팀장 200/h, 임원 무제한)
+4. 한국어 Claude 품질 baseline — Sonnet 4.6이 충분한지 10샘플 eval set 필요 (Lane D)
+5. ~~Streaming 재시도~~ — 플러그인이 streaming을 fire-and-forget로 쓰면 재시도 불필요. disconnect 시 부분 응답 버림 (D2 처리)
+6. (신규) Bedrock quota 사전 확인 — ap-northeast-2 Sonnet 4.6 동시 요청 한도 지금 몇인가?
+7. (신규) 법무 데이터 거버넌스 confirm — Bedrock 사용 범위가 기존 Claude Code Pod 승인 대비 확대되는지 서면 확인
 
 ## Success Criteria
 
@@ -152,9 +202,24 @@ Content-Type: application/json
 ## Dependencies
 
 - **Blocker**: Bedrock IRSA 권한 추가 (auth-gateway SA) — 보안팀 승인 필요
-- **Blocker**: OnlyOffice AI 플러그인 소스 획득 (공식 marketplace 또는 자체 구현)
+- ~~Blocker: OnlyOffice AI 플러그인 소스 획득~~ — D3 결정으로 자체 작성, blocker 해제
 - **Nice-to-have**: prompt_audit_service 확장 — AI 호출용 룰 추가
 - **Dependency**: H2(platform/onlyoffice.yaml env var 누락) 먼저 수정 — ALLOW_PRIVATE_IP_ADDRESS 등
+- **Parallel confirm**: 법무 데이터 거버넌스 질의서 (blocker 아님, Lane D)
+
+## Parallelization (Eng Review)
+
+- **Lane A (backend, 순차)**: `bedrock_adapter.py` → `/api/v1/ai/chat/completions` → tests
+  - Modules touched: auth-gateway/app/services/, auth-gateway/app/routers/, auth-gateway/tests/
+- **Lane B (infra, 병렬)**: IRSA terraform + onlyoffice.yaml H2 env 수정
+  - Modules touched: infra/terraform/, infra/k8s/platform/
+- **Lane C (plugin, B 완료 후)**: 자체 OO AI 플러그인 작성 + ConfigMap/initContainer 주입
+  - Modules touched: infra/k8s/platform/onlyoffice.yaml, container-image/onlyoffice-plugins/ (신규)
+- **Lane D (eval+법무, 병렬)**: 한국어 품질 eval set (10 샘플) + 법무 질의서 draft
+  - Modules touched: docs/, eval/ (신규)
+
+→ **Launch A + B + D 병렬. C는 B 완료 대기.**
+→ 충돌 flag: 없음 (각 lane module directory 중복 없음)
 
 ## The Assignment
 
@@ -170,8 +235,21 @@ Content-Type: application/json
 
 ---
 
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Runs | Status | Findings |
+|--------|---------|------|--------|----------|
+| CEO Review | `/plan-ceo-review` | 0 | — | — |
+| Eng Review | `/plan-eng-review` | 1 | CLEAR (with decisions applied) | Architecture 5 issues (A1-A5), Code 2 (B1-B2), Test 1 critical gap (client disconnect regression), Perf 3. All D1-D3 decisions applied inline. |
+| Design Review | `/plan-design-review` | 0 | — | OO plugin UI small surface; skip unless custom UX added |
+| Outside Voice | `/codex review` | 0 | — | Skipped (time-boxed intrapreneurship) |
+
+**VERDICT**: ENG CLEARED — ready to implement Lane A+B+D in parallel.
+**UNRESOLVED**: 2 open questions (#4 한국어 eval baseline, #6 Bedrock quota 확인) — Lane D에서 해결.
+**CRITICAL GAP addressed**: client disconnect mid-stream (D2 inline + regression test required).
+
 ## 다음 단계 (next skills)
 
-- `/plan-eng-review` — 아키텍처/테스트/엣지케이스 lock-in (권장, adapter 구현 전)
-- `/plan-ceo-review` — 스폰서 VP greenlight 기준이 충분한지 재점검
-- `/sc:implement` — Approach B 구현 시작 (plan review 후)
+- `/sc:implement` — Lane A (backend) 시작
+- 병렬로 사용자 Assignment (스폰서 보고서 baseline 측정), Lane B (infra), Lane D (eval+법무)
+- `/plan-ceo-review` (optional) — greenlight 기준 재점검

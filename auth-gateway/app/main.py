@@ -40,6 +40,7 @@ from app.routers.secure_files import router as secure_files_router
 from app.routers.viewers import router as viewers_router
 from app.routers.jwt_auth import router as jwt_auth_router
 from app.routers.bedrock_proxy import router as bedrock_proxy_router
+from app.routers.ai import router as ai_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -358,6 +359,8 @@ app.include_router(jwt_auth_router)
 # bedrock_proxy: T20 — Console Pod ANTHROPIC_BASE_URL=/v1 Anthropic-compatible endpoint
 # app_proxy보다 먼저 등록 (catch-all보다 구체적인 경로가 우선)
 app.include_router(bedrock_proxy_router)
+# ai: OpenAI-compatible endpoint (OnlyOffice AI plugin, 2026-04-12 eng review — Lane A)
+app.include_router(ai_router)
 # app_proxy는 catch-all 경로이므로 반드시 마지막에 등록
 app.include_router(app_proxy.router)
 
