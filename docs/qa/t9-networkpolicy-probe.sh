@@ -122,11 +122,14 @@ stage3() {
   echo ""
   echo "=== STAGE 3: Open WebUI → auth-gateway JWKS 연결성 (ALLOW 필요) ==="
 
+  # auth-gateway Service: port 80 (→ targetPort 8000). Service port 80을 테스트해야 함.
+  # NetworkPolicy 규칙: to=auth-gateway pod, port=8000(pod port).
+  # kube-proxy DNAT: service:80 → pod:8000 → NP sees pod:8000 → ALLOW.
   probe_tcp openwebui "app=open-webui" \
-    "auth-gateway.platform.svc.cluster.local" 8000 allow \
-    "Open WebUI → auth-gateway:8000 (JWKS)"
+    "auth-gateway.platform.svc.cluster.local" 80 allow \
+    "Open WebUI → auth-gateway:80 (svc port → pod:8000 JWKS)"
 
-  # JWKS 엔드포인트 실제 응답 확인
+  # JWKS 엔드포인트 실제 응답 확인 (service port 80 경유)
   local pod
   pod=$(kubectl get pod -n openwebui -l "app=open-webui" \
     --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
@@ -134,7 +137,7 @@ stage3() {
   if [[ -n "$pod" ]]; then
     local jwks_resp
     jwks_resp=$(kubectl exec -n openwebui "$pod" -- sh -c \
-      "if command -v wget >/dev/null 2>&1; then wget -qO- http://auth-gateway.platform.svc:8000/auth/.well-known/jwks.json 2>/dev/null; else curl -s http://auth-gateway.platform.svc:8000/auth/.well-known/jwks.json 2>/dev/null; fi | head -c 100" 2>/dev/null || echo "")
+      "if command -v wget >/dev/null 2>&1; then wget -qO- http://auth-gateway.platform.svc/auth/.well-known/jwks.json 2>/dev/null; else curl -s http://auth-gateway.platform.svc/auth/.well-known/jwks.json 2>/dev/null; fi | head -c 100" 2>/dev/null || echo "")
 
     if echo "$jwks_resp" | grep -q "keys"; then
       log_pass "JWKS 엔드포인트 응답 정상 (keys 필드 포함)"
