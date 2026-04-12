@@ -830,7 +830,7 @@ class TestCallbackSaveFlow:
         session.is_shared = False
         db_session.commit()
 
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             _v._save_edited_file(
                 session,
                 "http://localhost/cache/files/Editor.xlsx?token=abc",
