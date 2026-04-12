@@ -2,6 +2,24 @@
 # 공유 클러스터 Deployment (replicas=1, auto-restart)
 # Community Edition 제한: 동시 편집 20명
 # AGPL v3 라이선스 — 사내 내부 사용 가능, 수정 시 소스 공개 의무
+#
+# 스토리지: EFS 기반 PVC 사용
+#   - Pod 재시작 시 편집 세션/캐시 데이터 보존 (콜백 진행 중 데이터 손실 방지)
+#   - ReadWriteMany: 향후 replica 증설 대비
+#   - StorageClass: efs-sc (infra/k8s/efs-storage.yaml에서 정의)
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: onlyoffice-data-pvc
+  namespace: claude-sessions
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: efs-sc
+  resources:
+    requests:
+      storage: 20Gi  # EFS는 탄력적 용량 — 논리적 값
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -34,13 +52,15 @@ spec:
             secretKeyRef:
               name: onlyoffice-jwt-secret
               key: secret
+        # CE 20명 동시 편집 기준 리소스 상향
+        # 공식 권고: 세션당 약 100-150MB → 20명 기준 ~3Gi 필요
         resources:
           requests:
-            cpu: "500m"
-            memory: "1Gi"
-          limits:
             cpu: "1000m"
             memory: "2Gi"
+          limits:
+            cpu: "2000m"
+            memory: "4Gi"
         livenessProbe:
           httpGet:
             path: /healthcheck
@@ -58,7 +78,8 @@ spec:
           mountPath: /var/lib/onlyoffice
       volumes:
       - name: data
-        emptyDir: {}  # 비영구 — Pod 재시작 시 캐시 초기화 (문서는 사용자 Pod에 있음)
+        persistentVolumeClaim:
+          claimName: onlyoffice-data-pvc
 ---
 apiVersion: v1
 kind: Service
