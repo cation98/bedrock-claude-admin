@@ -317,60 +317,74 @@ class AppDeployService:
             if e.status != 409:
                 logger.error(f"Failed to create App Service: {e}")
 
-    def _create_app_ingress(self, pod_name: str, slug: str, app_name: str, app_port: int = 3000) -> None:
-        """App Pod를 위한 Ingress 생성 (auth-url ACL 검증 포함).
+    def _create_app_ingress(
+        self,
+        pod_name: str,
+        slug: str,
+        app_name: str,
+        app_port: int = 3000,
+        auth_mode: str = "system",
+    ) -> None:
+        """App Pod를 위한 Ingress 생성.
 
         경로: /apps/{slug}/{app_name}(/|$)(.*)
-        nginx auth-url: 매 요청마다 auth-gateway에 ACL 확인 위임.
-        auth-response-headers: 인증된 사용자명을 앱에 전달.
+
+        auth_mode="system" (기본):
+          nginx auth-url로 auth-gateway에 ACL 위임 + webapp-login 리다이렉트.
+          플랫폼이 SSO + 2FA + ACL을 담당.
+
+        auth_mode="custom":
+          auth annotation 제거. 앱 자체가 로그인과 2FA를 구현해야 하며,
+          배포자는 custom_2fa_attested=True 로 약속한 상태이다.
+          ACL은 적용되지 않으므로 visibility 정책에 따라 접근 범위 결정.
         """
+        annotations = {}
+        if auth_mode == "system":
+            annotations.update({
+                # ── A01: Broken Access Control ──
+                # auth-url: 매 요청 시 auth-gateway에 ACL 검증 위임
+                "nginx.ingress.kubernetes.io/auth-url": (
+                    "http://auth-gateway.platform.svc.cluster.local"
+                    "/api/v1/apps/auth-check"
+                ),
+                "nginx.ingress.kubernetes.io/auth-response-headers": (
+                    "X-Auth-Username, X-Auth-Name, X-Auth-Team, X-Auth-Region, X-Auth-Job"
+                ),
+                # auth-signin: 401 반환 시 로그인 페이지로 리다이렉트
+                "nginx.ingress.kubernetes.io/auth-signin": (
+                    "https://claude.skons.net/webapp-login"
+                    "?return_url=$scheme://$host$request_uri"
+                ),
+            })
+        # 공통 annotation (auth 관련 외)
+        # ── A02: Cryptographic Failures ──
+        # HTTPS 강제, HSTS 헤더
+        # ALB가 TLS 종료하므로 force-ssl-redirect 사용하지 않음 (무한 루프 방지)
+        # ── A03/A07: Security headers ──
+        # NOTE: configuration-snippet / server-snippet are blocked by
+        # ingress-nginx admission webhook.  Security response headers
+        # (CSP, X-Frame-Options, etc.) are set by the app's own
+        # security_middleware.py at runtime instead.
+        annotations.update({
+            # ── A04: Insecure Design — Rate Limiting ──
+            "nginx.ingress.kubernetes.io/limit-rps": "30",
+            "nginx.ingress.kubernetes.io/limit-connections": "10",
+            # ── A06: Vulnerable Components — 업로드 크기 제한 ──
+            "nginx.ingress.kubernetes.io/proxy-body-size": "50m",
+            # ── A09: Security Logging ──
+            "nginx.ingress.kubernetes.io/enable-access-log": "true",
+            # URL 리라이트: /apps/{user}/{app}/foo → /foo
+            "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
+            # 프록시 타임아웃 (SSE, WebSocket 지원)
+            "nginx.ingress.kubernetes.io/proxy-read-timeout": "600",
+            "nginx.ingress.kubernetes.io/proxy-send-timeout": "600",
+        })
+
         ingress = client.V1Ingress(
             metadata=client.V1ObjectMeta(
                 name=pod_name,
                 namespace=APP_NAMESPACE,
-                annotations={
-                    # ── A01: Broken Access Control ──
-                    # auth-url: 매 요청 시 auth-gateway에 ACL 검증 위임
-                    "nginx.ingress.kubernetes.io/auth-url": (
-                        "http://auth-gateway.platform.svc.cluster.local"
-                        "/api/v1/apps/auth-check"
-                    ),
-                    "nginx.ingress.kubernetes.io/auth-response-headers": (
-                        "X-Auth-Username, X-Auth-Name, X-Auth-Team, X-Auth-Region, X-Auth-Job"
-                    ),
-                    # auth-signin: 401 반환 시 로그인 페이지로 리다이렉트
-                    "nginx.ingress.kubernetes.io/auth-signin": (
-                        "https://claude.skons.net/webapp-login"
-                        "?return_url=$scheme://$host$request_uri"
-                    ),
-
-                    # ── A02: Cryptographic Failures ──
-                    # HTTPS 강제, HSTS 헤더
-                    # ALB가 TLS 종료하므로 force-ssl-redirect 사용하지 않음 (무한 루프 방지)
-
-                    # ── A03/A07: Security headers ──
-                    # NOTE: configuration-snippet / server-snippet are blocked by
-                    # ingress-nginx admission webhook.  Security response headers
-                    # (CSP, X-Frame-Options, etc.) are set by the app's own
-                    # security_middleware.py at runtime instead.
-
-                    # ── A04: Insecure Design — Rate Limiting ──
-                    "nginx.ingress.kubernetes.io/limit-rps": "30",
-                    "nginx.ingress.kubernetes.io/limit-connections": "10",
-
-                    # ── A06: Vulnerable Components — 업로드 크기 제한 ──
-                    "nginx.ingress.kubernetes.io/proxy-body-size": "50m",
-
-                    # ── A09: Security Logging ──
-                    # 접근 로그 활성화 (기본 nginx 로그에 기록)
-                    "nginx.ingress.kubernetes.io/enable-access-log": "true",
-
-                    # URL 리라이트: /apps/{user}/{app}/foo → /foo
-                    "nginx.ingress.kubernetes.io/rewrite-target": "/$2",
-                    # 프록시 타임아웃 설정 (SSE, WebSocket 등 지원)
-                    "nginx.ingress.kubernetes.io/proxy-read-timeout": "600",
-                    "nginx.ingress.kubernetes.io/proxy-send-timeout": "600",
-                },
+                annotations=annotations,
             ),
             spec=client.V1IngressSpec(
                 ingress_class_name="nginx",
@@ -894,22 +908,36 @@ class AppDeployService:
     ) -> bool:
         """사용자가 특정 앱에 접근 가능한지 ACL 검증 (Ingress auth-url 용).
 
-        배포자 본인이거나 활성 ACL이 있으면 True.
+        상태별 정책:
+        - pending_approval: owner만 True (승인 전 외부 노출 차단)
+        - running: owner + 활성 ACL 사용자 True
+        - suspended: owner만 True (system 모드 한정 — custom은 ingress 자체가 없음)
+        - rejected / deleted / inactive: 모두 False
         """
-        if username == owner_username:
-            return True
-
         deployed = (
             db.query(DeployedApp)
             .filter(
                 DeployedApp.owner_username == owner_username,
                 DeployedApp.app_name == app_name,
-                DeployedApp.status == "running",
             )
             .first()
         )
         if not deployed:
             return False
+
+        status_val = deployed.status
+        if status_val in ("deleted", "rejected", "inactive"):
+            return False
+        if status_val in ("pending_approval", "suspended"):
+            # owner 본인만 접근 — 승인 전 단계 / 회수 상태에서는 ACL 무시
+            return username == owner_username
+        if status_val != "running":
+            # 알 수 없는 상태는 거부 (fail-closed)
+            return False
+
+        # running 상태: owner 통과 후 ACL 검증
+        if username == owner_username:
+            return True
 
         acl = (
             db.query(AppACL)

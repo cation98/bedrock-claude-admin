@@ -261,6 +261,54 @@ export function getGalleryApps(): Promise<DeployedAppsResponse> {
   return request<DeployedAppsResponse>("/api/v1/apps/gallery");
 }
 
+// ---------- Pending App Approval ----------
+
+export interface PendingApp {
+  id: number;
+  owner_username: string;
+  owner_name?: string;
+  owner_team?: string;
+  app_name: string;
+  app_url: string;
+  pod_name: string;
+  version: string;
+  visibility: string;
+  app_port: number;
+  auth_mode: string;
+  custom_2fa_attested: boolean;
+  created_at: string | null;
+}
+
+export interface PendingAppsResponse {
+  apps: PendingApp[];
+  total: number;
+}
+
+export function getPendingApps(): Promise<PendingAppsResponse> {
+  return request<PendingAppsResponse>("/api/v1/admin/apps/pending");
+}
+
+export function approveApp(appId: number): Promise<{ approved: boolean }> {
+  return request<{ approved: boolean }>(`/api/v1/admin/apps/${appId}/approve`, {
+    method: "POST",
+  });
+}
+
+export function rejectApp(appId: number, reason: string): Promise<{ rejected: boolean }> {
+  return request<{ rejected: boolean }>(`/api/v1/admin/apps/${appId}/reject`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export function grantCustomAuth(username: string): Promise<unknown> {
+  return request<unknown>(`/api/v1/admin/users/${username}/custom-auth-grant`, { method: "POST" });
+}
+
+export function revokeCustomAuth(username: string): Promise<unknown> {
+  return request<unknown>(`/api/v1/admin/users/${username}/custom-auth-revoke`, { method: "POST" });
+}
+
 // ---------- Users: Search + Direct Add ----------
 
 export interface OGuardProfile {

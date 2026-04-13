@@ -13,6 +13,9 @@ class DeployRequest(BaseModel):
     visibility: str = "private"            # 접근 범위: "private" | "company"
     app_port: int = 3000                   # Pod 내부 포트 (기본 3000)
     acl_usernames: list[str] | None = None # 접근 허용 사번 목록 (선택)
+    # 인증 모드: "system" = 플랫폼 webapp-login(SSO+2FA) | "custom" = 앱 자체 구현(2FA 필수)
+    auth_mode: str = "system"
+    custom_2fa_attested: bool = False      # auth_mode="custom" 선택 시 2FA 구현을 확인한다는 배포자 약속
 
 
 class RollbackRequest(BaseModel):
@@ -33,6 +36,10 @@ class DeployedAppResponse(BaseModel):
     version: str | None = None
     visibility: str = "private"
     app_port: int = 3000
+    auth_mode: str = "system"
+    approved_by: str | None = None
+    approved_at: datetime | None = None
+    rejection_reason: str | None = None
     view_count: int = 0
     unique_viewers: int = 0
     dau: int = 0

@@ -273,6 +273,73 @@ def _run_edit_session_first_editor_migration() -> None:
             logger.info("Migration: edit_sessions.first_editor_username 컬럼 추가 완료")
 
 
+def _run_deployed_apps_auth_mode_migration() -> None:
+    """deployed_apps 테이블에 auth_mode / custom_2fa_attested 컬럼 추가.
+
+    로그인 선택 기능: "system" (플랫폼 webapp-login+2FA) vs "custom" (앱 자체+2FA).
+    기존 배포 앱은 모두 "system"(기본값)으로 남아 영향 없음.
+    """
+    with engine.connect() as conn:
+        result = conn.execute(text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name='deployed_apps' AND column_name='auth_mode'"
+        ))
+        if result.fetchone() is None:
+            conn.execute(text(
+                "ALTER TABLE deployed_apps "
+                "ADD COLUMN auth_mode VARCHAR(16) NOT NULL DEFAULT 'system'"
+            ))
+            conn.execute(text(
+                "ALTER TABLE deployed_apps "
+                "ADD COLUMN custom_2fa_attested BOOLEAN NOT NULL DEFAULT FALSE"
+            ))
+            conn.commit()
+            logger.info("Migration: deployed_apps.auth_mode + custom_2fa_attested 컬럼 추가 완료")
+
+
+def _run_app_approval_migration() -> None:
+    """배포 앱 관리자 승인 워크플로 지원 컬럼 추가.
+
+    - deployed_apps.approved_by / approved_at / rejection_reason
+    - users.can_deploy_custom_auth
+    - status 컬럼에 "pending_approval" / "rejected" 값을 허용(문자열 컬럼이므로 DDL 변경 없음).
+    기존 running 앱은 그대로 유지 — 신규 배포부터 pending_approval.
+    """
+    with engine.connect() as conn:
+        # deployed_apps.approved_by
+        r = conn.execute(text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name='deployed_apps' AND column_name='approved_by'"
+        ))
+        if r.fetchone() is None:
+            conn.execute(text(
+                "ALTER TABLE deployed_apps ADD COLUMN approved_by VARCHAR(50)"
+            ))
+            conn.execute(text(
+                "ALTER TABLE deployed_apps "
+                "ADD COLUMN approved_at TIMESTAMP WITH TIME ZONE"
+            ))
+            conn.execute(text(
+                "ALTER TABLE deployed_apps "
+                "ADD COLUMN rejection_reason VARCHAR(500)"
+            ))
+            conn.commit()
+            logger.info("Migration: deployed_apps.approved_by/at + rejection_reason 추가 완료")
+
+        # users.can_deploy_custom_auth
+        r = conn.execute(text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name='users' AND column_name='can_deploy_custom_auth'"
+        ))
+        if r.fetchone() is None:
+            conn.execute(text(
+                "ALTER TABLE users "
+                "ADD COLUMN can_deploy_custom_auth BOOLEAN NOT NULL DEFAULT FALSE"
+            ))
+            conn.commit()
+            logger.info("Migration: users.can_deploy_custom_auth 추가 완료")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """앱 시작/종료 라이프사이클 — DB 초기화 + 백그라운드 스케줄러 시작."""
@@ -284,6 +351,8 @@ async def lifespan(app: FastAPI):
     _run_app_acl_grant_migration()
     _run_skill_store_migration()
     _run_edit_session_first_editor_migration()
+    _run_deployed_apps_auth_mode_migration()
+    _run_app_approval_migration()
     idle_task = asyncio.create_task(idle_checker_loop(settings))
     snapshot_task = asyncio.create_task(token_snapshot_loop(settings))
     audit_task = asyncio.create_task(prompt_audit_loop(settings))

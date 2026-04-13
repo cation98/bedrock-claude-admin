@@ -6,7 +6,7 @@ app_acl: 앱별 접근 허용 사용자 목록 (granted/revoked 관리)
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, String, DateTime, Integer, ForeignKey, Index
+from sqlalchemy import Column, String, DateTime, Integer, ForeignKey, Index, Boolean
 
 from app.core.database import Base
 
@@ -25,6 +25,17 @@ class DeployedApp(Base):
     version = Column(String(50))                                     # git tag 또는 auto-generated
     visibility = Column(String(20), default="private")               # private | company
     app_port = Column(Integer, default=3000)                         # Pod 내부 포트 (3000, 5000, 8501 등)
+
+    # 인증 모드: "system" (플랫폼 auth-gateway webapp-login + 2FA) | "custom" (앱 자체 구현)
+    # custom 선택 시에도 2FA는 필수 — 배포자가 custom_2fa_attested=True 로 약속해야 함.
+    auth_mode = Column(String(16), default="system", nullable=False)
+    custom_2fa_attested = Column(Boolean, default=False, nullable=False)
+
+    # 관리자 승인 기록 (status가 pending_approval → running으로 전환될 때 기록)
+    # 승인 전까지는 owner만 접근 가능하며 ACL/visibility는 무시된다.
+    approved_by = Column(String(50), nullable=True)                   # 승인 admin 사번
+    approved_at = Column(DateTime(timezone=True), nullable=True)
+    rejection_reason = Column(String(500), nullable=True)             # status=rejected 일 때 사유
 
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(

@@ -273,9 +273,11 @@ class K8sService:
         # pod_token이 있고 로컬이 아닌 경우 ANTHROPIC_BASE_URL을 Auth Gateway /v1으로 고정.
         # entrypoint.sh가 이 변수를 감지하면:
         #   1. pod-token-exchange → JWT 획득
-        #   2. ANTHROPIC_API_KEY = JWT (Bearer)
+        #   2. ANTHROPIC_AUTH_TOKEN = JWT (Claude Code가 Bearer 접두사 자동 부착)
         #   3. CLAUDE_CODE_USE_BEDROCK unset (HTTP proxy 모드로 전환)
         # 결과: Claude CLI → Auth Gateway → Bedrock (AWS SDK 직접 호출 차단)
+        # 주: ANTHROPIC_API_KEY 대신 ANTHROPIC_AUTH_TOKEN 사용 — 전자는 Claude Code가
+        # "Detected a custom API key" 승인 프롬프트를 띄워 UX를 저해함.
         if pod_token and not is_local:
             env_vars.append(client.V1EnvVar(
                 name="ANTHROPIC_BASE_URL",

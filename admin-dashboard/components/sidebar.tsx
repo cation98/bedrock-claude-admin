@@ -9,6 +9,7 @@ const NAV_ITEMS = [
   { href: "/dashboard", label: "운용현황", icon: "📊" },
   { href: "/users", label: "사용자 관리", icon: "👤" },
   { href: "/apps", label: "앱 관리", icon: "📱" },
+  { href: "/apps/pending", label: "배포 승인", icon: "✅" },
   { href: "/audit", label: "감사 로그", icon: "📋" },
   { href: "/security", label: "보안 정책", icon: "🛡" },
   { href: "/data-governance", label: "거버넌스", icon: "📁" },

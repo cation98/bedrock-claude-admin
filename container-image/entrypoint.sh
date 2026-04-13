@@ -17,8 +17,15 @@ fi
 #
 #   ANTHROPIC_BASE_URL이 설정된 경우 (Auth Gateway 주입):
 #   1. SECURE_POD_TOKEN으로 pod-token-exchange 호출 → JWT 획득
-#   2. ANTHROPIC_API_KEY = 획득한 JWT (Bearer 토큰으로 /v1/messages 인증)
+#   2. ANTHROPIC_AUTH_TOKEN = 획득한 JWT
+#      (Claude Code가 자동으로 "Bearer " 접두사를 붙여 Authorization 헤더에 사용)
 #   3. CLAUDE_CODE_USE_BEDROCK unset (AWS SDK 직접 호출 비활성화)
+#
+#   ANTHROPIC_AUTH_TOKEN을 쓰는 이유:
+#   - ANTHROPIC_API_KEY로 export하면 Claude Code가 "Detected a custom API key"
+#     승인 프롬프트를 사용자에게 띄움 → UX 저하.
+#   - ANTHROPIC_AUTH_TOKEN은 OAuth/Bearer 전용 변수로 인식되어 프롬프트 없이
+#     Authorization 헤더에 그대로 적용됨.
 #
 #   portal.html은 pod-token-exchange를 호출하지 않음 (SSO 쿠키 사용).
 #   Pod 내부 교환과 충돌 없음.
@@ -40,7 +47,9 @@ if [ -n "${ANTHROPIC_BASE_URL:-}" ] && [ -n "${SECURE_POD_TOKEN:-}" ] && [ -n "$
     if [ -n "${_JWT_RESPONSE}" ]; then
         _ACCESS_TOKEN=$(echo "${_JWT_RESPONSE}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('access_token',''))" 2>/dev/null || echo "")
         if [ -n "${_ACCESS_TOKEN}" ]; then
-            export ANTHROPIC_API_KEY="${_ACCESS_TOKEN}"
+            export ANTHROPIC_AUTH_TOKEN="${_ACCESS_TOKEN}"
+            # ANTHROPIC_API_KEY가 이미 설정돼 있으면 제거 — Claude Code가 이를 우선 감지해 프롬프트 띄움
+            unset ANTHROPIC_API_KEY 2>/dev/null || true
             unset CLAUDE_CODE_USE_BEDROCK 2>/dev/null || true
             echo "  Proxy:    ${ANTHROPIC_BASE_URL} (Bedrock AG T20, JWT issued)"
         else

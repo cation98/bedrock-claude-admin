@@ -258,12 +258,22 @@ async def auth_check(
             detail="앱을 찾을 수 없거나 접근 권한이 없습니다",
         )
 
-    # 5-1. 회수된 앱 차단 (소유자/admin은 위에서 이미 통과 — 의도적 설계:
-    #       소유자가 앱 상태 확인 후 재배포할 수 있어야 함)
+    # 5-1. 회수/승인 대기/거절 앱 차단
+    # (소유자/admin은 위에서 이미 통과 — 소유자가 상태 확인/재배포/본인 테스트 가능)
     if app.status == "suspended":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="이 앱은 소유자에 의해 회수되어 접근할 수 없습니다",
+        )
+    if app.status == "pending_approval":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="이 앱은 관리자 승인 대기 중이므로 아직 공유되지 않았습니다",
+        )
+    if app.status in ("rejected", "inactive"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="이 앱은 현재 접근할 수 없습니다",
         )
 
     # 5-2. ACL 검사 (5-type grant) — requesting_user는 위에서 이미 조회됨
@@ -443,7 +453,7 @@ async def list_shared_apps(
         .filter(
             DeployedApp.id.in_(acl_app_ids),
             DeployedApp.owner_username != username,  # 본인 앱 제외 (my에서 조회)
-            DeployedApp.status != "deleted",
+            DeployedApp.status == "running",         # 승인 완료(공유 활성화)된 앱만
         )
         .order_by(DeployedApp.created_at.desc())
         .all()
@@ -472,10 +482,11 @@ async def list_gallery_apps(
     username = current_user["sub"]
 
     # ── 앱 목록 조회 (User JOIN으로 author 정보 포함) ──────────────────────
+    # 갤러리에는 running 상태만 노출 (pending_approval/suspended/rejected/inactive/deleted 제외)
     query = (
         db.query(DeployedApp, User)
         .outerjoin(User, DeployedApp.owner_username == User.username)
-        .filter(DeployedApp.status.notin_(["deleted", "suspended"]))
+        .filter(DeployedApp.status == "running")
     )
     if requesting_role != "admin":
         query = query.filter(
@@ -797,6 +808,24 @@ async def deploy_app(
             detail=f"포트 {request.app_port}는 보안상 사용할 수 없습니다.",
         )
 
+    # 인증 모드 검증 — 재배포/재활성화/신규 배포 모든 경로에서 동일하게 적용되어야 한다.
+    # custom 모드는 앱 자체 로그인을 사용하므로 반드시 2FA 구현 확인(attestation)이 필요.
+    auth_mode = (request.auth_mode or "system").strip().lower()
+    if auth_mode not in ("system", "custom"):
+        raise HTTPException(status_code=400, detail="auth_mode는 'system' 또는 'custom'이어야 합니다")
+    if auth_mode == "custom":
+        if not request.custom_2fa_attested:
+            raise HTTPException(
+                status_code=400,
+                detail="자체 로그인(custom)을 선택하려면 앱에 2FA가 구현되어 있음을 확인해야 합니다",
+            )
+        # custom 모드 배포 권한 확인 — admin이 개별 부여한 사용자만 허용
+        if not getattr(user, "can_deploy_custom_auth", False):
+            raise HTTPException(
+                status_code=403,
+                detail="자체 로그인(custom) 배포 권한이 없습니다. 관리자에게 요청하세요.",
+            )
+
     # 동일 이름의 기존 앱 확인 (소유자 기준)
     existing_app = (
         db.query(DeployedApp)
@@ -809,11 +838,16 @@ async def deploy_app(
     )
 
     if existing_app:
-        # 재배포: 기존 앱 업데이트
+        # 재배포: 기존 앱 업데이트 (auth_mode도 요청값으로 갱신)
+        # D1 정책(α): 최초 승인 후 재배포는 자동 running 유지 — approved_by가 있으면 그대로.
+        # approved_by가 없는 재배포는 여전히 pending_approval.
+        already_approved = bool(existing_app.approved_by)
         existing_app.version = request.version
         existing_app.visibility = request.visibility
         existing_app.app_port = request.app_port
-        existing_app.status = "running"
+        existing_app.status = "running" if already_approved else "pending_approval"
+        existing_app.auth_mode = auth_mode
+        existing_app.custom_2fa_attested = bool(request.custom_2fa_attested)
         existing_app.updated_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(existing_app)
@@ -833,8 +867,10 @@ async def deploy_app(
                 request.app_port,
             )
             deploy_svc._create_app_service(pod_name, username, request.app_name, request.app_port)
-            deploy_svc._create_app_ingress(pod_name, slug, request.app_name, request.app_port)
-            logger.info(f"K8s resources recreated for {pod_name}")
+            # pending_approval 상태는 항상 system auth-check 강제 (승인 시 필요하면 재생성)
+            ingress_auth_mode = auth_mode if already_approved and auth_mode == "custom" else "system"
+            deploy_svc._create_app_ingress(pod_name, slug, request.app_name, request.app_port, auth_mode=ingress_auth_mode)
+            logger.info(f"K8s resources recreated for {pod_name} (auth_mode={auth_mode}, ingress={ingress_auth_mode})")
         except Exception as e:
             logger.error(f"K8s redeploy failed for {request.app_name}: {e}")
             # DB 레코드는 유지, status를 inactive로 변경
@@ -860,17 +896,23 @@ async def deploy_app(
         .first()
     )
     if deleted_app:
-        # 기존 soft-deleted 레코드를 재활성화
-        deleted_app.status = "running"
+        # 기존 soft-deleted 레코드를 재활성화 — 삭제됐던 앱이므로 다시 pending_approval 시작
+        # 이전 approved_by 기록도 재심사를 위해 초기화한다.
+        deleted_app.status = "pending_approval"
         deleted_app.version = request.version
         deleted_app.visibility = request.visibility
         deleted_app.app_port = request.app_port
         deleted_app.app_url = app_url
         deleted_app.pod_name = pod_name
+        deleted_app.auth_mode = auth_mode
+        deleted_app.custom_2fa_attested = bool(request.custom_2fa_attested)
+        deleted_app.approved_by = None
+        deleted_app.approved_at = None
+        deleted_app.rejection_reason = None
         deleted_app.updated_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(deleted_app)
-        # 재활성화: K8s 리소스 생성
+        # 재활성화: K8s 리소스 생성 (auth_mode 전달로 custom 모드 유지)
         try:
             deploy_svc = AppDeployService(settings)
             deploy_svc._create_app_pod(
@@ -882,8 +924,9 @@ async def deploy_app(
                 request.app_port,
             )
             deploy_svc._create_app_service(pod_name, username, request.app_name, request.app_port)
-            deploy_svc._create_app_ingress(pod_name, slug, request.app_name, request.app_port)
-            logger.info(f"K8s resources created for reactivated app {pod_name}")
+            # 재활성화는 pending_approval → system 강제
+            deploy_svc._create_app_ingress(pod_name, slug, request.app_name, request.app_port, auth_mode="system")
+            logger.info(f"K8s resources created for reactivated app {pod_name} (auth_mode={auth_mode}, pending approval)")
         except Exception as e:
             logger.error(f"K8s deploy failed for reactivated {request.app_name}: {e}")
             deleted_app.status = "inactive"
@@ -892,15 +935,18 @@ async def deploy_app(
         logger.info(f"App reactivated: {username}/{request.app_name} v={request.version}")
         return DeployedAppResponse.model_validate(deleted_app)
 
+    # auth_mode는 위에서 이미 검증됨 (재배포/재활성화/신규 배포 공통 검증 블록)
     new_app = DeployedApp(
         owner_username=username,
         app_name=request.app_name,
         app_url=app_url,
         pod_name=pod_name,
-        status="running",
+        status="pending_approval",  # 관리자 승인 전까지 owner만 접근 가능
         version=request.version,
         visibility=request.visibility,
         app_port=request.app_port,
+        auth_mode=auth_mode,
+        custom_2fa_attested=bool(request.custom_2fa_attested),
     )
     db.add(new_app)
     db.commit()
@@ -941,15 +987,16 @@ async def deploy_app(
             request.app_port,
         )
         deploy_svc._create_app_service(pod_name, username, request.app_name, request.app_port)
-        deploy_svc._create_app_ingress(pod_name, slug, request.app_name, request.app_port)
-        logger.info(f"K8s resources created for {pod_name}")
+        # 신규 배포는 pending_approval → Ingress는 system auth-check 강제 (승인 시 custom으로 재생성)
+        deploy_svc._create_app_ingress(pod_name, slug, request.app_name, request.app_port, auth_mode="system")
+        logger.info(f"K8s resources created for {pod_name} (auth_mode={auth_mode}, pending approval)")
     except Exception as e:
         logger.error(f"K8s deploy failed for {request.app_name}: {e}")
         # DB 레코드는 유지, status를 inactive로 변경
         new_app.status = "inactive"
         db.commit()
 
-    logger.info(f"App deployed: {username}/{request.app_name} v={request.version}")
+    logger.info(f"App deployed: {username}/{request.app_name} v={request.version} auth={auth_mode}")
     return DeployedAppResponse.model_validate(new_app)
 
 
@@ -986,9 +1033,17 @@ async def undeploy_app(
 async def suspend_app(
     app_name: str,
     current_user: dict = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
     db: Session = Depends(get_db),
 ):
-    """앱 회수 (소유자만 가능). 서비스 중단 + 비공개 전환. ACL은 유지."""
+    """앱 회수 (소유자만 가능). 서비스 중단 + 비공개 전환. ACL은 유지.
+
+    system 모드: Ingress/Pod 유지 — auth-check가 suspended + owner를 통과시키므로
+                본인은 '내가 보기'로 계속 접근 가능.
+    custom 모드: Ingress에 auth 검증이 없어 status만 바꿔서는 비소유자 접근을 막을 수 없음.
+                따라서 Ingress를 즉시 삭제하여 외부 경로 자체를 차단한다.
+                (Pod/Service는 유지해 resume 시 빠른 복귀. Ingress는 _create_app_ingress로 재생성)
+    """
     username = current_user["sub"]
     app = _get_owned_app(app_name, username, db)
 
@@ -999,6 +1054,24 @@ async def suspend_app(
     app.updated_at = datetime.now(timezone.utc)
     db.commit()
 
+    # custom 모드: auth annotation이 없으므로 Ingress 자체를 삭제해 외부 접근을 끊는다.
+    if app.auth_mode == "custom" and app.pod_name:
+        try:
+            from app.services.app_deploy_service import AppDeployService
+            from kubernetes.client.exceptions import ApiException
+            deploy_svc = AppDeployService(settings)
+            try:
+                deploy_svc.networking.delete_namespaced_ingress(
+                    name=app.pod_name,
+                    namespace="claude-apps",
+                )
+                logger.info(f"Ingress deleted for suspended custom app {app.pod_name}")
+            except ApiException as e:
+                if e.status != 404:
+                    raise
+        except Exception as e:
+            logger.error(f"Failed to delete ingress for suspended custom app {app.pod_name}: {e}")
+
     logger.info(f"App suspended: {username}/{app_name} (ACL retained)")
     return {"suspended": True, "app_name": app_name}
 
@@ -1007,9 +1080,14 @@ async def suspend_app(
 async def resume_app(
     app_name: str,
     current_user: dict = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
     db: Session = Depends(get_db),
 ):
-    """앱 재배포 (소유자만 가능). 회수된 앱을 다시 서비스."""
+    """앱 재배포 (소유자만 가능). 회수된 앱을 다시 서비스.
+
+    custom 모드였다면 suspend 시 Ingress가 삭제됐으므로 여기서 재생성해야 한다.
+    system 모드는 Ingress가 유지되었으므로 DB 상태만 전환한다.
+    """
     username = current_user["sub"]
 
     # suspended 상태 + 소유자 동시 필터 (정보 유출 방지: 비소유 앱도 404 반환)
@@ -1030,7 +1108,22 @@ async def resume_app(
     db.commit()
     db.refresh(app)
 
-    logger.info(f"App resumed: {username}/{app_name}")
+    # custom 모드: suspend 시 삭제된 Ingress를 재생성해 외부 경로 복구
+    if app.auth_mode == "custom" and app.pod_name:
+        try:
+            user = db.query(User).filter(User.username == username).first()
+            slug = user.app_slug if user else None
+            if slug:
+                from app.services.app_deploy_service import AppDeployService
+                deploy_svc = AppDeployService(settings)
+                deploy_svc._create_app_ingress(
+                    app.pod_name, slug, app.app_name, app.app_port, auth_mode="custom"
+                )
+                logger.info(f"Ingress recreated for resumed custom app {app.pod_name}")
+        except Exception as e:
+            logger.error(f"Failed to recreate ingress for resumed custom app {app.pod_name}: {e}")
+
+    logger.info(f"App resumed: {username}/{app_name} (auth_mode={app.auth_mode})")
     return DeployedAppResponse.model_validate(app)
 
 

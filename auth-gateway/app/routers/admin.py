@@ -2119,3 +2119,217 @@ async def admin_broadcast(
 
     logger.info(f"Admin broadcast by {_admin['sub']}: mms={result.mms_sent}, ws={result.ws_sent}, targets={len(users)}")
     return result
+
+
+# ==================== App Approval Workflow ====================
+
+
+class RejectRequest(BaseModel):
+    reason: str
+
+
+@router.get("/apps/pending")
+async def list_pending_apps(
+    _admin: dict = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """배포 승인 대기 앱 목록 (관리자 전용).
+
+    status='pending_approval' + owner 사용자 정보 조인.
+    """
+    from app.models.app import DeployedApp
+    from app.models.user import User
+
+    apps = (
+        db.query(DeployedApp)
+        .filter(DeployedApp.status == "pending_approval")
+        .order_by(DeployedApp.created_at.asc())
+        .all()
+    )
+
+    # owner 정보 일괄 조회
+    owner_usernames = list({a.owner_username for a in apps})
+    users_by_uname = {}
+    if owner_usernames:
+        rows = db.query(User).filter(User.username.in_(owner_usernames)).all()
+        users_by_uname = {u.username: u for u in rows}
+
+    results = []
+    for a in apps:
+        u = users_by_uname.get(a.owner_username)
+        results.append({
+            "id": a.id,
+            "owner_username": a.owner_username,
+            "owner_name": u.name if u else None,
+            "owner_team": getattr(u, "team_name", None) if u else None,
+            "app_name": a.app_name,
+            "app_url": a.app_url,
+            "pod_name": a.pod_name,
+            "version": a.version,
+            "visibility": a.visibility,
+            "app_port": a.app_port,
+            "auth_mode": getattr(a, "auth_mode", "system") or "system",
+            "custom_2fa_attested": bool(getattr(a, "custom_2fa_attested", False)),
+            "created_at": a.created_at.isoformat() if a.created_at else None,
+        })
+    return {"apps": results, "total": len(results)}
+
+
+@router.post("/apps/{app_id}/approve")
+async def approve_app(
+    app_id: int,
+    _admin: dict = Depends(_require_admin),
+    settings: Settings = Depends(get_settings),
+    db: Session = Depends(get_db),
+):
+    """앱 배포 승인 (관리자 전용). pending_approval → running.
+
+    auth_mode='custom'이면 Ingress 재생성 (auth annotation 제거).
+    """
+    from app.models.app import DeployedApp
+    from app.models.user import User
+
+    app = db.query(DeployedApp).filter(DeployedApp.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="앱을 찾을 수 없습니다")
+    if app.status != "pending_approval":
+        raise HTTPException(status_code=400, detail=f"승인 대기 상태가 아닙니다 (current={app.status})")
+
+    admin_username = _admin["sub"]
+    app.status = "running"
+    app.approved_by = admin_username
+    app.approved_at = datetime.now(timezone.utc)
+    app.rejection_reason = None
+    app.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(app)
+
+    # custom 모드: Ingress 재생성 (auth annotation 제거 → 앱 자체 로그인이 전담)
+    if app.auth_mode == "custom" and app.pod_name:
+        try:
+            from app.services.app_deploy_service import AppDeployService
+            from kubernetes.client.exceptions import ApiException
+
+            deploy_svc = AppDeployService(settings)
+            # 기존 ingress 삭제
+            try:
+                deploy_svc.networking.delete_namespaced_ingress(
+                    name=app.pod_name,
+                    namespace="claude-apps",
+                )
+            except ApiException as e:
+                if e.status != 404:
+                    logger.warning(f"approve_app: delete ingress failed ({app.pod_name}): {e}")
+
+            # owner 사용자의 slug 조회
+            owner = db.query(User).filter(User.username == app.owner_username).first()
+            slug = owner.app_slug if owner else None
+            if slug:
+                deploy_svc._create_app_ingress(
+                    app.pod_name, slug, app.app_name, app.app_port, auth_mode="custom"
+                )
+                logger.info(f"Ingress recreated for approved custom app {app.pod_name}")
+            else:
+                logger.error(f"approve_app: no slug for owner {app.owner_username}")
+        except Exception as e:
+            logger.error(f"approve_app: ingress recreate failed for {app.pod_name}: {e}")
+
+    logger.info(
+        f"App approved by {admin_username}: "
+        f"{app.owner_username}/{app.app_name} (auth_mode={app.auth_mode})"
+    )
+    return {
+        "approved": True,
+        "app_id": app.id,
+        "status": app.status,
+        "approved_by": app.approved_by,
+        "approved_at": app.approved_at.isoformat() if app.approved_at else None,
+    }
+
+
+@router.post("/apps/{app_id}/reject")
+async def reject_app(
+    app_id: int,
+    request: RejectRequest,
+    _admin: dict = Depends(_require_admin),
+    settings: Settings = Depends(get_settings),
+    db: Session = Depends(get_db),
+):
+    """앱 배포 거절 (관리자 전용). pending_approval → rejected.
+
+    사유(reason) 10자 이상 필수. K8s 리소스는 삭제하여 리소스 낭비 방지.
+    """
+    reason = (request.reason or "").strip()
+    if len(reason) < 10:
+        raise HTTPException(status_code=400, detail="거절 사유는 10자 이상 입력해주세요")
+
+    from app.models.app import DeployedApp
+
+    app = db.query(DeployedApp).filter(DeployedApp.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="앱을 찾을 수 없습니다")
+    if app.status != "pending_approval":
+        raise HTTPException(status_code=400, detail=f"승인 대기 상태가 아닙니다 (current={app.status})")
+
+    admin_username = _admin["sub"]
+    app.status = "rejected"
+    app.rejection_reason = reason[:500]
+    app.updated_at = datetime.now(timezone.utc)
+    db.commit()
+
+    # K8s 리소스 삭제 (Pod/Service/Ingress)
+    if app.pod_name:
+        try:
+            from app.services.app_deploy_service import AppDeployService
+            deploy_svc = AppDeployService(settings)
+            deploy_svc._delete_app_resources(app.pod_name)
+            logger.info(f"K8s resources deleted for rejected app {app.pod_name}")
+        except Exception as e:
+            logger.error(f"reject_app: k8s delete failed for {app.pod_name}: {e}")
+
+    logger.info(
+        f"App rejected by {admin_username}: "
+        f"{app.owner_username}/{app.app_name} — {reason[:80]}"
+    )
+    return {
+        "rejected": True,
+        "app_id": app.id,
+        "status": app.status,
+        "rejection_reason": app.rejection_reason,
+    }
+
+
+@router.post("/users/{username}/custom-auth-grant")
+async def grant_custom_auth_permission(
+    username: str,
+    _admin: dict = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """사용자에게 custom 로그인 배포 권한 부여 (관리자 전용)."""
+    from app.models.user import User
+
+    u = db.query(User).filter(User.username == username.upper()).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
+    u.can_deploy_custom_auth = True
+    db.commit()
+    logger.info(f"custom_auth granted to {username} by {_admin['sub']}")
+    return {"username": u.username, "can_deploy_custom_auth": True}
+
+
+@router.post("/users/{username}/custom-auth-revoke")
+async def revoke_custom_auth_permission(
+    username: str,
+    _admin: dict = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """사용자의 custom 로그인 배포 권한 회수 (관리자 전용)."""
+    from app.models.user import User
+
+    u = db.query(User).filter(User.username == username.upper()).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
+    u.can_deploy_custom_auth = False
+    db.commit()
+    logger.info(f"custom_auth revoked from {username} by {_admin['sub']}")
+    return {"username": u.username, "can_deploy_custom_auth": False}

@@ -1328,6 +1328,10 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
   .status-running {{ background:#1f3a5f; color:#58a6ff; }}
   .status-stopped {{ background:#21262d; color:#8b949e; }}
   .status-deleted {{ background:#3d1f1f; color:#f85149; opacity:0.6; }}
+  .status-pending {{ background:#3d2e00; color:#f0a330; }}
+  .status-rejected {{ background:#3d1f1f; color:#f85149; }}
+  .pending-notice {{ font-size:0.72rem; color:#d29922; margin-top:4px; }}
+  .reject-notice {{ font-size:0.72rem; color:#f85149; margin-top:4px; font-style:italic; }}
   /* Scrollbar */
   .app-list.scrollable {{ max-height: 400px; overflow-y: auto; }}
   .app-list.scrollable::-webkit-scrollbar {{ width: 6px; }}
@@ -1879,6 +1883,25 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
           <label style="display:block;cursor:pointer;">
             <input type="radio" name="deployVisibility" value="company" onchange="document.getElementById('deployAclSection').style.display='none'"> 전사 공개 (모든 임직원)
           </label>
+        </div>
+        <div style="margin-bottom:16px;">
+          <div style="font-size:0.82rem;color:#8b949e;margin-bottom:8px;">로그인 방식 (2FA 필수)</div>
+          <label style="display:block;margin-bottom:6px;cursor:pointer;">
+            <input type="radio" name="deployAuthMode" value="system" checked onchange="onDeployAuthModeChange()">
+            시스템 로그인 사용 (플랫폼 SSO + 2FA, ACL 자동 적용) · <span style="color:#3fb950;">권장</span>
+          </label>
+          <label style="display:block;cursor:pointer;">
+            <input type="radio" name="deployAuthMode" value="custom" onchange="onDeployAuthModeChange()">
+            자체 로그인 사용 (앱이 직접 구현, 2FA 필수)
+          </label>
+          <div id="deployCustomAuthBox" style="display:none;margin-top:10px;padding:10px 12px;background:#1c2128;border:1px solid #d29922;border-radius:6px;font-size:0.78rem;color:#e6edf3;line-height:1.55;">
+            <div style="font-weight:600;color:#d29922;margin-bottom:4px;">⚠️ 자체 로그인 선택 시 책임</div>
+            <div style="margin-bottom:6px;">플랫폼이 로그인/ACL을 검사하지 않습니다. 앱이 모든 요청에 대해 로그인과 2FA를 직접 검증해야 합니다.</div>
+            <label style="display:flex;gap:8px;cursor:pointer;align-items:flex-start;">
+              <input type="checkbox" id="deployCustom2faAttest" style="margin-top:3px;accent-color:#58a6ff;">
+              <span>이 앱에 로그인과 <strong>2FA</strong>가 구현되어 있음을 확인합니다. 미구현 앱을 배포하면 서비스에서 회수될 수 있습니다.</span>
+            </label>
+          </div>
         </div>
         <div id="deployAclSection" style="margin-bottom:16px;">
           <div style="font-size:0.82rem;color:#8b949e;margin-bottom:8px;">접근 허용 사용자</div>
@@ -2487,8 +2510,22 @@ function openDeployModal(appName, appPath) {{
   document.getElementById('deploySelectedUsers').replaceChildren();
   var radios = document.querySelectorAll('input[name="deployVisibility"]');
   for (var i = 0; i < radios.length; i++) {{ if (radios[i].value === 'private') radios[i].checked = true; }}
+  // 인증 모드 라디오 초기값: system (권장). 2FA 체크박스/custom 설명은 기본 숨김.
+  var authRadios = document.querySelectorAll('input[name="deployAuthMode"]');
+  for (var j = 0; j < authRadios.length; j++) {{ if (authRadios[j].value === 'system') authRadios[j].checked = true; }}
+  var attestEl = document.getElementById('deployCustom2faAttest');
+  if (attestEl) attestEl.checked = false;
+  var customBox = document.getElementById('deployCustomAuthBox');
+  if (customBox) customBox.style.display = 'none';
   document.getElementById('deployAclSection').style.display = 'block';
   document.getElementById('deployModal').classList.add('active');
+}}
+
+function onDeployAuthModeChange() {{
+  var sel = document.querySelector('input[name="deployAuthMode"]:checked');
+  var customBox = document.getElementById('deployCustomAuthBox');
+  if (!customBox) return;
+  customBox.style.display = (sel && sel.value === 'custom') ? 'block' : 'none';
 }}
 
 function closeDeployModal() {{
@@ -2560,6 +2597,17 @@ function executeDeploy() {{
     // 2단계: 플랫폼 배포 API 호출
     t.textContent = '\ubc30\ud3ec \uc911: ' + deployAppNameVal;
     var visibility = document.querySelector('input[name="deployVisibility"]:checked').value;
+    var authModeSel = document.querySelector('input[name="deployAuthMode"]:checked');
+    var authMode = authModeSel ? authModeSel.value : 'system';
+    var attestEl = document.getElementById('deployCustom2faAttest');
+    var custom2faAttested = !!(attestEl && attestEl.checked);
+    // custom 모드에서 2FA 확인 체크 누락 시 배포 중단 (백엔드에서도 재검증)
+    if (authMode === 'custom' && !custom2faAttested) {{
+      t.textContent = '\uc790\uccb4 \ub85c\uadf8\uc778\uc744 \uc120\ud0dd\ud558\ub824\uba74 2FA \uad6c\ud604 \ud655\uc778\uc774 \ud544\uc694\ud569\ub2c8\ub2e4.';
+      t.style.background = '#da3633';
+      setTimeout(function() {{ t.style.display = 'none'; t.style.background = ''; }}, 4000);
+      return Promise.reject('custom_2fa_required');
+    }}
     return apiFetch('/apps/deploy', {{
       method: 'POST',
       headers: {{'Content-Type': 'application/json'}},
@@ -2568,7 +2616,9 @@ function executeDeploy() {{
         version: 'v-' + new Date().toISOString().slice(0,16).replace(/[-T:]/g, ''),
         visibility: visibility,
         app_port: 3000,
-        acl_usernames: visibility === 'company' ? [] : deploySelectedUsernames
+        acl_usernames: visibility === 'company' ? [] : deploySelectedUsernames,
+        auth_mode: authMode,
+        custom_2fa_attested: custom2faAttested
       }})
     }});
   }}).then(function(data) {{
@@ -3612,6 +3662,8 @@ function buildUnifiedAppItem(app) {{
   var badge = document.createElement('span'); badge.className = 'status-badge';
   var status = app.status || 'stopped';
   if (status === 'deployed') {{ badge.className += ' status-deployed'; badge.textContent = '배포됨'; }}
+  else if (status === 'pending_approval') {{ badge.className += ' status-pending'; badge.textContent = '승인 대기'; }}
+  else if (status === 'rejected') {{ badge.className += ' status-rejected'; badge.textContent = '거절됨'; }}
   else if (status === 'suspended') {{ badge.className += ' status-suspended'; badge.textContent = '회수됨'; }}
   else if (status === 'running') {{ badge.className += ' status-running'; badge.textContent = '실행중'; }}
   else if (status === 'deleted') {{ badge.className += ' status-deleted'; badge.textContent = '삭제됨'; }}
@@ -3639,9 +3691,39 @@ function buildUnifiedAppItem(app) {{
   meta.textContent = parts.join(' \u00b7 ');
   info.appendChild(meta);
   li.appendChild(info);
+  // pending_approval / rejected 상태 안내 문구 (메타 영역에 추가)
+  if (status === 'pending_approval') {{
+    var pn = document.createElement('div'); pn.className = 'pending-notice';
+    pn.textContent = '관리자 승인 후 다른 사용자에게 공유됩니다. 본인은 테스트 접근 가능.';
+    info.appendChild(pn);
+  }} else if (status === 'rejected' && app.rejection_reason) {{
+    var rn = document.createElement('div'); rn.className = 'reject-notice';
+    rn.textContent = '거절 사유: ' + app.rejection_reason;
+    info.appendChild(rn);
+  }}
+
   // Action buttons per state
   var actions = document.createElement('div'); actions.className = 'app-actions'; actions.style.flexWrap = 'wrap';
-  if (status === 'deployed') {{
+  if (status === 'pending_approval' && app.is_platform) {{
+    // 승인 대기 — 소유자 본인만 접근 가능 (auth-check가 차단), 공유 관련 버튼 비활성
+    if (app.app_url) {{
+      var ownerOpenP = document.createElement('a'); ownerOpenP.className = 'btn-sm';
+      ownerOpenP.href = app.app_url; ownerOpenP.target = '_blank'; ownerOpenP.textContent = '내가 보기';
+      ownerOpenP.title = '본인만 접근 가능 — 자체 로그인이 있으면 테스트 가능';
+      ownerOpenP.style.borderColor = '#58a6ff'; ownerOpenP.style.color = '#58a6ff'; ownerOpenP.style.textDecoration = 'none';
+      actions.appendChild(ownerOpenP);
+    }}
+    var delBtnP = document.createElement('button'); delBtnP.className = 'btn-sm danger';
+    delBtnP.textContent = '삭제';
+    delBtnP.onclick = function() {{ undeployApp(app.app_name); }};
+    actions.appendChild(delBtnP);
+  }} else if (status === 'rejected' && app.is_platform) {{
+    var delBtnR = document.createElement('button'); delBtnR.className = 'btn-sm danger';
+    delBtnR.textContent = '삭제';
+    delBtnR.onclick = function() {{ undeployApp(app.app_name); }};
+    actions.appendChild(delBtnR);
+    // 재배포는 로컬 경로를 통해 수행 (배포 모달)
+  }} else if (status === 'deployed') {{
     var openBtn = document.createElement('a'); openBtn.className = 'btn-sm';
     openBtn.href = app.app_url || '#'; openBtn.target = '_blank'; openBtn.textContent = '열기';
     openBtn.style.borderColor = '#58a6ff'; openBtn.style.color = '#58a6ff'; openBtn.style.textDecoration = 'none';
@@ -3672,6 +3754,17 @@ function buildUnifiedAppItem(app) {{
       actions.appendChild(delBtn);
     }}
   }} else if (status === 'suspended' && app.is_platform) {{
+    // 회수(suspended) 상태에서의 소유자 열람 동작은 auth_mode에 따라 다르다.
+    // - system: Ingress가 유지되고 auth-check가 owner를 통과시키므로 '내가 보기' 버튼 제공.
+    // - custom: 비소유자 접근 차단을 위해 suspend 시 Ingress를 삭제했으므로 URL이 응답하지 않음.
+    var am = (app.auth_mode || 'system');
+    if (am === 'system' && app.app_url) {{
+      var ownerOpenBtn = document.createElement('a'); ownerOpenBtn.className = 'btn-sm';
+      ownerOpenBtn.href = app.app_url; ownerOpenBtn.target = '_blank';
+      ownerOpenBtn.textContent = '내가 보기'; ownerOpenBtn.title = '회수 상태 — 소유자만 접근 가능';
+      ownerOpenBtn.style.borderColor = '#58a6ff'; ownerOpenBtn.style.color = '#58a6ff'; ownerOpenBtn.style.textDecoration = 'none';
+      actions.appendChild(ownerOpenBtn);
+    }}
     var resumeBtn = document.createElement('button'); resumeBtn.className = 'btn-sm';
     resumeBtn.style.borderColor = '#238636'; resumeBtn.style.color = '#3fb950';
     resumeBtn.textContent = '재배포';
@@ -3690,11 +3783,32 @@ function buildUnifiedAppItem(app) {{
     openBtn.href = app.app_url || '#'; openBtn.target = '_blank'; openBtn.textContent = '열기';
     openBtn.style.borderColor = '#58a6ff'; openBtn.style.color = '#58a6ff'; openBtn.style.textDecoration = 'none';
     actions.appendChild(openBtn);
-    var shareBtn = document.createElement('button'); shareBtn.className = 'btn-sm';
-    shareBtn.style.borderColor = '#a371f7'; shareBtn.style.color = '#a371f7';
-    shareBtn.textContent = '\uacf5\uc720';
-    shareBtn.onclick = function() {{ openDeployModal(app.name, app.path); }};
-    actions.appendChild(shareBtn);
+    if (app.is_platform) {{
+      // platform 배포된 앱이 로컬에서도 실행 중인 경우:
+      // '공유' 버튼(openDeployModal)은 이미 배포된 앱을 다시 배포하는 모달이라 부적절.
+      // 대신 deployed 상태와 동일한 통계/ACL/MMS 액션을 제공한다.
+      var statsBtn = document.createElement('button'); statsBtn.className = 'btn-sm';
+      statsBtn.style.borderColor = '#d29922'; statsBtn.style.color = '#d29922';
+      statsBtn.textContent = '통계';
+      statsBtn.onclick = function() {{ openStatsModal(app.app_name); }};
+      actions.appendChild(statsBtn);
+      var aclBtn = document.createElement('button'); aclBtn.className = 'btn-sm';
+      aclBtn.textContent = '접근 관리';
+      aclBtn.onclick = function() {{ openAclModal(app.app_name); }};
+      actions.appendChild(aclBtn);
+      var mmsBtn = document.createElement('button'); mmsBtn.className = 'btn-sm';
+      mmsBtn.style.borderColor = '#a371f7'; mmsBtn.style.color = '#a371f7';
+      mmsBtn.textContent = 'MMS';
+      mmsBtn.onclick = function() {{ openMmsModal(app.app_name); }};
+      actions.appendChild(mmsBtn);
+    }} else {{
+      // 아직 배포되지 않은 로컬 앱 — 공유 버튼은 배포 모달로 안내
+      var shareBtn = document.createElement('button'); shareBtn.className = 'btn-sm';
+      shareBtn.style.borderColor = '#a371f7'; shareBtn.style.color = '#a371f7';
+      shareBtn.textContent = '\uacf5\uc720';
+      shareBtn.onclick = function() {{ openDeployModal(app.name, app.path); }};
+      actions.appendChild(shareBtn);
+    }}
     var stopBtn = document.createElement('button'); stopBtn.className = 'btn-sm danger';
     stopBtn.textContent = '중지';
     stopBtn.onclick = function() {{ stopApp(app.port); }};

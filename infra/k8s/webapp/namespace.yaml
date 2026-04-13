@@ -34,9 +34,10 @@ metadata:
   namespace: claude-apps
 spec:
   # 이 정책이 적용될 Pod 선택 — 모든 App Pod에 적용
+  # 실제 Pod 레이블은 app_deploy_service._create_app_pod에서 'claude-webapp'으로 주입됨
   podSelector:
     matchLabels:
-      app: claude-app
+      app: claude-webapp
 
   policyTypes:
     - Ingress   # 들어오는 트래픽 제어

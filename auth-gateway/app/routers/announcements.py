@@ -1,18 +1,24 @@
 """공지사항 관리 API.
 
 Endpoints:
-  GET  /api/v1/announcements/active   -- 활성 공지 목록 (모든 인증 사용자)
-  GET  /api/v1/announcements          -- 전체 공지 목록 (관리자)
-  POST /api/v1/announcements          -- 공지 작성 (관리자)
-  PUT  /api/v1/announcements/{id}     -- 공지 수정 (관리자)
-  DELETE /api/v1/announcements/{id}   -- 공지 삭제 (관리자)
+  GET  /api/v1/announcements/active       -- 활성 공지 목록 (모든 인증 사용자)
+  GET  /api/v1/announcements/public/login -- 로그인 화면 공지 (인증 불필요, is_pinned=True 공지만)
+  GET  /api/v1/announcements              -- 전체 공지 목록 (관리자)
+  POST /api/v1/announcements              -- 공지 작성 (관리자)
+  PUT  /api/v1/announcements/{id}         -- 공지 수정 (관리자)
+  DELETE /api/v1/announcements/{id}       -- 공지 삭제 (관리자)
+
+로그인 공지 사용 규칙:
+  관리자가 Announcement를 생성/수정할 때 is_pinned=True 로 설정하면
+  /public/login 엔드포인트에도 노출된다. 로그인 전 사용자에게 보이는
+  유일한 공지 채널이므로 정말 모두에게 보여줄 내용에만 핀을 걸 것.
 """
 
 import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -75,6 +81,44 @@ async def list_active_announcements(
                 "content": a.content,
                 "author_username": a.author_username,
                 "is_pinned": a.is_pinned,
+                "created_at": a.created_at.isoformat() if a.created_at else None,
+            }
+            for a in announcements
+        ]
+    }
+
+
+# ==================== 로그인 화면 공지 (인증 불필요) ====================
+
+
+@router.get("/public/login")
+async def list_login_notices(response: Response, db: Session = Depends(get_db)):
+    """로그인 화면에 노출할 공지 — 인증 불필요 (인증 전 화면).
+
+    운영 규칙: is_pinned=True + is_active=True + 미만료 공지만 반환.
+    내용/제목은 공개되므로 내부 정보 포함 금지 (관리자가 판단).
+
+    캐싱: 로그인 화면이 자동 호출하므로 CDN/브라우저에서 60초 캐시해 DB 부하 완화.
+    """
+    now = datetime.now(timezone.utc)
+    announcements = (
+        db.query(Announcement)
+        .filter(
+            Announcement.is_active == True,  # noqa: E712
+            Announcement.is_pinned == True,  # noqa: E712
+            (Announcement.expires_at == None) | (Announcement.expires_at > now),  # noqa: E711
+        )
+        .order_by(Announcement.created_at.desc())
+        .all()
+    )
+    # 공지 내용은 이미 공개 범주이므로 public 캐시 허용
+    response.headers["Cache-Control"] = "public, max-age=60"
+    return {
+        "announcements": [
+            {
+                "id": a.id,
+                "title": a.title,
+                "content": a.content,
                 "created_at": a.created_at.isoformat() if a.created_at else None,
             }
             for a in announcements
