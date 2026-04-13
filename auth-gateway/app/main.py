@@ -387,6 +387,9 @@ app = FastAPI(
     description="AWS Bedrock Claude Code 사내 활용 플랫폼 — 인증 및 세션 관리",
     version="0.1.0",
     lifespan=lifespan,
+    docs_url=None,      # Phase 1a: Swagger UI 공개 차단
+    redoc_url=None,     # Phase 1a: ReDoc 공개 차단
+    openapi_url=None,   # Phase 1a: OpenAPI spec 공개 차단
 )
 
 app.add_middleware(
