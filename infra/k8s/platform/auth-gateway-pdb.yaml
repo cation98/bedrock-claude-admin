@@ -1,0 +1,16 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: auth-gateway
+  namespace: platform
+  labels:
+    app: auth-gateway
+  annotations:
+    # Phase 1b: HPA max 4 기준 HA 강화 — 동시 disruption 시에도 2 replica 가용
+    # Deployment strategy 동기화 필요: maxSurge=1, maxUnavailable=0 (rolling update 호환)
+    phase1b.bedrock-claude/rationale: "minAvailable 2 — 50명 상시 운용 HA 강화 (max 4 기준)"
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: auth-gateway

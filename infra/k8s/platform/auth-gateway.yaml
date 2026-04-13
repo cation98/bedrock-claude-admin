@@ -52,6 +52,13 @@ metadata:
   namespace: platform
 spec:
   replicas: 2
+  # Phase 1b: PDB minAvailable=2 호환 — surge로 추가 pod 띄운 뒤 구 pod 제거
+  # 기존 maxSurge=0/maxUnavailable=1 → PDB와 충돌 (eviction 차단됨)
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app: auth-gateway
@@ -272,7 +279,7 @@ spec:
           resources:
             requests:
               cpu: 250m
-              memory: 256Mi
+              memory: 320Mi   # Phase 1b: 256→320 (HPA memory 80% target 실효성, 실사용 ~223Mi → ~70%)
             limits:
               cpu: 500m
               memory: 512Mi
