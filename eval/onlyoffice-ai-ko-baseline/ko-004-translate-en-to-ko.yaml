@@ -1,0 +1,67 @@
+id: ko-004-translate-en-to-ko
+menu: translate
+description: |
+  영문 비즈니스 이메일(제품 출시 일정 조정)을 한국어로 번역.
+  직위명 번역, 날짜 형식, 존댓말 일관성을 평가함.
+
+input: |
+  Subject: Follow-up on Q2 Product Launch Timeline
+
+  Hi Team,
+
+  I wanted to follow up on our discussion from last week's planning session regarding
+  the Q2 product launch timeline.
+
+  After reviewing the updated development roadmap, we have decided to move the official
+  launch date from June 15 to June 30, 2026. This two-week extension will allow the QA
+  team to complete the full regression testing cycle and ensure we meet our quality
+  standards before the product reaches customers.
+
+  Please update your project plans accordingly and confirm with your respective
+  stakeholders. The revised launch schedule will be formally communicated to all teams
+  by end of this week.
+
+  Best regards,
+  David Kim
+  VP of Product
+
+expected:
+  structural:
+    - 제목 번역 포함
+    - 존댓말(-습니다/-합니다 체) 일관 사용
+    - 날짜 형식: 2026년 6월 15일 → 2026년 6월 30일
+    - '"VP of Product" → 제품 부문 부사장 또는 제품 담당 부사장'
+    - 발신자 서명 유지
+  forbidden:
+    - 원문에 없는 내용 추가 금지
+    - 반말(해라체) 또는 구어체 사용 금지
+    - 날짜 숫자 변형 금지
+
+rubric:
+  - name: 번역 정확도
+    max: 5
+    guide: 일정 변경 이유(QA 테스트), 날짜(6/15→6/30), 조치사항(계획 업데이트) 모두 포함 시 5점
+  - name: 문체 적합성
+    max: 5
+    guide: 비즈니스 이메일 격식체 유지, 한국어 이메일 관습(제목/인사/본문/서명)에 맞으면 5점
+  - name: 한국어 자연스러움
+    max: 5
+    guide: 직역 냄새 없는 자연스러운 한국어 비즈니스 이메일이면 5점
+
+golden: |
+  제목: 2분기 제품 출시 일정 후속 안내
+
+  팀 여러분,
+
+  지난주 기획 회의에서 논의된 2분기 제품 출시 일정과 관련하여 후속 사항을 안내드립니다.
+
+  업데이트된 개발 로드맵을 검토한 결과, 공식 출시일을 기존 2026년 6월 15일에서 6월 30일로
+  조정하기로 결정하였습니다. 이번 2주간의 일정 연장은 QA팀이 전체 회귀 테스트 사이클을
+  완료하고 고객에게 제품이 전달되기 전에 품질 기준을 충족할 수 있도록 하기 위함입니다.
+
+  각자 담당 프로젝트 계획을 수정하시고, 관련 이해관계자들에게 확인해 주시기 바랍니다.
+  변경된 출시 일정은 이번 주 내로 전 팀에 공식 공지될 예정입니다.
+
+  감사합니다.
+  David Kim
+  제품 부문 부사장
