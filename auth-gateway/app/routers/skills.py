@@ -22,7 +22,13 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import get_current_user
-from app.models.skill import SharedSkill, SkillInstall
+from app.models.skill import (
+    SharedSkill,
+    SkillApprovalStatus,
+    SkillGovernanceEvent,
+    SkillGovernanceEventType,
+    SkillInstall,
+)
 from app.models.user import User
 from app.schemas.skill import SkillListResponse, SkillResponse, SkillSubmitRequest
 
@@ -52,6 +58,29 @@ def _skill_to_dict(s: SharedSkill) -> dict:
     }
 
 
+def _log_governance_event(
+    db: Session,
+    *,
+    skill_id: int | None,
+    event_type: SkillGovernanceEventType,
+    actor: dict,
+    detail: str | None = None,
+) -> None:
+    """skill_governance_events 테이블에 감사 이벤트 기록.
+
+    commit은 호출자가 수행 — 라우터의 스킬 변경과 같은 트랜잭션에서 원자적으로
+    commit되도록 보장.
+    """
+    event = SkillGovernanceEvent(
+        skill_id=skill_id,
+        event_type=event_type.value,
+        actor_username=actor.get("sub", "unknown"),
+        actor_role=actor.get("role", "user"),
+        detail=detail,
+    )
+    db.add(event)
+
+
 # ==================== 사용자 API ====================
 
 
@@ -75,8 +104,17 @@ async def submit_skill(
         description=request.description,
         category=request.category,
         content=request.content,
+        approval_status=SkillApprovalStatus.PENDING.value,
     )
     db.add(skill)
+    db.flush()  # skill.id 확보 — 이벤트 기록용
+    _log_governance_event(
+        db,
+        skill_id=skill.id,
+        event_type=SkillGovernanceEventType.SUBMIT,
+        actor=current_user,
+        detail=f"category={skill.category}",
+    )
     db.commit()
     db.refresh(skill)
     logger.info(f"Skill submitted: {skill.title} by {skill.author_username}")
@@ -414,29 +452,93 @@ async def approve_skill(
         )
 
     skill.is_approved = True
+    skill.approval_status = SkillApprovalStatus.APPROVED.value
     skill.approved_by = admin_sub
     skill.approved_at = datetime.now(timezone.utc)
+    _log_governance_event(
+        db,
+        skill_id=skill.id,
+        event_type=SkillGovernanceEventType.APPROVE,
+        actor=admin,
+    )
     db.commit()
     db.refresh(skill)
     logger.info(f"Skill approved: {skill.title} by {admin_sub}")
     return skill
 
 
+@router.patch("/{skill_id}/reject", response_model=SkillResponse)
+async def reject_skill(
+    skill_id: int,
+    reason: str | None = None,
+    admin: dict = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """스킬 반려 (관리자, SoD 적용).
+
+    approval_status='rejected'로 설정하고 rejected_by/rejected_at/rejection_reason 기록.
+    감사 이벤트(skill_governance_events) 생성. 스킬 데이터는 유지 — 재제출 검토 근거.
+    """
+    skill = db.query(SharedSkill).filter(SharedSkill.id == skill_id).first()
+    if not skill:
+        raise HTTPException(status_code=404, detail="Skill not found")
+
+    admin_sub = admin["sub"]
+    if skill.author_username == admin_sub or skill.owner_username == admin_sub:
+        logger.warning(
+            "SoD violation blocked (reject): admin=%s attempted self-reject on skill=%s",
+            admin_sub, skill_id,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "sod_violation",
+                "message": "자신이 제출한 스킬은 반려할 수 없습니다. 다른 관리자에게 요청하세요.",
+            },
+        )
+
+    skill.is_approved = False
+    skill.approval_status = SkillApprovalStatus.REJECTED.value
+    skill.rejected_by = admin_sub
+    skill.rejected_at = datetime.now(timezone.utc)
+    skill.rejection_reason = reason
+    _log_governance_event(
+        db,
+        skill_id=skill.id,
+        event_type=SkillGovernanceEventType.REJECT,
+        actor=admin,
+        detail=reason,
+    )
+    db.commit()
+    db.refresh(skill)
+    logger.info(f"Skill rejected: {skill.title} by {admin_sub} reason={reason!r}")
+    return skill
+
+
 @router.delete("/{skill_id}")
 async def delete_skill(
     skill_id: int,
-    _admin: dict = Depends(_require_admin),
+    admin: dict = Depends(_require_admin),
     db: Session = Depends(get_db),
 ):
-    """스킬 삭제/거절 (관리자).
+    """스킬 삭제 (관리자).
 
-    승인 전 거절 또는 부적절한 스킬 삭제에 사용.
+    부적절한 스킬을 완전 제거. 감사 이벤트를 먼저 기록하고 skill 삭제.
+    FK는 ON DELETE SET NULL — 이력 엔트리는 유지 (skill_id만 NULL).
+    반려는 reject 엔드포인트를 사용 (상태만 전환, 데이터 보존).
     """
     skill = db.query(SharedSkill).filter(SharedSkill.id == skill_id).first()
     if not skill:
         raise HTTPException(status_code=404, detail="Skill not found")
 
     title = skill.title
+    _log_governance_event(
+        db,
+        skill_id=skill.id,
+        event_type=SkillGovernanceEventType.DELETE,
+        actor=admin,
+        detail=f"title={title!r} status={skill.approval_status}",
+    )
     db.delete(skill)
     db.commit()
     logger.info(f"Skill deleted: {title}")
