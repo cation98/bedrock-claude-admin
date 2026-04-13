@@ -506,14 +506,12 @@ async def webui_verify(
       nginx.ingress.kubernetes.io/auth-response-headers: "X-SKO-Email,X-SKO-User-Id"
       nginx.ingress.kubernetes.io/auth-signin: "https://portal.skons.net/login?redirect=$escaped_request_uri"
 
-    [설계 tradeoff] jti blacklist / is_user_revoked() 검사 의도적 제외:
-      NGINX auth_request는 모든 HTTP 요청(이미지, API, WebSocket 포함)마다 호출됨.
-      Redis jti 조회를 매 요청마다 수행하면 chat.skons.net 트래픽 전량이 Redis RTT
-      (≈1ms) 를 유발 → Open WebUI 응답성 저하 + Redis 부하 집중.
-      대신 access token 만료(ACCESS_TTL_SECONDS, 기본 900초)에 의존.
-      cascade revoke 후 최대 15분 내 Open WebUI 접근이 유지될 수 있음 — 허용된 tradeoff.
-      보안 요구사항이 강화되면 Phase 1에서 short-TTL token(5분) + 조용한 refresh로 전환 권장.
+    [Phase 1c Backlog B6] Redis revocation 체크 활성화:
+      50명 규모에서 Redis RTT(≈1ms)는 Ingress 전체 응답성에 무시할 수준.
+      cascade revoke 시 즉시 세션 종료가 보안상 우선. JWT 만료 대기 제거.
+      jti blacklist는 refresh 경로에만 적용 (access TTL이 짧음, 낭비 회피).
     """
+    from app.core.jwt_rs256 import is_user_revoked
     from app.core.security import decode_token
 
     # bedrock_jwt 쿠키 우선 (SSO 로그인 시 설정됨)
@@ -543,6 +541,20 @@ async def webui_verify(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token missing subject",
         )
+
+    # Phase 1c B6: 사용자 레벨 revoke 확인 (cascade revoke 즉시 반영)
+    # Redis 실패 시 fail-open — 인증 자체는 JWT 서명에 이미 검증됨
+    try:
+        if is_user_revoked(username):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Session has been revoked",
+                headers={"WWW-Authenticate": 'Bearer realm="skons.net"'},
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        pass  # Redis 장애 시 JWT 서명만으로 통과
 
     # NGINX auth-response-headers로 Open WebUI에 전달되는 헤더
     # Open WebUI WEBUI_AUTH_TRUSTED_EMAIL_HEADER=X-SKO-Email 로 자동 로그인
