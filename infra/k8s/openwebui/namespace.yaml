@@ -1,0 +1,18 @@
+# =============================================================================
+# Open WebUI 네임스페이스
+#
+# 서비스 구성:
+#   - open-webui (Deployment): 사내 AI 웹챗 UI — chat.skons.net
+#   - bedrock-access-gateway (Deployment): OpenAI 호환 Bedrock 프록시
+#   - openwebui-postgres (StatefulSet): Open WebUI 전용 DB (대화 이력)
+#
+# 노드 배치: worker nodegroup (시스템 노드/ingress 노드 미사용)
+# =============================================================================
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openwebui
+  labels:
+    app: open-webui
+    kubernetes.io/metadata.name: openwebui

@@ -21,11 +21,13 @@ metadata:
   name: local-ingress
   namespace: platform
   annotations:
-    # Nginx Ingress Controller 사용 명시
-    kubernetes.io/ingress.class: nginx
     # WebSocket 지원 — ttyd 웹 터미널에 필수
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    # 상용과 동일: HTTP/1.1 + WebSocket + sticky routing
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$request_uri"
+    nginx.ingress.kubernetes.io/enable-websocket: "true"
     # 요청 본문 크기 제한 — 파일 업로드 허용
     nginx.ingress.kubernetes.io/proxy-body-size: "50m"
 spec:
@@ -59,7 +61,6 @@ metadata:
   name: test-user-ingress
   namespace: claude-sessions
   annotations:
-    kubernetes.io/ingress.class: nginx
     # URL rewrite — /hub/claude-terminal-test001/xxx → /xxx
     # regex 캡처 그룹을 사용하여 prefix를 제거
     nginx.ingress.kubernetes.io/rewrite-target: /$2
@@ -68,7 +69,7 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-body-size: "50m"
     # WebSocket 업그레이드 — ttyd 터미널 연결에 필수
     nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
-    # WebSocket은 nginx ingress가 enable-websocket annotation으로 처리
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$request_uri"
     nginx.ingress.kubernetes.io/enable-websocket: "true"
 spec:
   ingressClassName: nginx
@@ -99,9 +100,32 @@ spec:
                 name: claude-terminal-test001
                 port:
                   number: 7681
-          # OnlyOffice Document Server — 문서 편집기
+          # OnlyOffice api.js — rewrite로 /onlyoffice/ prefix 제거
           - path: /onlyoffice(/|$)(.*)
             pathType: ImplementationSpecific
+            backend:
+              service:
+                name: onlyoffice
+                port:
+                  number: 80
+---
+# OnlyOffice 캐시 Ingress — rewrite 없음
+# /cache/ 경로는 OnlyOffice가 원본 경로 그대로 필요하므로 별도 Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: onlyoffice-cache-ingress
+  namespace: claude-sessions
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /cache
+            pathType: Prefix
             backend:
               service:
                 name: onlyoffice

@@ -186,13 +186,24 @@ async def list_shared_datasets(
 @router.get("/shared-mounts/{username}", response_model=list[SharedMountResponse])
 async def get_shared_mounts(
     username: str,
+    current_user: dict = Depends(get_current_user_or_pod),
     db: Session = Depends(get_db),
 ):
     """Pod 생성 시 호출 — 해당 사용자에게 공유된 데이터셋의 마운트 경로 목록.
 
     K8s 서비스가 Pod 생성 시 이 엔드포인트를 호출하여
     readOnly 볼륨 마운트 목록을 결정한다.
+
+    인가: Pod 토큰(본인 Pod) 또는 JWT 기반 본인/admin만 조회 가능.
+    타인 데이터셋 마운트 목록 노출 방지 (SEC-SCAN-LOOP).
     """
+    caller = current_user.get("sub", "")
+    caller_role = current_user.get("role", "user")
+    if caller != username and caller_role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied",
+        )
     shares = _get_shared_mounts_for_user(db, username)
     return [SharedMountResponse(**s) for s in shares]
 
@@ -284,6 +295,29 @@ async def list_org_members(
 # ==================== 데이터셋 CRUD ====================
 
 
+def _validate_file_path(file_path: str) -> str:
+    """파일 경로 검증 및 정규화 — 경로 순회 공격 방지.
+
+    - 절대 경로 (/etc/passwd) 거부
+    - 상위 디렉터리 이동 (../../etc/passwd) 거부
+    - PurePosixPath 정규화 (uploads/./data.csv → uploads/data.csv)
+    """
+    from pathlib import PurePosixPath
+
+    p = PurePosixPath(file_path)
+    if p.is_absolute():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="절대 경로는 허용되지 않습니다",
+        )
+    if ".." in p.parts:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="경로 순회 공격이 감지되었습니다",
+        )
+    return str(p)
+
+
 @router.post("/datasets", response_model=DatasetResponse, status_code=status.HTTP_201_CREATED)
 async def create_dataset(
     request: DatasetCreateRequest,
@@ -295,6 +329,7 @@ async def create_dataset(
     동일 owner + dataset_name 중복 시 409 반환.
     """
     username = current_user["sub"]
+    validated_path = _validate_file_path(request.file_path)
 
     # 중복 확인
     existing = (
@@ -314,7 +349,7 @@ async def create_dataset(
     dataset = SharedDataset(
         owner_username=username,
         dataset_name=request.dataset_name,
-        file_path=request.file_path,
+        file_path=validated_path,
         file_type=request.file_type,
         file_size_bytes=request.file_size_bytes,
         description=request.description,
@@ -685,13 +720,14 @@ async def files_auth_check(
     - 일반 사용자: 본인 Pod의 /files/ 접근만 허용 (Hub 파일 탐색기 API용)
     - 미인증: 401 → 로그인 페이지로 리다이렉트
     """
-    # JWT 추출 (Authorization 헤더 → claude_token 쿠키)
+    # JWT 추출 (Authorization 헤더 → bedrock_jwt 쿠키 → claude_token 쿠키)
+    # T10: bedrock_jwt 우선 파싱으로 Phase 0 forward-compat 구현
     user_payload = None
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
         user_payload = decode_token(auth_header.split(" ", 1)[1], settings)
     if user_payload is None:
-        token = request.cookies.get("claude_token", "")
+        token = request.cookies.get("bedrock_jwt") or request.cookies.get("claude_token", "")
         if token:
             user_payload = decode_token(token, settings)
     if user_payload is None:

@@ -57,7 +57,24 @@ echo "  ✅ auth-gateway-secrets, platform-admin-sa"
 
 echo "[6/8] Auth Gateway..."
 $K apply -f "${LOCAL_DEV_DIR}/04-auth-gateway.yaml" > /dev/null
+echo "  대기 중..."
+$K wait --for=condition=Ready pod -l app=auth-gateway -n platform --timeout=90s > /dev/null 2>&1 || true
 echo "  ✅ auth-gateway deployment + service"
+
+# --- 3.5. DB Seed — 테스트 사용자 생성 ---
+echo "  DB seed (TEST001)..."
+# auth-gateway가 create_all로 테이블 생성한 후 seed 실행
+DB_POD=$($K get pod -l app=local-db -n platform -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+if [ -n "$DB_POD" ]; then
+    $K exec "$DB_POD" -n platform -- psql -U bedrock_admin -d bedrock_platform -c "
+        INSERT INTO users (username, name, role, is_active, is_approved, pod_ttl, storage_retention, approved_at, created_at, updated_at)
+        VALUES ('TEST001', '테스트사용자', 'user', true, true, '4h', '30d', NOW(), NOW(), NOW())
+        ON CONFLICT (username) DO NOTHING;
+    " > /dev/null 2>&1
+    echo "  ✅ TEST001 사용자 seed 완료"
+else
+    echo "  ⚠️  DB Pod을 찾을 수 없음 — 수동 seed 필요"
+fi
 
 # --- 4. Ingress Controller ---
 echo "[7/8] Nginx Ingress Controller..."

@@ -86,9 +86,9 @@ variable "eks_node_min_size" {
 }
 
 variable "eks_node_max_size" {
-  description = "워커 노드 최대 개수 (Phase 2: 50명 실습 시 확장)"
+  description = "워커 노드 최대 개수 (Phase 2: Open WebUI 10 + Bedrock AG 8 + 기타 서비스 고려)"
   type        = number
-  default     = 4
+  default     = 15
 }
 
 # ----- 1:1 전용 노드그룹 (t3.medium, 사용자별 1 node) -----
@@ -112,9 +112,61 @@ variable "eks_dedicated_node_min_size" {
 }
 
 variable "eks_dedicated_node_max_size" {
-  description = "1:1 전용 노드 최대 개수"
+  description = "1:1 전용 노드 최대 개수 (개발자 200명 × 50% 동시 = 100 max)"
   type        = number
-  default     = 55
+  default     = 100
+}
+
+# ----- 시스템 노드 (auth-gateway 전용 pair) -----
+
+variable "eks_system_node_instance_types" {
+  description = "시스템 노드 인스턴스 타입 (auth-gateway 전용 pair)"
+  type        = list(string)
+  default     = ["t3.large"]
+}
+
+variable "eks_system_node_desired_size" {
+  description = "시스템 노드 희망 개수 (최소 2 — auth-gateway HA pair)"
+  type        = number
+  default     = 2
+}
+
+variable "eks_system_node_min_size" {
+  description = "시스템 노드 최소 개수 (항상 2 유지 — auth-gateway 무중단 필수)"
+  type        = number
+  default     = 2
+}
+
+variable "eks_system_node_max_size" {
+  description = "시스템 노드 최대 개수 (auth-gateway HPA 대응, 동일 노드 anti-affinity 적용)"
+  type        = number
+  default     = 3
+}
+
+# ----- Ingress 노드 (ingress-nginx 전용) -----
+
+variable "eks_ingress_node_instance_types" {
+  description = "Ingress 노드 인스턴스 타입 (WebSocket 스트리밍 트래픽 대응)"
+  type        = list(string)
+  default     = ["t3.large"]
+}
+
+variable "eks_ingress_node_desired_size" {
+  description = "Ingress 노드 희망 개수 (min=2 HA)"
+  type        = number
+  default     = 2
+}
+
+variable "eks_ingress_node_min_size" {
+  description = "Ingress 노드 최소 개수 (항상 2 유지 — ingress HA 필수)"
+  type        = number
+  default     = 2
+}
+
+variable "eks_ingress_node_max_size" {
+  description = "Ingress 노드 최대 개수 (Open WebUI WebSocket 2000명 대응, max=6)"
+  type        = number
+  default     = 6
 }
 
 # ----- Bedrock -----

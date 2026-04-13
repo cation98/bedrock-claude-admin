@@ -31,12 +31,16 @@ from app.models.file_audit import FileAuditLog  # noqa: F401 — create_all이 f
 from app.models.announcement import Announcement  # noqa: F401 — create_all이 테이블 생성하도록 import
 from app.models.guide import Guide  # noqa: F401 — create_all이 guides 테이블 생성하도록 import
 from app.models.moderation import ModerationViolation  # noqa: F401 — create_all이 moderation_violations 테이블 생성하도록 import
+from app.models.edit_session import EditSession  # noqa: F401 — OnlyOffice 편집 세션 테이블 생성용
 from app.routers import admin, apps, auth, bots, file_share, sessions, users, sms, skills, telegram, security, scheduling, infra_policy, surveys, app_proxy, portal
 from app.routers import announcements
 from app.routers.guides import router as guides_router
 from app.routers.file_governance import router as governance_router
 from app.routers.secure_files import router as secure_files_router
 from app.routers.viewers import router as viewers_router
+from app.routers.jwt_auth import router as jwt_auth_router
+from app.routers.bedrock_proxy import router as bedrock_proxy_router
+from app.routers.ai import router as ai_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -246,6 +250,29 @@ def _run_skill_store_migration() -> None:
         conn.commit()
 
 
+def _run_edit_session_first_editor_migration() -> None:
+    """edit_sessions.first_editor_username 컬럼 없으면 추가 (P2 #5).
+
+    같은 사용자 재진입 편집 허용 — 첫 편집자를 기록하여 다른 사용자만 view-only.
+    """
+    with engine.connect() as conn:
+        result = conn.execute(text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name='edit_sessions' AND column_name='first_editor_username'"
+        ))
+        if result.fetchone() is None:
+            conn.execute(text(
+                "ALTER TABLE edit_sessions "
+                "ADD COLUMN first_editor_username VARCHAR(50)"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_edit_sessions_first_editor_username "
+                "ON edit_sessions(first_editor_username)"
+            ))
+            conn.commit()
+            logger.info("Migration: edit_sessions.first_editor_username 컬럼 추가 완료")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """앱 시작/종료 라이프사이클 — DB 초기화 + 백그라운드 스케줄러 시작."""
@@ -256,6 +283,7 @@ async def lifespan(app: FastAPI):
     _run_proxy_secret_migration()
     _run_app_acl_grant_migration()
     _run_skill_store_migration()
+    _run_edit_session_first_editor_migration()
     idle_task = asyncio.create_task(idle_checker_loop(settings))
     snapshot_task = asyncio.create_task(token_snapshot_loop(settings))
     audit_task = asyncio.create_task(prompt_audit_loop(settings))
@@ -325,6 +353,14 @@ app.include_router(secure_files_router)
 app.include_router(viewers_router)
 app.include_router(announcements.router)
 app.include_router(guides_router)
+# jwt_auth: RS256 JWT + JWKS 엔드포인트 (Phase 0 Open WebUI 통합 허브)
+# app_proxy보다 먼저 등록 (catch-all보다 구체적인 경로가 우선)
+app.include_router(jwt_auth_router)
+# bedrock_proxy: T20 — Console Pod ANTHROPIC_BASE_URL=/v1 Anthropic-compatible endpoint
+# app_proxy보다 먼저 등록 (catch-all보다 구체적인 경로가 우선)
+app.include_router(bedrock_proxy_router)
+# ai: OpenAI-compatible endpoint (OnlyOffice AI plugin, 2026-04-12 eng review — Lane A)
+app.include_router(ai_router)
 # app_proxy는 catch-all 경로이므로 반드시 마지막에 등록
 app.include_router(app_proxy.router)
 

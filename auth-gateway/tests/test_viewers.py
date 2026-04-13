@@ -1,11 +1,38 @@
 """OnlyOffice 뷰어 통합 API 테스트.
 
-4 cases:
-1. test_onlyoffice_config_endpoint       — 유효한 설정 구조 반환
-2. test_onlyoffice_config_requires_auth  — 인증 없음 → 403
-3. test_onlyoffice_download_disabled     — config 에 download=False 포함
-4. test_callback_returns_error_0         — 콜백 엔드포인트 {"error": 0} 응답
+기존 18 cases:
+1-11. Config endpoint (구조, 인증, 권한, 확장자, documentType, JWT)
+12-15. File token 시스템 (create/consume/expire/invalid)
+16-22. Callback (error 0, save, force-save, CSP, empty, JWT 검증)
+
+T9 추가 22 cases:
+23. test_callback_status_2_downloads_and_saves
+24. test_callback_status_2_updates_db_version
+25. test_callback_status_2_kubectl_cp_failure
+26. test_edit_mode_permissions_true
+27. test_edit_mode_mode_is_edit
+28. test_edit_mode_forcesave_enabled
+29. test_shared_mode_chat_enabled
+30. test_shared_endpoint_allows_owner
+31. test_shared_endpoint_allows_acl_user
+32. test_shared_endpoint_allows_acl_team
+33. test_shared_endpoint_denies_non_acl_403
+34. test_personal_file_second_user_view_only
+35. test_personal_file_owner_always_edit
+36. test_personal_key_format
+37. test_shared_key_format
+38. test_key_rotation_on_save
+39. test_view_edit_share_same_key
+40. test_callback_status_4_cleanup
+41. test_callback_status_6_force_save
+42. test_callback_status_3_error_state
+43. test_callback_status_10_technical_error
+44. test_file_proxy_streaming_not_buffered
 """
+
+import inspect
+import json
+import re
 
 import pytest
 from fastapi import FastAPI
@@ -20,6 +47,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+# 테이블 정의를 등록하기 위해 모델 import (Base.metadata에 포함되도록)
+from app.models.edit_session import EditSession
+from app.models.file_share import FileShareACL, SharedDataset
+from app.models.user import User
+
 
 # ---------------------------------------------------------------------------
 # Minimal test infrastructure (SQLite in-memory)
@@ -33,13 +65,17 @@ _test_engine = create_engine(
 _TestSessionLocal = sessionmaker(bind=_test_engine)
 
 
+_DEFAULT_TEST_JWT_SECRET = "test-onlyoffice-jwt-secret-32-chars-min-xx"
+
+
 def _test_settings() -> Settings:
+    # P2 #1 이후 onlyoffice_jwt_secret은 필수. 테스트 기본값으로 32자 dummy 사용.
     return Settings(
         database_url="sqlite://",
         jwt_secret_key="test-secret-key-256-bit-minimum-len",
         jwt_algorithm="HS256",
         jwt_access_token_expire_minutes=60,
-        onlyoffice_jwt_secret="",  # JWT 서명 비활성 (기본 테스트)
+        onlyoffice_jwt_secret=_DEFAULT_TEST_JWT_SECRET,
         onlyoffice_url="http://onlyoffice.claude-sessions.svc.cluster.local",
         debug=False,
     )
@@ -62,8 +98,15 @@ _test_app = _build_test_app()
 
 
 @pytest.fixture()
-def db_session():
+def db_session(monkeypatch):
+    """SQLite in-memory DB 세션.
+
+    콜백 핸들러가 `SessionLocal()`을 직접 호출하므로(FOR UPDATE + 수동 커밋을 위해
+    Depends(get_db)를 우회), SessionLocal을 테스트 엔진 바인딩으로 monkeypatch 한다.
+    이 덕분에 콜백 테스트에서도 같은 in-memory DB를 공유한다.
+    """
     Base.metadata.create_all(bind=_test_engine)
+    monkeypatch.setattr(viewers_router, "SessionLocal", _TestSessionLocal)
     session = _TestSessionLocal()
     try:
         yield session
@@ -72,9 +115,19 @@ def db_session():
         Base.metadata.drop_all(bind=_test_engine)
 
 
+def _override_viewer_user(user: dict | None = None):
+    """_get_viewer_user 의존성을 테스트용으로 override하는 콜러블을 반환."""
+    payload = user or _DEFAULT_USER
+
+    async def _impl() -> dict:
+        return payload.copy()
+
+    return _impl
+
+
 @pytest.fixture()
 def client(db_session):
-    """Authenticated test client — get_current_user_or_pod mocked."""
+    """Authenticated test client — 주요 인증 의존성 전부 mocked."""
 
     def _override_db():
         try:
@@ -86,6 +139,7 @@ def client(db_session):
     _test_app.dependency_overrides[get_settings] = _test_settings
     _test_app.dependency_overrides[get_current_user_or_pod] = _mock_current_user
     _test_app.dependency_overrides[get_current_user] = _mock_current_user
+    _test_app.dependency_overrides[viewers_router._get_viewer_user] = _override_viewer_user()
 
     with TestClient(_test_app, raise_server_exceptions=False) as tc:
         yield tc
@@ -105,7 +159,6 @@ def unauthenticated_client(db_session):
 
     _test_app.dependency_overrides[get_db] = _override_db
     _test_app.dependency_overrides[get_settings] = _test_settings
-    # get_current_user_or_pod은 오버라이드하지 않음 → 실제 인증 실패 → 403
 
     with TestClient(_test_app, raise_server_exceptions=False) as tc:
         yield tc
@@ -114,7 +167,104 @@ def unauthenticated_client(db_session):
 
 
 # ---------------------------------------------------------------------------
-# Tests
+# Helpers for T9 tests
+# ---------------------------------------------------------------------------
+
+def _post_callback(client, payload: dict):
+    """콜백은 JWT 필수(P2 #1) + exp claim 필수(P2-iter3 #4)."""
+    from jose import jwt as jose_jwt
+    import time
+    signed = {**payload, "exp": int(time.time()) + 60}
+    token = jose_jwt.encode(signed, _DEFAULT_TEST_JWT_SECRET, algorithm="HS256")
+    return client.post(
+        "/api/v1/viewers/onlyoffice/callback",
+        json=payload,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+
+def _extract_config_from_html(html: str) -> dict:
+    """`_render_onlyoffice_html()` 이 만든 HTML에서 config JSON을 추출."""
+    m = re.search(r"var config = (\{.*?\});\s*config\.type", html, re.DOTALL)
+    assert m, f"config JSON을 HTML에서 찾지 못함: {html[:200]!r}"
+    return json.loads(m.group(1))
+
+
+def _mk_edit_session(
+    db,
+    *,
+    username: str = "TESTUSER01",
+    file_path: str = "report.xlsx",
+    is_shared: bool = False,
+    mount_id: int | None = None,
+    version: int = 1,
+    status: str = "editing",
+) -> EditSession:
+    if is_shared:
+        key = viewers_router._doc_key_shared(mount_id, file_path, version)
+    else:
+        key = viewers_router._doc_key_personal(username, file_path, version)
+    row = EditSession(
+        document_key=key,
+        file_path=file_path,
+        owner_username=username.upper(),
+        is_shared=is_shared,
+        mount_id=mount_id,
+        status=status,
+        version=version,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def _mk_shared_dataset(db, *, owner: str, name: str = "team-docs") -> SharedDataset:
+    ds = SharedDataset(
+        owner_username=owner,
+        dataset_name=name,
+        file_path=f"shared-data/{name}",
+        file_type="xlsx",
+    )
+    db.add(ds)
+    db.commit()
+    db.refresh(ds)
+    return ds
+
+
+def _mk_acl(
+    db,
+    *,
+    dataset_id: int,
+    share_type: str,
+    share_target: str,
+    granted_by: str = "ADMIN01",
+    revoked: bool = False,
+) -> FileShareACL:
+    from datetime import datetime, timezone
+    acl = FileShareACL(
+        dataset_id=dataset_id,
+        share_type=share_type,
+        share_target=share_target,
+        granted_by=granted_by,
+        revoked_at=datetime.now(timezone.utc) if revoked else None,
+    )
+    db.add(acl)
+    db.commit()
+    db.refresh(acl)
+    return acl
+
+
+def _mk_user(db, *, username: str, team_name: str | None = None) -> User:
+    u = User(username=username.upper(), name=username, team_name=team_name)
+    db.add(u)
+    db.commit()
+    db.refresh(u)
+    return u
+
+
+# ---------------------------------------------------------------------------
+# Tests — 기존 18 cases (config, token, callback)
 # ---------------------------------------------------------------------------
 
 class TestOnlyOfficeConfigEndpoint:
@@ -127,18 +277,15 @@ class TestOnlyOfficeConfigEndpoint:
         assert resp.status_code == 200
         data = resp.json()
 
-        # 최상위 키 검증
         assert "document" in data
         assert "editorConfig" in data
 
-        # document 필드 검증
         doc = data["document"]
         assert doc["fileType"] == "xlsx"
         assert doc["title"] == "report.xlsx"
         assert "url" in doc
         assert "permissions" in doc
 
-        # editorConfig 필드 검증
         editor = data["editorConfig"]
         assert "callbackUrl" in editor
         assert "user" in editor
@@ -153,7 +300,7 @@ class TestOnlyOfficeConfigEndpoint:
         assert resp.status_code == 403
 
     def test_onlyoffice_download_disabled(self, client):
-        """3. permissions.download 는 항상 False (보안 정책)."""
+        """3. permissions.download 는 config API 기본(view-only)에서 False."""
         resp = client.get("/api/v1/viewers/onlyoffice/config/document.docx")
 
         assert resp.status_code == 200
@@ -178,13 +325,42 @@ class TestOnlyOfficeConfigEndpoint:
             assert resp.status_code == 200
             assert resp.json()["document"]["fileType"] == expected_ext
 
-    def test_no_token_when_jwt_secret_empty(self, client):
-        """onlyoffice_jwt_secret 미설정 시 'token' 필드 없음."""
-        resp = client.get("/api/v1/viewers/onlyoffice/config/test.xlsx")
+    def test_unsupported_extension_returns_400(self, client):
+        """지원하지 않는 확장자 → 400 Bad Request."""
+        resp = client.get("/api/v1/viewers/onlyoffice/config/image.png")
+        assert resp.status_code == 400
+        assert "Unsupported" in resp.json()["detail"]
+
+    def test_document_type_mapping(self, client):
+        """모든 확장자별 documentType 매핑 정확성."""
+        cell_files = ["data.xlsx", "data.xls", "data.csv", "data.ods"]
+        slide_files = ["deck.pptx", "deck.ppt", "deck.odp"]
+        word_files = ["doc.docx", "doc.doc", "doc.odt", "doc.rtf"]
+
+        for f in cell_files:
+            resp = client.get(f"/api/v1/viewers/onlyoffice/config/{f}")
+            assert resp.status_code == 200
+            assert resp.json()["documentType"] == "cell", f"{f} should be cell"
+
+        for f in slide_files:
+            resp = client.get(f"/api/v1/viewers/onlyoffice/config/{f}")
+            assert resp.status_code == 200
+            assert resp.json()["documentType"] == "slide", f"{f} should be slide"
+
+        for f in word_files:
+            resp = client.get(f"/api/v1/viewers/onlyoffice/config/{f}")
+            assert resp.status_code == 200
+            assert resp.json()["documentType"] == "word", f"{f} should be word"
+
+    def test_all_permissions_false(self, client):
+        """config API(view-only): download/edit/print/review 모두 False."""
+        resp = client.get("/api/v1/viewers/onlyoffice/config/report.xlsx")
         assert resp.status_code == 200
-        data = resp.json()
-        # JWT secret이 비어있으면 token 필드가 없어야 함
-        assert "token" not in data
+        perms = resp.json()["document"]["permissions"]
+        assert perms["download"] is False
+        assert perms["edit"] is False
+        assert perms["print"] is False
+        assert perms["review"] is False
 
     def test_token_present_when_jwt_secret_set(self, db_session):
         """onlyoffice_jwt_secret 설정 시 'token' 필드 포함."""
@@ -218,58 +394,793 @@ class TestOnlyOfficeConfigEndpoint:
         assert isinstance(data["token"], str)
         assert len(data["token"]) > 0
 
+    def test_jwt_token_contains_config_claims(self, db_session):
+        """JWT 토큰을 decode하면 config와 동일한 구조가 포함되어야 함."""
+        from jose import jwt as jose_jwt
+
+        jwt_secret = "test-onlyoffice-secret-32chars!!!"
+
+        def _settings_with_jwt() -> Settings:
+            return Settings(
+                database_url="sqlite://",
+                jwt_secret_key="test-secret-key-256-bit-minimum-len",
+                onlyoffice_jwt_secret=jwt_secret,
+                debug=False,
+            )
+
+        def _override_db():
+            try:
+                yield db_session
+            finally:
+                pass
+
+        _test_app.dependency_overrides[get_db] = _override_db
+        _test_app.dependency_overrides[get_settings] = _settings_with_jwt
+        _test_app.dependency_overrides[get_current_user_or_pod] = _mock_current_user
+
+        with TestClient(_test_app, raise_server_exceptions=False) as tc:
+            resp = tc.get("/api/v1/viewers/onlyoffice/config/report.xlsx")
+
+        _test_app.dependency_overrides.clear()
+
+        data = resp.json()
+        decoded = jose_jwt.decode(data["token"], jwt_secret, algorithms=["HS256"])
+        assert decoded["document"]["fileType"] == "xlsx"
+        assert decoded["document"]["title"] == "report.xlsx"
+        assert decoded["document"]["permissions"]["download"] is False
+        assert decoded["documentType"] == "cell"
+        assert decoded["editorConfig"]["user"]["id"] == "TESTUSER01"
+
+
+class TestFileTokenSystem:
+    """파일 토큰 생성/소비 시스템 단위 테스트."""
+
+    def test_create_and_consume_token(self):
+        from app.routers.viewers import _create_file_token, _consume_file_token, _file_tokens
+        _file_tokens.clear()
+
+        token = _create_file_token("TESTUSER01", "report.xlsx")
+        assert isinstance(token, str)
+        assert len(token) > 0
+
+        data = _consume_file_token(token)
+        assert data is not None
+        assert data["username"] == "TESTUSER01"
+        assert data["file_path"] == "report.xlsx"
+
+    def test_token_reusable_within_ttl(self):
+        """P2-BUG4(H1): OnlyOffice DS가 Word/PPTX 원본을 다중 fetch하므로
+        토큰은 TTL 내에서 재검증 가능해야 한다 (1회용 → TTL-only 전환).
+        2026-04-12 로그 확증: .docx/.pptx 3회 fetch, .xlsx 1회.
+        """
+        from app.routers.viewers import _create_file_token, _consume_file_token, _file_tokens
+        _file_tokens.clear()
+
+        token = _create_file_token("TESTUSER01", "report.xlsx")
+        first = _consume_file_token(token)
+        assert first is not None
+
+        second = _consume_file_token(token)
+        assert second is not None, "TTL 내 재검증 실패 — OO DS 다중 fetch 지원 불가"
+        assert second == first
+
+    def test_expired_token_rejected(self):
+        from app.routers.viewers import _consume_file_token, _file_tokens
+        _file_tokens.clear()
+
+        _file_tokens["expired-token"] = {
+            "username": "TESTUSER01",
+            "file_path": "old.xlsx",
+            "expires": 0,
+        }
+        result = _consume_file_token("expired-token")
+        assert result is None
+
+    def test_invalid_token_rejected(self):
+        from app.routers.viewers import _consume_file_token, _file_tokens
+        _file_tokens.clear()
+
+        result = _consume_file_token("nonexistent-token")
+        assert result is None
+
 
 class TestOnlyOfficeCallback:
     """POST /api/v1/viewers/onlyoffice/callback"""
 
     def test_callback_returns_error_0(self, client):
-        """4. 콜백 요청 → {"error": 0} 응답."""
-        resp = client.post(
-            "/api/v1/viewers/onlyoffice/callback",
-            json={"status": 1, "key": "doc-123"},
-        )
+        """콜백 요청 (unknown key) → {"error": 0} 응답."""
+        resp = _post_callback(client, {"status": 1, "key": "doc-123"})
         assert resp.status_code == 200
         assert resp.json() == {"error": 0}
 
     def test_callback_save_ready_status(self, client):
-        """status=2 (저장 준비) → {"error": 0} 응답."""
-        resp = client.post(
-            "/api/v1/viewers/onlyoffice/callback",
-            json={
-                "status": 2,
-                "key": "doc-123",
-                "url": "http://onlyoffice/internal/cache/doc-123.xlsx",
-            },
-        )
+        """status=2 (저장 준비) without matching session → {"error": 0}."""
+        resp = _post_callback(client, {
+            "status": 2,
+            "key": "doc-123",
+            "url": "http://documentserver.claude-sessions.svc.cluster.local/cache/x.xlsx",
+        })
         assert resp.status_code == 200
         assert resp.json() == {"error": 0}
 
     def test_callback_force_save_status(self, client):
-        """status=6 (강제 저장) → {"error": 0} 응답."""
-        resp = client.post(
-            "/api/v1/viewers/onlyoffice/callback",
-            json={
-                "status": 6,
-                "key": "doc-123",
-                "url": "http://onlyoffice/internal/cache/doc-123.xlsx",
-            },
-        )
+        """status=6 without matching session → {"error": 0} (unknown key 처리)."""
+        resp = _post_callback(client, {
+            "status": 6,
+            "key": "doc-123",
+            "url": "http://documentserver.claude-sessions.svc.cluster.local/cache/x.xlsx",
+        })
         assert resp.status_code == 200
         assert resp.json() == {"error": 0}
 
     def test_callback_csp_header(self, client):
-        """콜백 응답에도 Content-Security-Policy 헤더 포함."""
-        resp = client.post(
-            "/api/v1/viewers/onlyoffice/callback",
-            json={"status": 0},
-        )
-        assert resp.status_code == 200
-        assert "frame-ancestors" in resp.headers.get("content-security-policy", "")
+        """콜백 응답은 순수 JSON — CSP frame-ancestors 헤더가 포함되지 않아야 한다.
 
-    def test_callback_requires_auth(self, unauthenticated_client):
-        """인증 없음 → 콜백도 403 Forbidden."""
-        resp = unauthenticated_client.post(
+        설계(T2) 기준: callback은 S2S 엔드포인트이므로 HTML embedding 관련 헤더는 부적절.
+        iframe 응답이 아니라 Document Server가 직접 호출하는 JSON 응답이다.
+        """
+        resp = _post_callback(client, {"status": 0})
+        assert resp.status_code == 200
+        assert "frame-ancestors" not in resp.headers.get("content-security-policy", "")
+
+    def test_callback_empty_body_accepted(self, client):
+        """빈 JSON body → 정상 처리 (view-only 모드)."""
+        resp = _post_callback(client, {})
+        assert resp.status_code == 200
+        assert resp.json() == {"error": 0}
+
+    def test_callback_rejects_missing_jwt(self, client):
+        """JWT 필수 — 토큰 없이 요청하면 403 (P2 #1)."""
+        resp = client.post(
             "/api/v1/viewers/onlyoffice/callback",
             json={"status": 2, "url": "http://example.com/doc.xlsx"},
         )
         assert resp.status_code == 403
+
+    def test_callback_rejects_invalid_jwt(self, db_session):
+        """JWT secret 설정 시 잘못된 토큰 → 403."""
+
+        def _settings_with_jwt() -> Settings:
+            return Settings(
+                database_url="sqlite://",
+                jwt_secret_key="test-secret-key-256-bit-minimum-len",
+                onlyoffice_jwt_secret="test-onlyoffice-secret-32chars!!!",
+                debug=False,
+            )
+
+        def _override_db():
+            try:
+                yield db_session
+            finally:
+                pass
+
+        _test_app.dependency_overrides[get_db] = _override_db
+        _test_app.dependency_overrides[get_settings] = _settings_with_jwt
+
+        with TestClient(_test_app, raise_server_exceptions=False) as tc:
+            resp = tc.post(
+                "/api/v1/viewers/onlyoffice/callback",
+                json={"status": 1},
+                headers={"Authorization": "Bearer invalid-token"},
+            )
+
+        _test_app.dependency_overrides.clear()
+        assert resp.status_code == 403
+
+    def test_callback_accepts_valid_jwt(self, db_session):
+        """JWT secret 설정 시 올바른 토큰 → 200."""
+        from jose import jwt as jose_jwt
+
+        jwt_secret = "test-onlyoffice-secret-32chars!!!"
+
+        def _settings_with_jwt() -> Settings:
+            return Settings(
+                database_url="sqlite://",
+                jwt_secret_key="test-secret-key-256-bit-minimum-len",
+                onlyoffice_jwt_secret=jwt_secret,
+                debug=False,
+            )
+
+        def _override_db():
+            try:
+                yield db_session
+            finally:
+                pass
+
+        _test_app.dependency_overrides[get_db] = _override_db
+        _test_app.dependency_overrides[get_settings] = _settings_with_jwt
+
+        import time
+        valid_token = jose_jwt.encode(
+            {"status": 1, "exp": int(time.time()) + 60},
+            jwt_secret,
+            algorithm="HS256",
+        )
+
+        with TestClient(_test_app, raise_server_exceptions=False) as tc:
+            resp = tc.post(
+                "/api/v1/viewers/onlyoffice/callback",
+                json={"status": 1},
+                headers={"Authorization": f"Bearer {valid_token}"},
+            )
+
+        _test_app.dependency_overrides.clear()
+        assert resp.status_code == 200
+        assert resp.json() == {"error": 0}
+
+    def test_callback_rejects_token_without_exp(self, client):
+        """P2-iter3 #4: exp claim 없는 JWT 는 replay 위험 → 403."""
+        from jose import jwt as jose_jwt
+        token = jose_jwt.encode(
+            {"status": 1, "key": "doc-noexp"},
+            _DEFAULT_TEST_JWT_SECRET,
+            algorithm="HS256",
+        )
+        resp = client.post(
+            "/api/v1/viewers/onlyoffice/callback",
+            json={"status": 1, "key": "doc-noexp"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 403
+
+    def test_callback_rejects_expired_token(self, client):
+        """P2-iter3 #4: 만료된 exp 를 가진 JWT 는 거부."""
+        from jose import jwt as jose_jwt
+        import time
+        token = jose_jwt.encode(
+            {"status": 1, "key": "doc-expired", "exp": int(time.time()) - 60},
+            _DEFAULT_TEST_JWT_SECRET,
+            algorithm="HS256",
+        )
+        resp = client.post(
+            "/api/v1/viewers/onlyoffice/callback",
+            json={"status": 1, "key": "doc-expired"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# T9 추가: OnlyOffice 편집 모드 22개 테스트
+# ---------------------------------------------------------------------------
+
+class TestCallbackSaveFlow:
+    """Priority 1: status=2 저장 흐름 (Document Server → auth-gateway → Pod)."""
+
+    def test_callback_status_2_downloads_and_saves(self, client, db_session, monkeypatch):
+        """status=2 + valid session + download URL → _save_edited_file 호출됨."""
+        session = _mk_edit_session(db_session, file_path="docs/report.xlsx")
+        calls: list[tuple] = []
+
+        async def _fake_save(sess, url, filetype):
+            calls.append((sess.document_key, url, filetype))
+
+        monkeypatch.setattr(viewers_router, "_save_edited_file", _fake_save)
+
+        resp = _post_callback(client, {
+            "status": 2,
+            "key": session.document_key,
+            "url": "http://documentserver.claude-sessions.svc.cluster.local/cache/r.xlsx",
+            "filetype": "xlsx",
+        })
+        assert resp.status_code == 200
+        assert resp.json() == {"error": 0}
+        assert len(calls) == 1
+        assert calls[0][0] == session.document_key
+        assert calls[0][2] == "xlsx"
+
+    def test_callback_status_2_deletes_session(self, client, db_session, monkeypatch):
+        """status=2 저장 성공 → 행 DELETE(P2-BUG1).
+
+        이전에는 status='saved' + version++ 로 마킹했으나, 재진입 시 stale 행이
+        재사용되거나 OnlyOffice Document Server 캐시와 충돌하여 view-only 로
+        열리는 이슈가 있었다. 행을 지우고 재진입마다 새 세션 + 새 key(salt) 를
+        발급한다.
+        """
+        session = _mk_edit_session(db_session, file_path="report.xlsx", version=3)
+        original_key = session.document_key
+        session_id = session.id
+
+        async def _noop_save(sess, url, filetype):
+            return None
+
+        monkeypatch.setattr(viewers_router, "_save_edited_file", _noop_save)
+
+        resp = _post_callback(client, {
+            "status": 2,
+            "key": original_key,
+            "url": "http://documentserver.claude-sessions.svc.cluster.local/x.xlsx",
+        })
+        assert resp.status_code == 200
+        assert resp.json() == {"error": 0}
+
+        db_session.expire_all()
+        assert db_session.query(EditSession).filter_by(id=session_id).first() is None
+
+    def test_callback_status_2_kubectl_cp_failure(self, client, db_session, monkeypatch):
+        """저장 중 kubectl cp 실패 → session.status='save_failed', last_error 기록."""
+        session = _mk_edit_session(db_session, file_path="big.xlsx")
+
+        async def _fail_save(sess, url, filetype):
+            raise RuntimeError("kubectl cp failed: pod not found")
+
+        monkeypatch.setattr(viewers_router, "_save_edited_file", _fail_save)
+
+        resp = _post_callback(client, {
+            "status": 2,
+            "key": session.document_key,
+            "url": "http://documentserver.claude-sessions.svc.cluster.local/x.xlsx",
+        })
+        assert resp.status_code == 200
+        assert resp.json() == {"error": 1}
+
+        db_session.expire_all()
+        updated = db_session.query(EditSession).filter_by(id=session.id).one()
+        assert updated.status == "save_failed"
+        assert updated.last_error is not None
+        assert "kubectl cp failed" in updated.last_error
+
+    def test_callback_accepts_envelope_format(self, client, db_session, monkeypatch):
+        """Envelope JWT (``{"payload": {...}}``) 수용 — OnlyOffice 9.x outbox 형식.
+
+        P2-BUG1 재현 조건: 9.3.1 이 outbox callback JWT 를 envelope 로 서명해
+        보낸다. P2-iter3 #5 에서 envelope 분기를 dead path 로 오판해 제거했고
+        그 결과 모든 status/key 추출이 실패 → 콜백이 전부 ignored.
+        flat 과 envelope 두 포맷 모두 동작해야 한다.
+        """
+        from jose import jwt as jose_jwt
+        import time
+
+        session = _mk_edit_session(db_session, file_path="envelope.xlsx", version=1)
+        original_key = session.document_key
+        session_id = session.id
+
+        calls: list[tuple] = []
+
+        async def _fake_save(sess, url, filetype):
+            calls.append((sess.document_key, url, filetype))
+
+        monkeypatch.setattr(viewers_router, "_save_edited_file", _fake_save)
+
+        envelope_claims = {
+            "payload": {
+                "status": 2,
+                "key": original_key,
+                "url": "http://documentserver.claude-sessions.svc.cluster.local/e.xlsx",
+                "filetype": "xlsx",
+            },
+            "exp": int(time.time()) + 60,
+        }
+        token = jose_jwt.encode(
+            envelope_claims, _DEFAULT_TEST_JWT_SECRET, algorithm="HS256"
+        )
+        resp = client.post(
+            "/api/v1/viewers/onlyoffice/callback",
+            json={},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"error": 0}
+        assert len(calls) == 1, "envelope 포맷에서 _save_edited_file 가 호출되지 않음"
+        assert calls[0][0] == original_key
+        assert calls[0][2] == "xlsx"
+
+        db_session.expire_all()
+        assert (
+            db_session.query(EditSession).filter_by(id=session_id).first() is None
+        )
+
+    def test_save_rewrites_localhost_to_cluster_dns(self, db_session, monkeypatch):
+        """OnlyOffice DS 가 callback url 에 ``localhost`` host 를 넣어도
+        auth-gateway 는 cluster DNS 로 rewrite 하여 실제 OO Pod 에 도달해야 한다.
+
+        P2-BUG2 재현 조건: OO 8.2.2 가 nginx 로그에 ``[localhost]`` 로 자신을
+        인식 → callback body 의 ``url`` 을 ``http://localhost/cache/files/...`` 로
+        직렬화 → auth-gateway 가 자기 loopback(127.0.0.1) 에 httpx.GET 시도 →
+        ConnectError → 저장 실패. Rewrite 후에는 cluster DNS 로 가야 한다.
+        """
+        import asyncio
+        from app.routers import viewers as _v
+
+        captured: list[str] = []
+
+        class _FakeResp:
+            status_code = 200
+
+            async def aiter_bytes(self, chunk_size=65536):
+                if False:
+                    yield b""
+                return
+
+        class _FakeStreamCtx:
+            def __init__(self, url):
+                self.url = url
+
+            async def __aenter__(self):
+                return _FakeResp()
+
+            async def __aexit__(self, *a):
+                return False
+
+        class _FakeClient:
+            def __init__(self, *a, **kw):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            def stream(self, method, url):
+                captured.append(url)
+                return _FakeStreamCtx(url)
+
+        monkeypatch.setattr(_v.httpx, "AsyncClient", _FakeClient)
+
+        class _FakeK8s:
+            def __init__(self, *a, **kw):
+                pass
+
+            async def write_local_file_to_pod(self, *a, **kw):
+                return None
+
+        from app.services import k8s_service as _ksvc
+        monkeypatch.setattr(_ksvc, "K8sService", _FakeK8s)
+
+        session = _mk_edit_session(
+            db_session, file_path="uploads/rewrite.xlsx", version=1
+        )
+        session.is_shared = False
+        db_session.commit()
+
+        asyncio.run(
+            _v._save_edited_file(
+                session,
+                "http://localhost/cache/files/Editor.xlsx?token=abc",
+                "xlsx",
+            )
+        )
+
+        assert captured, "httpx.stream 이 호출되지 않음"
+        assert all("localhost" not in u for u in captured), (
+            f"localhost 가 rewrite 되지 않음: {captured}"
+        )
+        assert any(
+            "onlyoffice.claude-sessions.svc.cluster.local" in u for u in captured
+        ), f"cluster DNS 로 rewrite 되지 않음: {captured}"
+
+
+class TestEditModeConfig:
+    """Priority 2: /edit /shared 엔드포인트의 편집 모드 config."""
+
+    def test_edit_mode_permissions_true(self, client, db_session):
+        """첫 사용자가 /edit/{username}/{file} 열면 permissions.edit=True."""
+        resp = client.get("/api/v1/viewers/onlyoffice/edit/TESTUSER01/plan.xlsx")
+        assert resp.status_code == 200
+        cfg = _extract_config_from_html(resp.text)
+        assert cfg["document"]["permissions"]["edit"] is True
+        assert cfg["document"]["permissions"]["download"] is True
+
+    def test_edit_mode_mode_is_edit(self, client, db_session):
+        """첫 사용자 /edit → editorConfig.mode == 'edit'."""
+        resp = client.get("/api/v1/viewers/onlyoffice/edit/TESTUSER01/memo.docx")
+        assert resp.status_code == 200
+        cfg = _extract_config_from_html(resp.text)
+        assert cfg["editorConfig"]["mode"] == "edit"
+
+    def test_edit_mode_forcesave_enabled(self, client, db_session):
+        """편집 모드에서 customization.forcesave=True (Ctrl+S 지원)."""
+        resp = client.get("/api/v1/viewers/onlyoffice/edit/TESTUSER01/deck.pptx")
+        assert resp.status_code == 200
+        cfg = _extract_config_from_html(resp.text)
+        assert cfg["editorConfig"]["customization"]["forcesave"] is True
+
+    def test_shared_mode_chat_enabled(self, client, db_session):
+        """/shared/{mount_id}/{file} 편집 모드 → customization.chat=True (co-editing)."""
+        ds = _mk_shared_dataset(db_session, owner="TESTUSER01", name="team-plans")
+
+        resp = client.get(f"/api/v1/viewers/onlyoffice/shared/{ds.id}/quarterly.xlsx")
+        assert resp.status_code == 200
+        cfg = _extract_config_from_html(resp.text)
+        assert cfg["editorConfig"]["customization"]["chat"] is True
+        assert cfg["editorConfig"]["customization"]["comments"] is True
+
+
+class TestSharedEndpointACL:
+    """Priority 3: /shared 엔드포인트 ACL 검증."""
+
+    def test_shared_endpoint_allows_owner(self, client, db_session):
+        """dataset.owner_username == 요청자 → 통과 (ACL 없이)."""
+        ds = _mk_shared_dataset(db_session, owner="TESTUSER01")
+        resp = client.get(f"/api/v1/viewers/onlyoffice/shared/{ds.id}/doc.xlsx")
+        assert resp.status_code == 200
+
+    def test_shared_endpoint_allows_acl_user(self, client, db_session):
+        """share_type=user + target=요청자 사번 → 통과."""
+        ds = _mk_shared_dataset(db_session, owner="OWNER01")  # 다른 소유자
+        _mk_acl(db_session, dataset_id=ds.id, share_type="user", share_target="TESTUSER01")
+
+        resp = client.get(f"/api/v1/viewers/onlyoffice/shared/{ds.id}/report.xlsx")
+        assert resp.status_code == 200
+
+    def test_shared_endpoint_allows_acl_team(self, client, db_session):
+        """share_type=team + target=요청자 team_name → 통과."""
+        _mk_user(db_session, username="TESTUSER01", team_name="AT/DT개발팀")
+        ds = _mk_shared_dataset(db_session, owner="OWNER02")
+        _mk_acl(db_session, dataset_id=ds.id, share_type="team", share_target="AT/DT개발팀")
+
+        resp = client.get(f"/api/v1/viewers/onlyoffice/shared/{ds.id}/spec.xlsx")
+        assert resp.status_code == 200
+
+    def test_shared_endpoint_denies_non_acl_403(self, client, db_session):
+        """다른 소유자 + 매칭 ACL 없음 → 403."""
+        _mk_user(db_session, username="TESTUSER01", team_name="보안팀")
+        ds = _mk_shared_dataset(db_session, owner="OWNER03")
+        # 다른 사용자/팀에 대한 ACL만 있음
+        _mk_acl(db_session, dataset_id=ds.id, share_type="user", share_target="OTHER99")
+        _mk_acl(db_session, dataset_id=ds.id, share_type="team", share_target="영업팀")
+        # 회수된 ACL은 무시되어야 함
+        _mk_acl(
+            db_session,
+            dataset_id=ds.id,
+            share_type="user",
+            share_target="TESTUSER01",
+            revoked=True,
+        )
+
+        resp = client.get(f"/api/v1/viewers/onlyoffice/shared/{ds.id}/secret.xlsx")
+        assert resp.status_code == 403
+
+
+class TestPersonalFileEditLock:
+    """Priority 4: 개인 파일 편집 잠금."""
+
+    def test_personal_file_second_user_view_only(self, client, db_session):
+        """기존 편집 세션이 있을 때 두 번째 사용자가 열면 view-only."""
+        # 기존 세션이 이미 editing 중
+        _mk_edit_session(db_session, username="TESTUSER01", file_path="shared.xlsx")
+
+        # TESTUSER01 본인이 다시 열어도 '두 번째 사용자'로 취급 (보수적 잠금)
+        resp = client.get("/api/v1/viewers/onlyoffice/edit/TESTUSER01/shared.xlsx")
+        assert resp.status_code == 200
+        cfg = _extract_config_from_html(resp.text)
+        assert cfg["editorConfig"]["mode"] == "view"
+        assert cfg["document"]["permissions"]["edit"] is False
+
+    def test_personal_file_owner_always_edit(self, client, db_session):
+        """세션이 없으면 소유자가 첫 진입자로서 edit 모드."""
+        resp = client.get("/api/v1/viewers/onlyoffice/edit/TESTUSER01/new.xlsx")
+        assert resp.status_code == 200
+        cfg = _extract_config_from_html(resp.text)
+        assert cfg["editorConfig"]["mode"] == "edit"
+        assert cfg["document"]["permissions"]["edit"] is True
+
+    def test_reopen_after_save_is_editable(self, client, db_session, monkeypatch):
+        """P2-BUG1 회귀: 편집→저장→재진입 flow 에서 계속 editable 이어야 한다.
+
+        버그 상황: 저장 완료 후 같은 파일을 다시 열면 OnlyOffice 가 view-only 로
+        뜨고 "파일 버전이 변경되었다" 경고를 표시. saved 행이 재사용되거나
+        document_key 가 로테이션되지 않은 것이 원인.
+
+        요구 사항(6 assertions):
+          1. 1차 오픈 → editing 세션 생성(version=1)
+          2. 콜백 status=2 처리(저장 완료)
+          3. 2차 오픈 → 새 세션이 생성되고 editable=True
+          4. 새 document_key 는 1차와 달라야 함
+          5. permissions.edit=True
+          6. mode="edit"
+        """
+        # ─ 1차 오픈 ─
+        resp1 = client.get("/api/v1/viewers/onlyoffice/edit/TESTUSER01/deal.xlsx")
+        assert resp1.status_code == 200
+        cfg1 = _extract_config_from_html(resp1.text)
+        first_key = cfg1["document"]["key"]
+        assert cfg1["editorConfig"]["mode"] == "edit"
+        assert cfg1["document"]["permissions"]["edit"] is True
+
+        first_row = db_session.query(EditSession).filter_by(document_key=first_key).one()
+        assert first_row.status == "editing"
+        assert first_row.version == 1
+
+        # ─ status=2 저장 콜백(파일 다운로드는 mock) ─
+        async def _noop_save(sess, url, filetype):
+            return None
+
+        monkeypatch.setattr(viewers_router, "_save_edited_file", _noop_save)
+        save_resp = _post_callback(client, {
+            "status": 2,
+            "key": first_key,
+            "url": "http://documentserver.claude-sessions.svc.cluster.local/deal.xlsx",
+        })
+        assert save_resp.status_code == 200
+        assert save_resp.json() == {"error": 0}
+
+        # ─ 2차 오픈 — 여기서 view-only 로 열리면 BUG ─
+        resp2 = client.get("/api/v1/viewers/onlyoffice/edit/TESTUSER01/deal.xlsx")
+        assert resp2.status_code == 200
+        cfg2 = _extract_config_from_html(resp2.text)
+        second_key = cfg2["document"]["key"]
+
+        assert cfg2["editorConfig"]["mode"] == "edit", "재진입이 edit 모드여야 함"
+        assert cfg2["document"]["permissions"]["edit"] is True, \
+            "재진입의 permissions.edit 이 True 여야 함"
+        assert second_key != first_key, \
+            f"새 세션의 document_key 가 1차와 달라야 함 ({first_key} vs {second_key})"
+
+
+class TestKeyGeneration:
+    """Priority 5: document key 생성/로테이션."""
+
+    def test_personal_key_format(self):
+        """개인 key = sha256(personal:USERNAME_UPPER:path:version) 앞 20자."""
+        import hashlib
+        key = viewers_router._doc_key_personal("testuser01", "docs/report.xlsx", 7)
+        expected = hashlib.sha256(
+            b"personal:TESTUSER01:docs/report.xlsx:7"
+        ).hexdigest()[:20]
+        assert key == expected
+        assert len(key) == 20
+
+    def test_shared_key_format(self):
+        """공유 key = sha256(shared:mount_id:path:version) 앞 20자."""
+        import hashlib
+        key = viewers_router._doc_key_shared(42, "quarterly.xlsx", 2)
+        expected = hashlib.sha256(b"shared:42:quarterly.xlsx:2").hexdigest()[:20]
+        assert key == expected
+        assert len(key) == 20
+
+    def test_key_rotation_on_save(self, client, db_session, monkeypatch):
+        """status=2 저장 후 행 DELETE(P2-BUG1) → 같은 파일 재진입 시 새 key 생성됨.
+
+        이전 설계(saved + version++)는 stale 잔여 행이 쌓이고 재진입 시
+        view-only 로 열리는 원인이 되었다. 저장 성공 시 행을 제거하고
+        다음 `_get_or_create_edit_session` 호출이 salt 포함 새 key 를 만든다.
+        """
+        v1_key = viewers_router._doc_key_personal("TESTUSER01", "rot.xlsx", 1)
+        session = _mk_edit_session(db_session, file_path="rot.xlsx", version=1)
+        assert session.document_key == v1_key
+        session_id = session.id
+
+        async def _noop_save(sess, url, filetype):
+            return None
+
+        monkeypatch.setattr(viewers_router, "_save_edited_file", _noop_save)
+
+        _post_callback(client, {
+            "status": 2,
+            "key": v1_key,
+            "url": "http://documentserver.claude-sessions.svc.cluster.local/rot.xlsx",
+        })
+
+        db_session.expire_all()
+        # 행은 DELETE 되어야 한다.
+        assert db_session.query(EditSession).filter_by(id=session_id).first() is None
+
+    def test_view_edit_share_same_key(self, client, db_session):
+        """활성 편집 세션이 있으면 /onlyoffice/{user}/{path} view 진입은 같은 key를 사용."""
+        session = _mk_edit_session(db_session, username="TESTUSER01", file_path="live.xlsx")
+
+        view_resp = client.get("/api/v1/viewers/onlyoffice/TESTUSER01/live.xlsx")
+        edit_resp = client.get("/api/v1/viewers/onlyoffice/edit/TESTUSER01/live.xlsx")
+        assert view_resp.status_code == 200
+        assert edit_resp.status_code == 200
+
+        view_cfg = _extract_config_from_html(view_resp.text)
+        edit_cfg = _extract_config_from_html(edit_resp.text)
+
+        assert view_cfg["document"]["key"] == session.document_key
+        assert edit_cfg["document"]["key"] == session.document_key
+        # view와 edit 이 다른 mode지만 동일 키를 공유
+        assert view_cfg["editorConfig"]["mode"] == "view"
+
+
+class TestCallbackOtherStatuses:
+    """Priority 6: 콜백의 나머지 status 처리."""
+
+    def test_callback_status_4_cleanup(self, client, db_session):
+        """status=4 (변경 없이 닫힘) → 행 DELETE(P2-BUG1).
+
+        변경이 없는 닫힘은 그대로 지워 재진입 시 새 세션을 생성한다.
+        """
+        session = _mk_edit_session(db_session, file_path="nochange.xlsx")
+        session_id = session.id
+
+        resp = _post_callback(client, {"status": 4, "key": session.document_key})
+        assert resp.status_code == 200
+        assert resp.json() == {"error": 0}
+
+        db_session.expire_all()
+        assert db_session.query(EditSession).filter_by(id=session_id).first() is None
+
+    def test_callback_status_6_force_save(self, client, db_session, monkeypatch):
+        """status=6 (force-save) → 저장 후 status='editing' 유지 + version 동일(P2 #7).
+
+        P2 #7: force-save 중 version을 증가시키면 Document Server가 사용하는
+        document_key와 어긋나 다음 저장이 unknown-key로 실패한다. 편집 세션은
+        그대로 유지하고 파일만 덮어쓴다.
+        """
+        session = _mk_edit_session(db_session, file_path="force.xlsx", version=1)
+        original_version = session.version
+        original_key = session.document_key
+
+        async def _noop_save(sess, url, filetype):
+            return None
+
+        monkeypatch.setattr(viewers_router, "_save_edited_file", _noop_save)
+
+        resp = _post_callback(client, {
+            "status": 6,
+            "key": original_key,
+            "url": "http://documentserver.claude-sessions.svc.cluster.local/f.xlsx",
+        })
+        assert resp.status_code == 200
+        assert resp.json() == {"error": 0}
+
+        db_session.expire_all()
+        updated = db_session.query(EditSession).filter_by(id=session.id).one()
+        assert updated.status == "editing"             # force-save는 편집 계속
+        assert updated.version == original_version     # version은 유지 (P2 #7)
+        assert updated.document_key == original_key    # key 로테이션 안 함
+
+    def test_callback_status_3_error_state(self, client, db_session):
+        """status=3 (저장 에러) → session.status='error' + last_error."""
+        session = _mk_edit_session(db_session, file_path="broken.xlsx")
+
+        resp = _post_callback(client, {
+            "status": 3,
+            "key": session.document_key,
+            "error": "conversion failure",
+        })
+        assert resp.status_code == 200
+        assert resp.json() == {"error": 0}
+
+        db_session.expire_all()
+        updated = db_session.query(EditSession).filter_by(id=session.id).one()
+        assert updated.status == "error"
+        assert updated.last_error == "conversion failure"
+
+    def test_callback_status_10_technical_error(self, client, db_session):
+        """status=10 (기술적 오류, v8.2+) → session.status='error'."""
+        session = _mk_edit_session(db_session, file_path="tech.xlsx")
+
+        resp = _post_callback(client, {
+            "status": 10,
+            "key": session.document_key,
+            "error": "internal engine crash",
+        })
+        assert resp.status_code == 200
+        assert resp.json() == {"error": 0}
+
+        db_session.expire_all()
+        updated = db_session.query(EditSession).filter_by(id=session.id).one()
+        assert updated.status == "error"
+        assert updated.last_error == "internal engine crash"
+
+
+class TestFileProxyStreaming:
+    """Priority 7: 파일 프록시 스트리밍 (버퍼링 없이 청크 중계)."""
+
+    def test_file_proxy_streaming_not_buffered(self):
+        """stream_file이 httpx.stream + aiter_bytes(chunk_size=65536)로 동작해야 한다.
+
+        T3 설계: `iter([resp.content])` 같은 전체 메모리 버퍼링이 아니라
+        `httpx.send(stream=True)` + `aiter_bytes(chunk_size=65536)`로
+        50MB 파일도 64KB 청크로 점진 전송해야 한다.
+        """
+        src = inspect.getsource(viewers_router.stream_file)
+
+        # 안티패턴: iter([resp.content]) 또는 resp.content 전체를 리스트에 감싸는 형태
+        assert "iter([resp.content])" not in src, (
+            "stream_file은 전체 바디를 메모리에 버퍼링하면 안 된다 (T3 회귀)"
+        )
+        # 올바른 스트리밍 API 사용 여부
+        assert "stream=True" in src or "http.stream(" in src, (
+            "httpx stream 모드를 사용해야 한다"
+        )
+        assert "aiter_bytes(chunk_size=65536)" in src, (
+            "64KB 청크 단위로 aiter_bytes를 호출해야 한다 (메모리 상한 유지)"
+        )
+        # StreamingResponse로 래핑되어야 함
+        assert "StreamingResponse" in src

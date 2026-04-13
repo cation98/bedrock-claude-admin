@@ -9,15 +9,23 @@ K8s 개념 정리:
   - Label: Pod에 메타데이터 부착 (사용자명, 세션 타입 등)
 """
 
+import asyncio
 import hashlib
 import json as _json
 import logging
+import os
+import re
 import secrets
+import tempfile
 from datetime import datetime, timezone
+
+import io
+import tarfile
 
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 from kubernetes.client import NetworkingV1Api
+from kubernetes.stream import stream
 
 from app.core.config import Settings
 
@@ -175,13 +183,15 @@ class K8sService:
         """Pod 환경변수 목록 생성. security_policy에 따라 DB 자격증명을 조건부 주입.
 
         security_policy가 None이거나 빈 dict이면 모든 DB 접근을 허용 (기존 동작 유지).
+        로컬 환경(:local 이미지)에서는 외부 DB secret 참조를 건너뜀.
         """
+        is_local = ":local" in self.settings.k8s_pod_image
         policy = security_policy or {}
         db_access = policy.get("db_access", {})
         # 정책이 없으면 하위 호환: 모든 DB 접근 허용
         safety_allowed = db_access.get("safety", {}).get("allowed", True) if db_access else True
-        tango_allowed = db_access.get("tango", {}).get("allowed", True) if db_access else True
-        doculog_allowed = db_access.get("doculog", {}).get("allowed", True) if db_access else True
+        tango_allowed = (db_access.get("tango", {}).get("allowed", True) if db_access else True) and not is_local
+        doculog_allowed = (db_access.get("doculog", {}).get("allowed", True) if db_access else True) and not is_local
         security_level = policy.get("security_level", "standard")
 
         env_vars = [
@@ -245,7 +255,10 @@ class K8sService:
 
         # Pod 내부 API 인증 토큰 — K8s Secret에서 환경변수로 주입
         # X-Pod-Token 헤더로 Auth Gateway에 전달하여 신원 증명
-        if pod_token:
+        # 로컬에서는 pod-token Secret이 없으므로 직접 값을 주입
+        if pod_token and is_local:
+            env_vars.append(client.V1EnvVar(name="SECURE_POD_TOKEN", value=pod_token))
+        elif pod_token:
             env_vars.append(client.V1EnvVar(
                 name="SECURE_POD_TOKEN",
                 value_from=client.V1EnvVarSource(
@@ -256,11 +269,24 @@ class K8sService:
                 ),
             ))
 
+        # T20: Bedrock AG HTTP proxy 활성화
+        # pod_token이 있고 로컬이 아닌 경우 ANTHROPIC_BASE_URL을 Auth Gateway /v1으로 고정.
+        # entrypoint.sh가 이 변수를 감지하면:
+        #   1. pod-token-exchange → JWT 획득
+        #   2. ANTHROPIC_API_KEY = JWT (Bearer)
+        #   3. CLAUDE_CODE_USE_BEDROCK unset (HTTP proxy 모드로 전환)
+        # 결과: Claude CLI → Auth Gateway → Bedrock (AWS SDK 직접 호출 차단)
+        if pod_token and not is_local:
+            env_vars.append(client.V1EnvVar(
+                name="ANTHROPIC_BASE_URL",
+                value="http://auth-gateway.platform.svc.cluster.local/v1",
+            ))
+
         # 프록시 환경변수 — Pod에서 외부 API 접근 시 Auth Gateway 프록시를 거치도록 설정
         # HTTPS_PROXY/HTTP_PROXY: curl, pip, npm 등이 자동으로 프록시를 사용
         # NO_PROXY: 클러스터 내부 통신은 프록시를 우회
         # NOTE: proxy_secret은 kubectl describe pod에서 보임. K8s Secret으로 전환 검토 (Phase 2)
-        if proxy_secret:
+        if proxy_secret and not is_local:
             proxy_url = (
                 f"http://{username}:{proxy_secret}"
                 f"@auth-gateway.platform.svc.cluster.local:3128"
@@ -331,6 +357,96 @@ class K8sService:
         node_selector = node_selector_val if not target_node else None
         shared_read_only = not shared_writable
 
+        # 로컬 개발 환경 감지: 이미지 태그에 ":local"이 포함되면 Docker Desktop
+        # EFS PVC → hostPath, nodeSelector/tolerations/anti-affinity 제거, imagePullPolicy=Never
+        is_local = ":local" in self.settings.k8s_pod_image
+
+        if is_local:
+            # 로컬: hostPath 볼륨, init container 불필요, nodeSelector/tolerations 없음
+            volumes = [
+                client.V1Volume(
+                    name="user-workspace",
+                    host_path=client.V1HostPathVolumeSource(
+                        path=f"/tmp/bedrock-local-data/{username.lower()}",
+                        type="DirectoryOrCreate",
+                    ),
+                ),
+            ]
+            init_containers = None
+            pod_node_selector = None
+            pod_tolerations = None
+            pod_affinity = None
+            image_pull_policy = "Never"
+            volume_mounts = [
+                client.V1VolumeMount(
+                    name="user-workspace",
+                    mount_path="/home/node/workspace",
+                ),
+            ]
+            # 로컬 리소스 제한 완화
+            cpu_req = "500m"
+            cpu_lim = "1000m"
+            mem_req = "512Mi"
+            mem_lim = "1Gi"
+        else:
+            # 상용: EFS PVC, init container, nodeSelector, tolerations
+            volumes = [
+                client.V1Volume(
+                    name="user-workspace",
+                    persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(
+                        claim_name="efs-shared-pvc",
+                    ),
+                ),
+            ]
+            init_containers = [
+                client.V1Container(
+                    name="init-workspace",
+                    image="busybox",
+                    security_context=client.V1SecurityContext(
+                        run_as_user=0,
+                        run_as_non_root=False,
+                    ),
+                    command=["sh", "-c", "chown -R 1000:1000 /workspace && chmod 755 /workspace && chown -R 1000:1000 /shared && chmod 755 /shared"],
+                    volume_mounts=[
+                        client.V1VolumeMount(
+                            name="user-workspace",
+                            mount_path="/workspace",
+                            sub_path=f"users/{username.lower()}",
+                        ),
+                        client.V1VolumeMount(
+                            name="user-workspace",
+                            mount_path="/shared",
+                            sub_path="shared",
+                        ),
+                    ],
+                )
+            ]
+            pod_node_selector = node_selector
+            pod_tolerations = [
+                client.V1Toleration(
+                    key="dedicated", operator="Equal",
+                    value="user", effect="NoSchedule",
+                ),
+                client.V1Toleration(
+                    key="dedicated", operator="Equal",
+                    value="presenter", effect="NoSchedule",
+                ),
+            ]
+            pod_affinity = client.V1Affinity(
+                pod_anti_affinity=client.V1PodAntiAffinity(
+                    required_during_scheduling_ignored_during_execution=[
+                        client.V1PodAffinityTerm(
+                            label_selector=client.V1LabelSelector(
+                                match_labels={"app": "claude-terminal"},
+                            ),
+                            topology_key="kubernetes.io/hostname",
+                        ),
+                    ],
+                ),
+            ) if infra.get("max_pods_per_node", 3) == 1 else None
+            image_pull_policy = "Always"
+            volume_mounts = self._build_volume_mounts(username, shared_read_only)
+
         pod_manifest = client.V1Pod(
             metadata=client.V1ObjectMeta(
                 name=pod_name,
@@ -341,98 +457,42 @@ class K8sService:
                     "session-type": session_type,
                 },
                 annotations={
-                    # 오토스케일러가 활성 사용자 Pod를 강제 퇴거하지 못하도록 방지
                     "cluster-autoscaler.kubernetes.io/safe-to-evict": "false",
                 },
             ),
             spec=client.V1PodSpec(
-                # Pod-level 보안 컨텍스트: 비-root 실행 강제
                 security_context=client.V1PodSecurityContext(
                     run_as_non_root=True,
                     run_as_user=1000,
                     run_as_group=1000,
                     fs_group=1000,
-                ),
-                # EFS 디렉토리 권한 설정 (node user = UID 1000)
-                init_containers=[
-                    client.V1Container(
-                        name="init-workspace",
-                        image="busybox",
-                        # init container는 root로 실행 (chown 필요)
-                        security_context=client.V1SecurityContext(
-                            run_as_user=0,
-                            run_as_non_root=False,
-                        ),
-                        command=["sh", "-c", "chown -R 1000:1000 /workspace && chmod 755 /workspace && chown -R 1000:1000 /shared && chmod 755 /shared"],
-                        volume_mounts=[
-                            client.V1VolumeMount(
-                                name="user-workspace",
-                                mount_path="/workspace",
-                                sub_path=f"users/{username.lower()}",
-                            ),
-                            client.V1VolumeMount(
-                                name="user-workspace",
-                                mount_path="/shared",
-                                sub_path="shared",
-                            ),
-                        ],
-                    )
-                ],
+                ) if not is_local else None,
+                init_containers=init_containers,
                 service_account_name=self.settings.k8s_service_account,
                 restart_policy="Never",
                 active_deadline_seconds=ttl_seconds if ttl_seconds > 0 else None,
-                # 특정 노드 지정 또는 infra_policy 기반 노드 배치
                 node_name=target_node if target_node else None,
-                node_selector=node_selector,
-                # 노드 taint toleration — presenter/user 노드의 dedicated taint 허용
-                tolerations=[
-                    client.V1Toleration(
-                        key="dedicated", operator="Equal",
-                        value="user", effect="NoSchedule",
-                    ),
-                    client.V1Toleration(
-                        key="dedicated", operator="Equal",
-                        value="presenter", effect="NoSchedule",
-                    ),
-                ],
-                # 1-node-1-pod 격리: max_pods_per_node==1 템플릿에서만 활성화
-                affinity=client.V1Affinity(
-                    pod_anti_affinity=client.V1PodAntiAffinity(
-                        required_during_scheduling_ignored_during_execution=[
-                            client.V1PodAffinityTerm(
-                                label_selector=client.V1LabelSelector(
-                                    match_labels={"app": "claude-terminal"},
-                                ),
-                                topology_key="kubernetes.io/hostname",
-                            ),
-                        ],
-                    ),
-                ) if infra.get("max_pods_per_node", 3) == 1 else None,
+                node_selector=pod_node_selector,
+                tolerations=pod_tolerations,
+                affinity=pod_affinity,
                 containers=[
                     client.V1Container(
                         name="terminal",
                         image=self.settings.k8s_pod_image,
-                        image_pull_policy="Always",
+                        image_pull_policy=image_pull_policy,
                         ports=[client.V1ContainerPort(container_port=7681, name="ttyd")],
                         env=self._build_env_vars(
                             username, user_display_name, security_policy,
                             proxy_secret=proxy_secret,
                             pod_token=pod_token,
                         ),
-                        # Container-level 보안: 권한 상승 차단, 불필요 capabilities 제거
                         security_context=client.V1SecurityContext(
                             allow_privilege_escalation=False,
                             capabilities=client.V1Capabilities(drop=["ALL"]),
                         ),
                         resources=client.V1ResourceRequirements(
-                            requests={
-                                "cpu": cpu_req,
-                                "memory": mem_req,
-                            },
-                            limits={
-                                "cpu": cpu_lim,
-                                "memory": mem_lim,
-                            },
+                            requests={"cpu": cpu_req, "memory": mem_req},
+                            limits={"cpu": cpu_lim, "memory": mem_lim},
                         ),
                         readiness_probe=client.V1Probe(
                             http_get=client.V1HTTPGetAction(path="/", port=7681),
@@ -444,19 +504,10 @@ class K8sService:
                             initial_delay_seconds=10,
                             period_seconds=30,
                         ),
-                        volume_mounts=self._build_volume_mounts(
-                            username, shared_read_only,
-                        ),
+                        volume_mounts=volume_mounts,
                     )
                 ],
-                volumes=[
-                    client.V1Volume(
-                        name="user-workspace",
-                        persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(
-                            claim_name="efs-shared-pvc",
-                        ),
-                    ),
-                ],
+                volumes=volumes,
             ),
         )
 
@@ -758,6 +809,199 @@ class K8sService:
         except ApiException as e:
             logger.error(f"Failed to list pods: {e}")
             raise K8sServiceError(f"Failed to list pods: {e.reason}")
+
+    # -----------------------------------------------------------------
+    # 파일 쓰기 (OnlyOffice 편집 저장용)
+    # -----------------------------------------------------------------
+
+    _KUBECTL_TIMEOUT_SECONDS = 120
+    _CONTAINER_NAME = "terminal"
+    # 컨테이너 파일 쓰기 허용 base prefix — 이 아래로만 허용.
+    # /etc, /root, /proc 등으로의 경로 트래버설 차단.
+    _CONTAINER_BASE_DIR = "/home/node/workspace"
+
+    @staticmethod
+    def _validate_container_path(path: str) -> str:
+        """Pod 내부 절대 경로 검증.
+
+        방어 층위:
+        - 절대 경로만
+        - 제어문자 차단
+        - normpath로 .. 해석 후 base prefix(/home/node/workspace) 아래인지 commonpath로 확인
+          (substring 체크는 /home/node/workspace-evil 같은 우회를 막지 못하므로 commonpath 사용)
+        """
+        if not path or not path.startswith("/"):
+            raise K8sServiceError("container_path must be absolute")
+        if re.search(r"[\x00-\x1f]", path):
+            raise K8sServiceError("container_path contains control characters")
+
+        normalized = os.path.normpath(path)
+        # normpath 이후에도 절대 경로 유지 확인
+        if not normalized.startswith("/"):
+            raise K8sServiceError("container_path must resolve to absolute path")
+
+        base = K8sService._CONTAINER_BASE_DIR
+        try:
+            common = os.path.commonpath([normalized, base])
+        except ValueError:
+            raise K8sServiceError("container_path is not within allowed base")
+        if common != base:
+            raise K8sServiceError(
+                f"container_path must be within {base} (got {normalized!r})"
+            )
+        return normalized
+
+    async def write_local_file_to_pod(
+        self,
+        username: str,
+        container_path: str,
+        local_path: str,
+    ) -> None:
+        """로컬 파일을 사용자 Pod 내부로 복사.
+
+        구현 (P2-BUG3): `kubernetes.stream.stream` + tar pipe 로 exec API 직접 호출.
+        auth-gateway 이미지에 `kubectl` 바이너리가 없으므로 subprocess 경로는 동작하지 않는다.
+        프로젝트 내 다른 exec 호출(idle_cleanup_service, prompt_audit_service 등)과
+        동일 패턴으로 통일한다.
+
+        호출자는 디스크에 이미 쓰기 완료된 `local_path` 를 넘겨 메모리 버퍼링을 피한다.
+        """
+        pod_name = self._pod_name(username)
+        safe_path = self._validate_container_path(container_path)
+        parent = os.path.dirname(safe_path)
+
+        if parent and parent != "/":
+            await asyncio.to_thread(
+                self._exec_sync,
+                pod_name,
+                ["mkdir", "-p", parent],
+                step="mkdir",
+            )
+
+        await asyncio.to_thread(
+            self._copy_local_to_pod_sync,
+            pod_name,
+            local_path,
+            safe_path,
+        )
+
+        try:
+            size = os.path.getsize(local_path)
+        except OSError:
+            size = -1
+        logger.info(f"Wrote {size} bytes to {pod_name}:{safe_path}")
+
+    async def write_file_to_pod(
+        self,
+        username: str,
+        container_path: str,
+        content: bytes,
+    ) -> None:
+        """bytes 를 Pod 에 쓰기 — 내부적으로 tempfile 에 dump 후 write_local_file_to_pod.
+
+        대용량 파일은 write_local_file_to_pod 를 직접 호출해 메모리 버퍼링을 피할 것.
+        """
+        fd, tmp_path = tempfile.mkstemp(prefix="onlyoffice-save-")
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(content)
+            await self.write_local_file_to_pod(username, container_path, tmp_path)
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+    def _exec_sync(self, pod_name: str, command: list[str], *, step: str) -> None:
+        """짧은 exec 명령 동기 실행. stdout/stderr 는 preload 로 수집."""
+        try:
+            resp = stream(
+                self.v1.connect_get_namespaced_pod_exec,
+                pod_name,
+                self.namespace,
+                container=self._CONTAINER_NAME,
+                command=command,
+                stdin=False,
+                stderr=True,
+                stdout=True,
+                tty=False,
+                _preload_content=True,
+            )
+        except ApiException as e:
+            logger.error(f"exec {step} API error: {e}")
+            raise K8sServiceError(f"exec {step} failed: {e.reason}")
+        except Exception as e:
+            logger.error(f"exec {step} failed: {e}")
+            raise K8sServiceError(f"exec {step} failed: {e}")
+
+        # preload 모드에서 stream() 은 stdout 문자열을 반환. 에러 탐지를 위해
+        # 비어있지 않으면 로깅. mkdir -p 는 성공 시 출력 없음.
+        if resp and isinstance(resp, str):
+            logger.debug(f"exec {step} output: {resp[:200]!r}")
+
+    def _copy_local_to_pod_sync(
+        self, pod_name: str, local_path: str, dest_path: str
+    ) -> None:
+        """`tar xmf -` pipe 로 단일 파일을 Pod 에 복사.
+
+        kubectl cp 는 내부적으로 `tar cf - <src> | kubectl exec -- tar xmf -` 패턴.
+        여기서도 동일하게 파일 하나를 in-memory tar 로 감싸 stdin 으로 주입한다.
+        64KB 단위 chunk 로 write_stdin 하여 큰 파일도 메모리 증가 상수로 전송.
+        """
+        # tar 아카이브를 메모리에 빌드. 한 개 파일이므로 파일 크기 + 헤더(512B) 만.
+        # 50MB 편집 파일도 버퍼 피크는 ~50MB (kubectl cp 와 동일 수준).
+        # 스트리밍 tar 로 더 줄일 수 있지만 구현 복잡도 vs 이득 trade-off 로 보류.
+        tar_buf = io.BytesIO()
+        with tarfile.open(fileobj=tar_buf, mode="w") as tar:
+            # arcname 은 루트 상대 경로 — Pod 쪽에서 `-C /` 로 풀면 절대 위치에 배치됨.
+            tar.add(local_path, arcname=dest_path.lstrip("/"))
+        tar_buf.seek(0)
+
+        try:
+            resp = stream(
+                self.v1.connect_get_namespaced_pod_exec,
+                pod_name,
+                self.namespace,
+                container=self._CONTAINER_NAME,
+                command=["tar", "xmf", "-", "-C", "/"],
+                stdin=True,
+                stderr=True,
+                stdout=True,
+                tty=False,
+                _preload_content=False,
+            )
+        except ApiException as e:
+            logger.error(f"exec cp API error: {e}")
+            raise K8sServiceError(f"exec cp failed: {e.reason}")
+
+        try:
+            stderr_chunks: list[str] = []
+            while True:
+                chunk = tar_buf.read(65536)
+                if not chunk:
+                    break
+                resp.write_stdin(chunk)
+                # 주기적으로 stderr 비우기 — 버퍼 가득 차 블록 방지
+                if resp.peek_stderr():
+                    stderr_chunks.append(resp.read_stderr())
+
+            # 남은 stderr 수집 + flush 대기
+            resp.update(timeout=self._KUBECTL_TIMEOUT_SECONDS)
+            if resp.peek_stderr():
+                stderr_chunks.append(resp.read_stderr())
+
+            stderr_text = "".join(stderr_chunks).strip()
+            if stderr_text:
+                # tar 는 경고도 stderr 로 내보낼 수 있음. 에러 키워드만 실패 처리.
+                lowered = stderr_text.lower()
+                if "error" in lowered or "cannot" in lowered or "no such" in lowered:
+                    raise K8sServiceError(f"tar copy failed: {stderr_text}")
+                logger.warning(f"tar copy stderr (non-fatal): {stderr_text}")
+        finally:
+            try:
+                resp.close()
+            except Exception:
+                pass
 
     def delete_all_pods(self, label_selector: str | None = None) -> int:
         """모든 터미널 Pod 일괄 삭제 (관리자용)."""

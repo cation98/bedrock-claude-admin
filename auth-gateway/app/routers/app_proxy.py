@@ -33,9 +33,11 @@ _OFFLINE_HTML = Path(__file__).resolve().parent.parent / "static" / "offline.htm
 async def _get_user_from_request(request: Request) -> dict | None:
     """쿠키 또는 Authorization 헤더에서 사용자 정보 추출 (실패 시 None).
 
-    JWT 토큰을 두 곳에서 순서대로 찾는다:
+    JWT 토큰을 순서대로 찾는다:
       1. Authorization: Bearer <token> 헤더
-      2. claude_token 쿠키 (웹 브라우저 접속 시)
+      2. bedrock_jwt 쿠키 (Phase 0 RS256 신규 — 우선)
+      3. claude_token 쿠키 (legacy fallback)
+    T10: bedrock_jwt 우선 파싱으로 Phase 0 forward-compat 구현.
     """
     settings = get_settings()
 
@@ -47,7 +49,14 @@ async def _get_user_from_request(request: Request) -> dict | None:
         if payload is not None:
             return payload
 
-    # 2) Cookie (claude_token)
+    # 2) bedrock_jwt 쿠키 (Phase 0 RS256 신규)
+    token = request.cookies.get("bedrock_jwt", "")
+    if token:
+        payload = decode_token(token, settings)
+        if payload is not None:
+            return payload
+
+    # 3) claude_token 쿠키 (legacy fallback)
     token = request.cookies.get("claude_token", "")
     if token:
         payload = decode_token(token, settings)

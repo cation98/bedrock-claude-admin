@@ -2,6 +2,24 @@
 # 공유 클러스터 Deployment (replicas=1, auto-restart)
 # Community Edition 제한: 동시 편집 20명
 # AGPL v3 라이선스 — 사내 내부 사용 가능, 수정 시 소스 공개 의무
+#
+# 스토리지: EFS 기반 PVC 사용
+#   - Pod 재시작 시 편집 세션/캐시 데이터 보존 (콜백 진행 중 데이터 손실 방지)
+#   - ReadWriteMany: 향후 replica 증설 대비
+#   - StorageClass: efs-sc (infra/k8s/efs-storage.yaml에서 정의)
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: onlyoffice-data-pvc
+  namespace: claude-sessions
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: efs-sc
+  resources:
+    requests:
+      storage: 20Gi  # EFS는 탄력적 용량 — 논리적 값
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -20,9 +38,46 @@ spec:
       labels:
         app: onlyoffice
     spec:
+      # ── SK AI Plugin 주입 (Lane C2 merge, 2026-04-13) ─────────────────────
+      # 목적: OnlyOffice 자체 AI 플러그인(SK AI)을 sdkjs-plugins 디렉토리에 주입.
+      # 소스: container-image/onlyoffice-plugins/sk-ai/ (git)
+      # ConfigMap: scripts/apply-sk-ai-plugin.sh 로 생성 (sk-ai-plugin-meta/src).
+      # subPath 마운트로 SK AI 폴더만 주입하여 OO 번들 플러그인 보존.
+      initContainers:
+      - name: sk-ai-plugin-injector
+        image: busybox:1.36
+        # busybox는 파일 복사만 수행하는 경량 이미지 (~1MB).
+        # ConfigMap에서 파일을 읽어 emptyDir 볼륨에 복사하면
+        # OO 컨테이너가 sdkjs-plugins/{UUID}/ 경로로 보게 된다.
+        command:
+        - sh
+        - -c
+        - |
+          set -e
+          PLUGIN_UUID="asc.{7C4F2E1D-3A5B-4C8E-9D0F-1E2B3C4D5A6F}"
+          PLUGIN_DIR="/plugins/${PLUGIN_UUID}"
+          mkdir -p "${PLUGIN_DIR}/scripts" "${PLUGIN_DIR}/resources"
+          cp /plugin-meta/config.json "${PLUGIN_DIR}/config.json"
+          cp /plugin-meta/config.js   "${PLUGIN_DIR}/config.js"
+          cp /plugin-src/index.html   "${PLUGIN_DIR}/index.html"
+          cp /plugin-src/code.js      "${PLUGIN_DIR}/scripts/code.js"
+          echo "[sk-ai-injector] files copied to ${PLUGIN_DIR}"
+          ls -la "${PLUGIN_DIR}"
+        volumeMounts:
+        - name: sk-ai-plugin-meta
+          mountPath: /plugin-meta
+          readOnly: true
+        - name: sk-ai-plugin-src
+          mountPath: /plugin-src
+          readOnly: true
+        - name: sk-ai-plugin-target
+          mountPath: /plugins
       containers:
       - name: onlyoffice
-        image: onlyoffice/documentserver:latest
+        # P2-iter3 #2: 태그 pinning — supply-chain risk 차단.
+        # 버전 업데이트 시: (1) 릴리스 노트 검증, (2) 이 값 교체, (3) rollout 후
+        # `kubectl describe pod` 로 digest 고정 여부 확인.
+        image: onlyoffice/documentserver:8.2.2
         ports:
         - containerPort: 80
           name: http
@@ -34,13 +89,42 @@ spec:
             secretKeyRef:
               name: onlyoffice-jwt-secret
               key: secret
+
+        # ── F1: 사설 IP 다운로드 허용 (H2 수정) ──────────────────────────────
+        # OnlyOffice는 기본적으로 사설 IP(10.x, 172.x, 192.168.x)로의
+        # 파일 다운로드를 SSRF 방지 목적으로 차단한다.
+        # EKS 클러스터 내부 서비스(auth-gateway 등)는 VPC 사설 IP로 해석되므로
+        # 이 설정 없이는 OO가 내부 auth-gateway에서 문서를 받아올 수 없다.
+        # Word/PPTX는 embedded 리소스를 반복 fetch하므로 Excel보다 더 직접 영향받음.
+        # 참고: infra/k8s/platform/network-policy.yaml L304 주석과 짝을 이룸.
+        - name: ALLOW_PRIVATE_IP_ADDRESS
+          value: "true"
+
+        # ── F2-a: JWT Inbox 검증 비활성화 (H2 수정) ──────────────────────────
+        # OnlyOffice JWT는 양방향:
+        #   outbox (browser→OO): config JSON token 필드로 검증 → JWT_ENABLED=true 유지
+        #   inbox  (OO→외부서버): OO가 파일 다운로드 시 응답 헤더 JWT 검증
+        # auth-gateway의 파일 응답은 OnlyOffice 형식 JWT를 포함하지 않으므로
+        # inbox 방향 검증을 비활성화해야 파일 로드가 성공한다.
+        - name: JWT_INBOX_ENABLED
+          value: "false"
+
+        # ── F2-b: local.json 직접 오버라이드 (H2 수정) ───────────────────────
+        # JWT_INBOX_ENABLED 환경변수는 OO entrypoint가 local.json을 자체 생성한 후에
+        # 적용되지 않을 수 있다(OO 8.x 버그). ONLYOFFICE_DOCS_PARAMS로
+        # local.json 설정을 직접 덮어써서 확실하게 inbox 검증을 끈다.
+        - name: ONLYOFFICE_DOCS_PARAMS
+          value: '{"services":{"CoAuthoring":{"token":{"enable":{"request":{"inbox":false}}}}}}'
+
+        # CE 20명 동시 편집 기준 리소스 상향
+        # 공식 권고: 세션당 약 100-150MB → 20명 기준 ~3Gi 필요
         resources:
           requests:
-            cpu: "500m"
-            memory: "1Gi"
-          limits:
             cpu: "1000m"
             memory: "2Gi"
+          limits:
+            cpu: "2000m"
+            memory: "4Gi"
         livenessProbe:
           httpGet:
             path: /healthcheck
@@ -53,12 +137,64 @@ spec:
             port: 80
           initialDelaySeconds: 30
           periodSeconds: 10
+        # ── F2-c: postStart — local.json 직접 패치 (H2 수정) ────────────────
+        # ONLYOFFICE_DOCS_PARAMS는 OO entrypoint가 local.json을 생성하기 전에
+        # 적용되지 않을 수 있다. postStart에서 entrypoint 완료 후 직접 패치하여
+        # inbox JWT 검증이 확실히 비활성화됨을 보장한다.
+        #
+        # 흐름:
+        #   1. OO entrypoint 실행 → local.json 생성 (JWT_ENABLED=true 포함)
+        #   2. postStart 실행 → local.json의 inbox 설정을 false로 덮어씀
+        #   3. supervisorctl로 docservice 재시작 → 변경사항 반영
+        #
+        # 주의: postStart 실패 시 Pod이 CrashLoopBackOff가 될 수 있음.
+        #   || true 로 실패를 흡수하여 OO는 기동하되 inbox JWT 검증이 활성화될 수 있음.
+        #   → OO Pod 로그에서 "jwt|token|unauthorized" 로 확인.
+        lifecycle:
+          postStart:
+            exec:
+              command:
+                - bash
+                - -c
+                - |
+                  sleep 5
+                  python3 -c "
+                  import json,time
+                  for i in range(10):
+                      try:
+                          with open('/etc/onlyoffice/documentserver/local.json') as f:
+                              cfg = json.load(f)
+                          cfg['services']['CoAuthoring']['token']['enable']['request']['inbox'] = False
+                          with open('/etc/onlyoffice/documentserver/local.json','w') as f:
+                              json.dump(cfg,f,indent=2)
+                          print('inbox JWT disabled')
+                          break
+                      except:
+                          time.sleep(2)
+                  " && supervisorctl restart ds:docservice 2>/dev/null || true
         volumeMounts:
         - name: data
           mountPath: /var/lib/onlyoffice
+        # SK AI 플러그인 폴더를 OO sdkjs-plugins 하위에 마운트 (subPath로 다른 플러그인 보존)
+        - name: sk-ai-plugin-target
+          mountPath: /var/www/onlyoffice/documentserver/sdkjs-plugins/asc.{7C4F2E1D-3A5B-4C8E-9D0F-1E2B3C4D5A6F}
+          subPath: asc.{7C4F2E1D-3A5B-4C8E-9D0F-1E2B3C4D5A6F}
       volumes:
       - name: data
-        emptyDir: {}  # 비영구 — Pod 재시작 시 캐시 초기화 (문서는 사용자 Pod에 있음)
+        persistentVolumeClaim:
+          claimName: onlyoffice-data-pvc
+      # SK AI plugin ConfigMaps (scripts/apply-sk-ai-plugin.sh 로 생성됨)
+      - name: sk-ai-plugin-meta
+        configMap:
+          name: sk-ai-plugin-meta
+          optional: true   # ConfigMap 없어도 OO는 기동 (플러그인만 누락)
+      - name: sk-ai-plugin-src
+        configMap:
+          name: sk-ai-plugin-src
+          optional: true
+      # initContainer가 ConfigMap 파일을 이쪽에 복사, OO 컨테이너가 subPath로 읽음
+      - name: sk-ai-plugin-target
+        emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
@@ -73,12 +209,18 @@ spec:
     targetPort: 80
     name: http
   type: ClusterIP
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: onlyoffice-jwt-secret
-  namespace: claude-sessions
-type: Opaque
-stringData:
-  secret: "CHANGE_ME_ONLYOFFICE_JWT_SECRET_32CHARS"  # 배포 시 교체 필요
+# ---
+# onlyoffice-jwt-secret 은 이 파일에서 관리하지 않는다 (P2-iter3 #1).
+# 평문/placeholder 가 저장소에 들어오는 것을 원천 차단하기 위해,
+# Secret 리소스는 배포 파이프라인 또는 운영자가 별도 프로비저닝해야 한다.
+#
+# 상용 프로비저닝 (32자 이상, random):
+#   openssl rand -hex 32 | xargs -I{} kubectl -n claude-sessions \
+#     create secret generic onlyoffice-jwt-secret --from-literal=secret={}
+#
+# 검증:
+#   kubectl -n claude-sessions get secret onlyoffice-jwt-secret \
+#     -o jsonpath='{.data.secret}' | base64 -d | wc -c   # >= 32
+#
+# 동일 secret 의 auth-gateway 주입은 `infra/k8s/platform/auth-gateway.yaml` 참조.
+# 로컬 개발 전용 값은 `infra/local-dev/07-onlyoffice.yaml` 에만 존재.

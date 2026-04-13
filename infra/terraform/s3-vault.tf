@@ -24,8 +24,8 @@ data "aws_caller_identity" "current" {}
 
 resource "aws_kms_key" "s3_vault" {
   description             = "S3 Vault 버킷 SSE-KMS 암호화 키"
-  deletion_window_in_days = 14        # 삭제 요청 후 14일 유예 (실수 방지)
-  enable_key_rotation     = true      # 연 1회 자동 키 교체 (보안 모범 사례)
+  deletion_window_in_days = 14   # 삭제 요청 후 14일 유예 (실수 방지)
+  enable_key_rotation     = true # 연 1회 자동 키 교체 (보안 모범 사례)
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -103,7 +103,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "vault" {
       sse_algorithm     = "aws:kms"
       kms_master_key_id = aws_kms_key.s3_vault.arn
     }
-    bucket_key_enabled = true  # KMS API 호출 비용 절감
+    bucket_key_enabled = true # KMS API 호출 비용 절감
   }
 }
 
@@ -113,10 +113,10 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "vault" {
 resource "aws_s3_bucket_public_access_block" "vault" {
   bucket = aws_s3_bucket.vault.id
 
-  block_public_acls       = true  # Public ACL 설정 차단
-  block_public_policy     = true  # Public 버킷 정책 차단
-  ignore_public_acls      = true  # 기존 Public ACL 무시
-  restrict_public_buckets = true  # 크로스 계정 공개 접근 차단
+  block_public_acls       = true # Public ACL 설정 차단
+  block_public_policy     = true # Public 버킷 정책 차단
+  ignore_public_acls      = true # 기존 Public ACL 무시
+  restrict_public_buckets = true # 크로스 계정 공개 접근 차단
 }
 
 # ----- Lifecycle Rule: 90일 후 자동 삭제 -----

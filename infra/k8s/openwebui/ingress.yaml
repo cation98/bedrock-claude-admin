@@ -1,0 +1,64 @@
+# =============================================================================
+# Open WebUI Ingress — chat.skons.net
+#
+# 라우팅:
+#   chat.skons.net/* → open-webui Service (포트 8080)
+#
+# 보안 핵심:
+#   - more_clear_input_headers: 외부 X-SKO-Email/X-SKO-User-Id 위조 차단
+#   - Auth Gateway → X-SKO-Email 주입 → Open WebUI trusted_header_auth
+#   - 헤더 스푸핑 없으면 외부 공격자는 아무 헤더도 통과시킬 수 없음
+#
+# 전제 조건:
+#   - ingress-nginx Helm values에 allow-snippet-annotations: true 설정 (또는 기본값)
+#   - ingress-nginx controller에 headers-more-nginx-module 포함 (기본 포함)
+# =============================================================================
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: open-webui-ingress
+  namespace: openwebui
+  annotations:
+    # WebSocket/스트리밍 타임아웃 (LLM 응답은 길 수 있음)
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+
+    # 스트리밍 응답 버퍼링 비활성화 → TTFT(Time To First Token) 최소화
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+
+    # WebSocket 활성화 (Open WebUI 실시간 스트리밍)
+    nginx.ingress.kubernetes.io/enable-websocket: "true"
+
+    # [SECURITY CRITICAL] Trusted header 스푸핑 방지
+    # 외부에서 전달되는 X-SKO-Email / X-SKO-User-Id 헤더는 ingress-nginx 전역
+    # ConfigMap(more-clear-input-headers)에서 이미 제거됨.
+    # → configuration-snippet 불필요 (admission webhook 호환성 유지).
+    # 검증: kubectl get cm ingress-nginx-controller -n ingress-nginx -o jsonpath='{.data.more-clear-input-headers}'
+    # 결과: "X-SKO-Email X-SKO-User-Id" 확인 필수.
+
+    # ── SSO 인증: Auth Gateway JWT 검증 + X-SKO-Email 헤더 주입 ─────────────
+    # NGINX가 모든 요청마다 auth-url 서브요청 호출:
+    #   200 → auth-response-headers를 Open WebUI에 전달 (trusted header auth)
+    #   401 → auth-signin 로그인 페이지로 리다이렉트
+    nginx.ingress.kubernetes.io/auth-url: "http://auth-gateway.platform.svc.cluster.local/api/v1/auth/webui-verify"
+    nginx.ingress.kubernetes.io/auth-response-headers: "X-SKO-Email,X-SKO-User-Id"
+    nginx.ingress.kubernetes.io/auth-signin: "https://portal.skons.net/login?redirect=$escaped_request_uri"
+
+    # upstream hash: 같은 사용자는 같은 Open WebUI 인스턴스로 라우팅 (세션 연속성)
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$cookie_bedrock_webui_session"
+
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: chat.skons.net
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: open-webui
+                port:
+                  number: 8080

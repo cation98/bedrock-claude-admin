@@ -65,6 +65,13 @@ spec:
         - name: GIT_USER_EMAIL
           value: "workshop@skons.net"
 
+        # ----- T20: Bedrock AG HTTP proxy (Console Pod usage 추적) -----
+        # 활성화 조건: T11 배포 완료 후 Auth Gateway /v1/messages 지원 확인 시 주입
+        # 주석 해제하면 entrypoint.sh가 pod-token-exchange → JWT 획득 → proxy 경로 사용
+        # - name: ANTHROPIC_BASE_URL
+        #   value: "http://auth-gateway.platform.svc.cluster.local/v1"
+        # AUTH_GATEWAY_URL은 이미 k8s_service.py에서 주입 (heartbeat용으로 기존 사용 중)
+
       # 리소스 제한: 사용자당 최대 CPU 1코어, 메모리 1GB
       resources:
         requests:

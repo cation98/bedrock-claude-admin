@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -14,9 +15,11 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://postgres:postgres@localhost:5432/bedrock_claude"
 
     # ----- JWT -----
+    # jwt_secret_key / jwt_algorithm 은 레거시 필드로만 유지.
+    # 신규 토큰 발급·검증은 모두 RS256(jwt_rs256.py)으로 수행한다.
     jwt_secret_key: str = "change-me-in-production-use-256-bit-secret"
-    jwt_algorithm: str = "HS256"
-    jwt_access_token_expire_minutes: int = 480  # 8시간 (실습 세션 기준)
+    jwt_algorithm: str = "RS256"
+    jwt_access_token_expire_minutes: int = 15  # 15분 (설계 §2 JWT 라이프사이클)
 
     # ----- SSO (sso.skons.net) -----
     sso_auth_url: str = ""  # 인증 엔드포인트
@@ -75,8 +78,34 @@ class Settings(BaseSettings):
     idle_timeout_minutes: int = 60          # 이 시간 이상 유휴 상태면 Pod 해제
     idle_check_interval_seconds: int = 600  # 유휴 체크 주기 (10분)
 
+    # ----- JWT RS256 (Open WebUI 통합 허브 — Phase 0) -----
+    # RSA 2048-bit private key (PEM 문자열).
+    # 비어 있으면 기동 시 ephemeral 키 생성 (개발/단일 레플리카용).
+    # 프로덕션 다중 레플리카 환경에서는 반드시 설정해야 한다.
+    jwt_rs256_private_key: str = ""
+
+    # access token: 15분 (설계 §2 JWT 라이프사이클)
+    jwt_rs256_access_expire_minutes: int = 15
+    # refresh token: 12시간 (설계 §2 JWT 라이프사이클)
+    jwt_refresh_token_expire_hours: int = 12
+
     # ----- Redis -----
     redis_url: str = ""  # e.g. redis://localhost:6379/0 — 비어 있으면 Redis 비활성화
+
+    # ----- OnlyOffice Document Server -----
+    onlyoffice_url: str = "http://onlyoffice.claude-sessions.svc.cluster.local"
+    # JWT secret은 필수. 최소 32자, placeholder("CHANGE_ME_") 금지.
+    # env 미주입 또는 placeholder면 앱 시작 실패 — fail-fast.
+    onlyoffice_jwt_secret: str = Field(..., min_length=32)
+
+    @field_validator("onlyoffice_jwt_secret")
+    @classmethod
+    def _reject_placeholder_jwt_secret(cls, v: str) -> str:
+        if v.startswith("CHANGE_ME_"):
+            raise ValueError(
+                "onlyoffice_jwt_secret must be replaced — placeholder detected"
+            )
+        return v
 
     # ----- S3 Vault -----
     s3_vault_bucket: str = ""        # 민감 파일 격리 S3 버킷 이름

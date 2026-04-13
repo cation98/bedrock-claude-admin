@@ -14,12 +14,13 @@ from typing import Union
 import httpx
 import psycopg2
 import psycopg2.extras
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.core.database import get_db
 from app.core.security import create_access_token, get_current_user
+from app.routers.jwt_auth import write_access_cookies
 from app.models.audit_log import AuditAction
 from app.models.two_factor_code import TwoFactorCode
 from app.models.user import User
@@ -227,23 +228,23 @@ def _check_approval(user: User) -> None:
 
 
 def _issue_jwt(user: User, settings: Settings, request: Request | None = None) -> LoginResponse:
-    """JWT 토큰 발급 + LoginResponse 반환.
+    """RS256 JWT 토큰 발급 + LoginResponse 반환.
 
-    Admin dashboard(claude-admin.skons.net)에서 요청 시 admin role 필수.
+    SEC-MED-6: admin 판별은 DB의 user.role claim 기반 — Origin/Referer 헤더 미사용.
+    admin dashboard 접근 제어는 admin dashboard 자체(JWT role 확인)에서 담당한다.
+
+    페이로드 구조(기존 경로 호환):
+      sub      = user.username  (사번, 기존 엔드포인트 호환)
+      user_id  = user.id
+      role     = user.role
+      type     = "access"
+    RS256 서명 — security.create_access_token이 jwt_rs256 private key로 서명.
     """
-    # Admin dashboard Origin 체크: admin이 아니면 로그인 거부
-    if request:
-        origin = request.headers.get("Origin", "") or request.headers.get("Referer", "")
-        if "claude-admin" in origin and user.role != "admin":
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="관리자 계정만 Admin Dashboard에 로그인할 수 있습니다.",
-            )
-
     token_data = {
         "sub": user.username,
         "user_id": user.id,
         "role": user.role,
+        "type": "access",
     }
     access_token = create_access_token(token_data, settings)
     return LoginResponse(
@@ -262,6 +263,7 @@ def _issue_jwt(user: User, settings: Settings, request: Request | None = None) -
 async def login(
     request: LoginRequest,
     http_request: Request,
+    response: Response,
     settings: Settings = Depends(get_settings),
     db: Session = Depends(get_db),
 ):
@@ -281,7 +283,9 @@ async def login(
             log_audit(db, user.username, AuditAction.LOGIN_BYPASS, detail="test account SSO+2FA skip")
             db.commit()
             logger.info(f"Test account login bypass: {user.username}")
-            return _issue_jwt(user, settings, http_request)
+            jwt_result = _issue_jwt(user, settings, http_request)
+            write_access_cookies(response, jwt_result.access_token)
+            return jwt_result
 
     # ── Admin 계정 SSO 매핑 ──
     # ADMIN001 → N1102359 SSO 인증, JWT는 ADMIN001로 발급
@@ -323,7 +327,9 @@ async def login(
             f"Direct JWT issued (2fa_enabled={settings.two_factor_enabled}): "
             f"{user.username}"
         )
-        return _issue_jwt(user, settings, http_request)
+        jwt_result = _issue_jwt(user, settings, http_request)
+        write_access_cookies(response, jwt_result.access_token)
+        return jwt_result
 
     # ── 테스트 계정 2FA 우회 ──
     # SECURITY: allow_test_users=True (기본값 False)일 때만 활성화됩니다.
@@ -332,7 +338,9 @@ async def login(
         log_audit(db, user.username, AuditAction.LOGIN_BYPASS, detail="test account 2FA skip")
         db.commit()
         logger.info(f"Test account 2FA bypass: {user.username}")
-        return _issue_jwt(user, settings, http_request)
+        jwt_result = _issue_jwt(user, settings, http_request)
+        write_access_cookies(response, jwt_result.access_token)
+        return jwt_result
 
     # ── 2FA 흐름 ──
 
@@ -399,6 +407,7 @@ async def login(
 async def verify_2fa(
     request: Verify2faRequest,
     http_request: Request,
+    response: Response,
     settings: Settings = Depends(get_settings),
     db: Session = Depends(get_db),
 ):
@@ -457,7 +466,9 @@ async def verify_2fa(
     db.commit()
 
     logger.info(f"2FA verified, JWT issued: {username}")
-    return _issue_jwt(user, settings, http_request)
+    jwt_result = _issue_jwt(user, settings, http_request)
+    write_access_cookies(response, jwt_result.access_token)
+    return jwt_result
 
 
 @router.get("/me", response_model=UserInfo)
@@ -470,3 +481,72 @@ async def get_me(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return user
+
+
+@router.get("/webui-verify", status_code=200)
+async def webui_verify(
+    request: Request,
+    response: Response,
+    settings: Settings = Depends(get_settings),
+):
+    """nginx ingress auth_request 콜백 — Open WebUI SSO 연동.
+
+    NGINX Ingress가 chat.skons.net 요청마다 이 엔드포인트를 서브요청으로 호출.
+    200 반환 시 X-SKO-Email/X-SKO-User-Id 헤더를 Open WebUI에 전달.
+    401 반환 시 NGINX가 로그인 페이지로 리다이렉트.
+
+    검증 흐름:
+      bedrock_jwt 쿠키 (HttpOnly) → RS256 검증 → username 추출
+      → X-SKO-Email: {username}@skons.net 헤더 응답
+      → ingress auth-response-headers로 Open WebUI에 전달
+      → WEBUI_AUTH_TRUSTED_EMAIL_HEADER=X-SKO-Email 로 자동 로그인/생성
+
+    ingress.yaml 설정 참고:
+      nginx.ingress.kubernetes.io/auth-url: "http://auth-gateway.platform.svc.cluster.local/api/v1/auth/webui-verify"
+      nginx.ingress.kubernetes.io/auth-response-headers: "X-SKO-Email,X-SKO-User-Id"
+      nginx.ingress.kubernetes.io/auth-signin: "https://portal.skons.net/login?redirect=$escaped_request_uri"
+
+    [설계 tradeoff] jti blacklist / is_user_revoked() 검사 의도적 제외:
+      NGINX auth_request는 모든 HTTP 요청(이미지, API, WebSocket 포함)마다 호출됨.
+      Redis jti 조회를 매 요청마다 수행하면 chat.skons.net 트래픽 전량이 Redis RTT
+      (≈1ms) 를 유발 → Open WebUI 응답성 저하 + Redis 부하 집중.
+      대신 access token 만료(ACCESS_TTL_SECONDS, 기본 900초)에 의존.
+      cascade revoke 후 최대 15분 내 Open WebUI 접근이 유지될 수 있음 — 허용된 tradeoff.
+      보안 요구사항이 강화되면 Phase 1에서 short-TTL token(5분) + 조용한 refresh로 전환 권장.
+    """
+    from app.core.security import decode_token
+
+    # bedrock_jwt 쿠키 우선 (SSO 로그인 시 설정됨)
+    token = request.cookies.get("bedrock_jwt", "")
+    if not token:
+        # claude_token legacy fallback
+        token = request.cookies.get("claude_token", "")
+
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Cookie"},
+        )
+
+    payload = decode_token(token, settings)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Cookie"},
+        )
+
+    username = payload.get("sub", "")
+    if not username:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token missing subject",
+        )
+
+    # NGINX auth-response-headers로 Open WebUI에 전달되는 헤더
+    # Open WebUI WEBUI_AUTH_TRUSTED_EMAIL_HEADER=X-SKO-Email 로 자동 로그인
+    response.headers["X-SKO-Email"] = f"{username}@skons.net"
+    response.headers["X-SKO-User-Id"] = username
+
+    return {"ok": True}

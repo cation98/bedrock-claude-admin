@@ -182,6 +182,33 @@ spec:
         - port: 8000
           protocol: TCP
 
+    # OnlyOffice(claude-sessions ns)에서 오는 콜백 POST + 파일 초기 fetch
+    # OnlyOffice Document Server는 편집 완료 후 auth-gateway의 콜백 URL로
+    # POST를 보내고, document.url 기반으로 초기 파일을 GET 한다.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: claude-sessions
+          podSelector:
+            matchLabels:
+              app: onlyoffice
+      ports:
+        - port: 8000
+          protocol: TCP
+
+    # Open WebUI(openwebui ns)에서 오는 JWT 검증 요청
+    # Open WebUI: JWKS 엔드포인트(/auth/.well-known/jwks.json) 조회
+    # Bedrock AG: 예산 초과 시 사용자 역할 검증 (선택)
+    # NOTE: openwebui ingress에 auth_url 추가 시 ingress-nginx가 대신 처리하므로
+    #       직접 Pod-to-Pod 경로도 허용 (이중 방어)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openwebui
+      ports:
+        - port: 8000
+          protocol: TCP
+
   egress:
     # DNS 해석 허용
     - to: []
@@ -208,20 +235,29 @@ spec:
         - port: 5432
           protocol: TCP
 
-    # Redis 허용 (세션 캐시)
+    # Redis 허용 (세션 캐시) — AWS ElastiCache (managed service, not a K8s Pod)
     # JWT 토큰 블랙리스트, 세션 임시 데이터 저장
+    # ElastiCache는 K8s Pod가 아니므로 podSelector 사용 불가 → ipBlock으로 지정
+    # primary: bedrock-claude-redis.khpawo.0001.apn2.cache.amazonaws.com → 10.0.10.208
+    # /24 유지 이유: failover 시 primary IP가 같은 서브넷 내 다른 IP로 변경될 수 있음
     - to:
-        - podSelector:
-            matchLabels:
-              app: redis
+        - ipBlock:
+            cidr: 10.0.10.0/24   # ap-northeast-2a: primary(10.0.10.208) + failover 포함
+        - ipBlock:
+            cidr: 10.0.20.0/24   # ap-northeast-2c: replica 포함
       ports:
         - port: 6379
           protocol: TCP
 
-    # OnlyOffice 허용 (문서 편집, 향후 기능)
-    # Auth Gateway가 OnlyOffice API를 통해 문서 변환/편집 요청
+    # OnlyOffice 허용 (문서 편집)
+    # Auth Gateway → OnlyOffice: iframe config 프록시, 콜백 시 편집본 다운로드
+    # OnlyOffice는 claude-sessions 네임스페이스에 있으므로 namespaceSelector + podSelector 조합 필수
+    # (podSelector만 쓰면 같은 platform 네임스페이스로 제한되어 매칭 실패)
     - to:
-        - podSelector:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: claude-sessions
+          podSelector:
             matchLabels:
               app: onlyoffice
       ports:
@@ -233,15 +269,21 @@ spec:
 # 5. OnlyOffice 트래픽 허용 정책
 # =============================================================================
 # 대상: app=onlyoffice 라벨을 가진 Pod
+# 네임스페이스: claude-sessions (OnlyOffice Deployment가 실제 배포된 ns)
 #
-# 보안 원칙: Auth Gateway만 OnlyOffice에 접근 가능
+# 주의(과거 버그): 이 정책은 원래 namespace: platform으로 선언되어 있었으나
+# OnlyOffice Deployment는 claude-sessions에 있어 매칭되지 않았다.
+# claude-sessions에는 default-deny-all이 걸려 있으므로 이 정책이 없으면
+# OnlyOffice는 어떤 트래픽도 받을 수 없다.
+#
+# 보안 원칙: Auth Gateway(platform ns)만 OnlyOffice에 접근 가능
 # 사용자 Pod가 OnlyOffice에 직접 접근하는 것을 차단
-# (문서 내용이 사용자 간 노출되는 것을 방지)
+# (문서 내용이 사용자 간 노출되는 것을 방지 — iframe은 auth-gateway 프록시 경유)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-onlyoffice-traffic
-  namespace: platform
+  namespace: claude-sessions
 spec:
   podSelector:
     matchLabels:
@@ -251,9 +293,13 @@ spec:
     - Egress
 
   ingress:
-    # Auth Gateway에서만 접근 허용 (같은 platform 네임스페이스)
+    # Auth Gateway(platform ns)에서만 80 포트 접근 허용
+    # 크로스 네임스페이스: namespaceSelector + podSelector AND 조합
     - from:
-        - podSelector:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: platform
+          podSelector:
             matchLabels:
               app: auth-gateway
       ports:
@@ -261,10 +307,25 @@ spec:
           protocol: TCP
 
   egress:
-    # OnlyOffice도 DNS는 필요 (외부 폰트, 플러그인 등)
+    # DNS 해석 (UDP/TCP 53)
     - to: []
       ports:
         - port: 53
           protocol: UDP
         - port: 53
+          protocol: TCP
+
+    # Auth Gateway 호출 (편집 모드 필수)
+    # OnlyOffice가 document.url을 fetch해서 초기 파일을 로드할 때
+    # auth-gateway.platform.svc:8000 으로 요청한다.
+    # ALLOW_PRIVATE_IP_ADDRESS=true 설정과 짝을 이룬다.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: platform
+          podSelector:
+            matchLabels:
+              app: auth-gateway
+      ports:
+        - port: 8000
           protocol: TCP

@@ -155,13 +155,19 @@ async def auth_check(
       - ACL은 revoked_at이 NULL인 활성 레코드만 검사.
       - 관리자(admin)는 모든 앱에 접근 가능.
     """
-    # 1. JWT 토큰 추출 (Authorization 헤더 → claude_token 쿠키 순서)
+    # 1. JWT 토큰 추출 (Authorization 헤더 → bedrock_jwt 쿠키 → claude_token 쿠키 순서)
+    # T10: bedrock_jwt(Phase 0 RS256) 우선, claude_token(legacy) fallback.
     user_payload = None
 
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
         token = auth_header.split(" ", 1)[1]
         user_payload = decode_token(token, settings)
+
+    if user_payload is None:
+        token = request.cookies.get("bedrock_jwt", "")
+        if token:
+            user_payload = decode_token(token, settings)
 
     if user_payload is None:
         token = request.cookies.get("claude_token", "")

@@ -1,0 +1,43 @@
+id: ko-003-translate-ko-to-en
+menu: translate
+description: |
+  한국어 공식 보고서 문단을 영어 비즈니스 리포트 문체로 번역.
+  수치(80%, 15억 원, 340시간, 280시간) 및 부서명이 정확히 번역되어야 함.
+
+input: |
+  당사는 2026년 상반기 디지털 전환 전략의 일환으로 전사적 업무 자동화 플랫폼 도입을
+  추진하고 있습니다. 본 플랫폼은 반복적인 행정 업무의 80% 이상을 자동화하여 임직원의
+  핵심 업무 집중도를 높이고, 연간 약 15억 원의 운영 비용 절감 효과를 목표로 합니다.
+  1분기 파일럿 결과, 인사팀과 재무팀에서 각각 월 340시간, 280시간의 수작업이 감소하는
+  성과를 확인하였습니다.
+
+expected:
+  structural:
+    - 단일 문단 또는 원문과 동일한 문단 수
+    - 비즈니스 공식 문체 (passive voice 또는 formal active 허용)
+    - 수치 정확성: 80%, KRW 1.5 billion (또는 1,500,000,000 KRW), 340 hours, 280 hours
+    - '"인사팀" → HR team/department, "재무팀" → Finance team/department'
+  forbidden:
+    - 원문 수치 변형 금지
+    - 구어체(informal) 표현 금지
+    - 추가적 해석/설명 삽입 금지
+
+rubric:
+  - name: 번역 정확도
+    max: 5
+    guide: 수치, 부서명, 핵심 개념 모두 정확히 반영 시 5점
+  - name: 비즈니스 문체
+    max: 5
+    guide: 격식체 비즈니스 영어, 한국식 직역 없음, 어색한 표현 없음 시 5점
+  - name: 자연스러운 영어
+    max: 5
+    guide: native-level 비즈니스 영어 수준이면 5점
+
+golden: |
+  As part of the company's digital transformation strategy for the first half of 2026,
+  we are advancing the implementation of an enterprise-wide work automation platform.
+  This platform aims to automate more than 80% of repetitive administrative tasks,
+  enabling employees to focus on higher-value work and targeting annual operational
+  cost savings of approximately KRW 1.5 billion. The Q1 pilot confirmed reductions in
+  manual workload of 340 hours per month in the HR department and 280 hours per month
+  in the Finance department, respectively.

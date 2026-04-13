@@ -13,6 +13,47 @@ if [ -z "${AWS_ACCESS_KEY_ID:-}" ] && [ -z "${AWS_PROFILE:-}" ] && [ -z "${AWS_R
 fi
 
 # ---------------------------------------------------------------------------
+# T20: Bedrock AG HTTP proxy 라우팅 설정
+#
+#   ANTHROPIC_BASE_URL이 설정된 경우 (Auth Gateway 주입):
+#   1. SECURE_POD_TOKEN으로 pod-token-exchange 호출 → JWT 획득
+#   2. ANTHROPIC_API_KEY = 획득한 JWT (Bearer 토큰으로 /v1/messages 인증)
+#   3. CLAUDE_CODE_USE_BEDROCK unset (AWS SDK 직접 호출 비활성화)
+#
+#   portal.html은 pod-token-exchange를 호출하지 않음 (SSO 쿠키 사용).
+#   Pod 내부 교환과 충돌 없음.
+#
+#   주의: JWT access_token TTL = 15분. 장시간 세션에서는 refresh 필요.
+#   Phase 1에서 background token refresh daemon 추가 예정.
+# ---------------------------------------------------------------------------
+if [ -n "${ANTHROPIC_BASE_URL:-}" ] && [ -n "${SECURE_POD_TOKEN:-}" ] && [ -n "${AUTH_GATEWAY_URL:-}" ]; then
+    # Pod 이름 결정 (k8s_service.py 생성 규칙과 동일)
+    _AG_POD_NAME="claude-terminal-$(echo "${USER_ID:-unknown}" | tr '[:upper:]' '[:lower:]')"
+
+    # pod-token-exchange 호출 → JWT 획득
+    _JWT_RESPONSE=$(curl -sf -X POST \
+        "${AUTH_GATEWAY_URL}/auth/pod-token-exchange" \
+        -H "Content-Type: application/json" \
+        -d "{\"pod_token\":\"${SECURE_POD_TOKEN}\",\"pod_name\":\"${_AG_POD_NAME}\"}" \
+        --max-time 10 2>/dev/null || echo "")
+
+    if [ -n "${_JWT_RESPONSE}" ]; then
+        _ACCESS_TOKEN=$(echo "${_JWT_RESPONSE}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('access_token',''))" 2>/dev/null || echo "")
+        if [ -n "${_ACCESS_TOKEN}" ]; then
+            export ANTHROPIC_API_KEY="${_ACCESS_TOKEN}"
+            unset CLAUDE_CODE_USE_BEDROCK 2>/dev/null || true
+            echo "  Proxy:    ${ANTHROPIC_BASE_URL} (Bedrock AG T20, JWT issued)"
+        else
+            echo "  Proxy:    JWT 파싱 실패 — Bedrock 직접 경로 유지"
+        fi
+    else
+        echo "  Proxy:    pod-token-exchange 실패 — Bedrock 직접 경로 유지"
+    fi
+
+    unset _JWT_RESPONSE _ACCESS_TOKEN _AG_POD_NAME
+fi
+
+# ---------------------------------------------------------------------------
 # 2) 사용자 프로필을 CLAUDE.md에 주입
 #    Auth Gateway가 Pod 생성 시 환경변수로 사용자 정보 전달
 # ---------------------------------------------------------------------------
