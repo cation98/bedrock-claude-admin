@@ -564,7 +564,7 @@ def _render_onlyoffice_html(filename: str, config: dict) -> str:
 </style>
 </head><body>
 <div id="editor-container"></div>
-<script src="/onlyoffice/web-apps/apps/api/documents/api.js"></script>
+<script src="/web-apps/apps/api/documents/api.js"></script>
 <script>
 (function() {{
   try {{
