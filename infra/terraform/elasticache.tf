@@ -107,7 +107,7 @@ resource "aws_security_group_rule" "eks_to_redis" {
 # =============================================================================
 # Phase 1a: ElastiCache HA + TLS Replication Group
 #
-# 기존 Phase 0 standalone(bedrock-claude-redis)과 공존.
+# Phase 1b (2026-04-13): standalone destroy 완료. main_tls 단독 운영.
 # Task 3에서 K8s manifest를 이 cluster로 포인팅 후 수동 cutover.
 #
 # 주요 변경:
@@ -129,7 +129,7 @@ resource "random_password" "redis_auth_token" {
 }
 
 resource "aws_elasticache_replication_group" "main_tls" {
-  # Phase 1a 신규 HA+TLS. 기존 standalone(aws_elasticache_cluster.redis)와 공존.
+  # Phase 1a 신규 HA+TLS replication group. Phase 1b에서 standalone 폐기 후 단독 운영.
   replication_group_id = "${var.project_name}-redis-tls"
   description          = "${var.project_name} Redis HA + TLS (Phase 1a)"
 

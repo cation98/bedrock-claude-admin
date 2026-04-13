@@ -31,9 +31,8 @@ metadata:
     bedrock-platform/endpoint-source: "terraform output redis_primary_endpoint"
 spec:
   type: ExternalName
-  # ⚠️  placeholder: T2 apply 후 실제 endpoint로 교체 필요
-  # 예시: bedrock-claude-redis.xxxxxx.ng.0001.apse2.cache.amazonaws.com
-  externalName: bedrock-claude-redis.khpawo.0001.apn2.cache.amazonaws.com
+  # Phase 1b (2026-04-13): main_tls primary endpoint로 cutover. Phase 0 standalone 폐기됨.
+  externalName: master.bedrock-claude-redis-tls.khpawo.apn2.cache.amazonaws.com
   ports:
     - port: 6379
       targetPort: 6379
