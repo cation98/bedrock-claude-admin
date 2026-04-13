@@ -236,20 +236,10 @@ output "bedrock_ag_role_arn" {
 #
 # 주의: node role에 Bedrock 권한 미부여 → IRSA 없으면 502 AccessDenied
 #
-# ⚠️  Phase 0 DRIFT NOTE (2026-04-12):
-#   이 role(bedrock-claude-auth-gateway-bedrock)은 terraform apply로 생성됐으나
-#   platform-admin-sa SA annotation은 기존 bedrock-claude-platform-admin 역할을
-#   가리키고 있음 (SA annotation 변경 없이 기존 role에 AWS CLI put-role-policy로
-#   AllowBedrockInvoke 정책을 직접 추가).
-#
-#   현재 동작:
-#     platform-admin-sa → bedrock-claude-platform-admin (Bedrock 권한 有, AWS CLI 관리)
-#     bedrock-claude-auth-gateway-bedrock → AWS에 존재하지만 미사용 (orphan)
-#
-#   Phase 1 정리 방향:
-#     Option A: platform-admin-sa annotation → 이 role ARN으로 교체 (clean IRSA)
-#     Option B: 이 resource 삭제 + bedrock-claude-platform-admin data source 추가
-#   → 운용 중단 없이 교체 시 Option A 권장
+# 이력(참고): Phase 0(2026-04-12) 시점에는 bedrock-claude-platform-admin
+# (AWS CLI 관리)을 가리켜 drift가 있었으며, Phase 1a(2026-04-13)에서
+# terraform import + manifest annotation 교체로 Option A 정리 완료.
+# 현 상태: platform-admin-sa → 이 role(terraform 관리) 일원화.
 # =============================================================================
 
 resource "aws_iam_role" "auth_gateway_bedrock" {
