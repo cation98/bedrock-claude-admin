@@ -526,7 +526,7 @@ async def webui_verify(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required",
-            headers={"WWW-Authenticate": "Cookie"},
+            headers={"WWW-Authenticate": 'Bearer realm="skons.net"'},
         )
 
     payload = decode_token(token, settings)
@@ -534,7 +534,7 @@ async def webui_verify(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
-            headers={"WWW-Authenticate": "Cookie"},
+            headers={"WWW-Authenticate": 'Bearer realm="skons.net"'},
         )
 
     username = payload.get("sub", "")
