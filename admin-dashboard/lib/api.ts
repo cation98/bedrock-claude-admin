@@ -1198,3 +1198,63 @@ export async function rejectSkill(skillId: number, reason: string): Promise<Skil
   }
   return JSON.parse(text) as SkillResponse;
 }
+
+// ============================================================================
+// Announcements (GitHub #14 — 공지 관리)
+// ============================================================================
+
+export interface Announcement {
+  id: number;
+  title: string;
+  content: string;
+  author_username: string | null;
+  is_active: boolean;
+  is_pinned: boolean;
+  created_at: string | null;
+  expires_at: string | null;
+}
+
+export interface AnnouncementCreatePayload {
+  title: string;
+  content: string;
+  is_pinned: boolean;
+  expires_at: string | null; // ISO-8601 또는 null
+}
+
+export interface AnnouncementUpdatePayload {
+  title?: string;
+  content?: string;
+  is_active?: boolean;
+  is_pinned?: boolean;
+  expires_at?: string | null; // 빈 문자열 = 만료 해제
+}
+
+export async function listAnnouncements(): Promise<{ announcements: Announcement[] }> {
+  return request<{ announcements: Announcement[] }>("/api/v1/announcements");
+}
+
+export async function createAnnouncement(
+  payload: AnnouncementCreatePayload
+): Promise<Announcement> {
+  return request<Announcement>("/api/v1/announcements", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateAnnouncement(
+  id: number,
+  payload: AnnouncementUpdatePayload
+): Promise<Announcement> {
+  // expires_at === null 은 빈 문자열로 전송 (백엔드가 "" → NULL로 해석)
+  const body: Record<string, unknown> = { ...payload };
+  if (payload.expires_at === null) body.expires_at = "";
+  return request<Announcement>(`/api/v1/announcements/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deleteAnnouncement(id: number): Promise<void> {
+  await request<unknown>(`/api/v1/announcements/${id}`, { method: "DELETE" });
+}
