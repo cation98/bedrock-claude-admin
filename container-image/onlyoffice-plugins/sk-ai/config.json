@@ -1,0 +1,81 @@
+{
+    "name"       : "SK AI",
+    "nameLocale" : {"ko": "SK AI"},
+    "guid"       : "asc.{7C4F2E1D-3A5B-4C8E-9D0F-1E2B3C4D5A6F}",
+    "baseUrl"    : "",
+    "version"    : "1.0.0",
+    "variations" : [
+        {
+            "description"         : "선택 영역 요약",
+            "descriptionLocale"   : {"ko": "선택 영역 요약"},
+            "url"                 : "index.html",
+            "icons"               : ["resources/icon.png", "resources/icon@2x.png"],
+            "isViewer"            : false,
+            "EditorsSupport"      : ["word", "cell", "slide"],
+            "isVisual"            : true,
+            "isModal"             : true,
+            "isInsideMode"        : false,
+            "initDataType"        : "none",
+            "initData"            : "summarize",
+            "buttons"             : [
+                {"text": "삽입",  "primary": true},
+                {"text": "닫기",  "primary": false}
+            ],
+            "size"                : [520, 460]
+        },
+        {
+            "description"         : "한↔영 번역",
+            "descriptionLocale"   : {"ko": "한↔영 번역"},
+            "url"                 : "index.html",
+            "icons"               : ["resources/icon.png", "resources/icon@2x.png"],
+            "isViewer"            : false,
+            "EditorsSupport"      : ["word", "cell", "slide"],
+            "isVisual"            : true,
+            "isModal"             : true,
+            "isInsideMode"        : false,
+            "initDataType"        : "none",
+            "initData"            : "translate",
+            "buttons"             : [
+                {"text": "삽입",  "primary": true},
+                {"text": "닫기",  "primary": false}
+            ],
+            "size"                : [520, 460]
+        },
+        {
+            "description"         : "문법 교정",
+            "descriptionLocale"   : {"ko": "문법 교정"},
+            "url"                 : "index.html",
+            "icons"               : ["resources/icon.png", "resources/icon@2x.png"],
+            "isViewer"            : false,
+            "EditorsSupport"      : ["word", "cell", "slide"],
+            "isVisual"            : true,
+            "isModal"             : true,
+            "isInsideMode"        : false,
+            "initDataType"        : "none",
+            "initData"            : "grammar",
+            "buttons"             : [
+                {"text": "교정본 삽입",  "primary": true},
+                {"text": "닫기",        "primary": false}
+            ],
+            "size"                : [520, 460]
+        },
+        {
+            "description"         : "보고서 초안 생성",
+            "descriptionLocale"   : {"ko": "보고서 초안 생성"},
+            "url"                 : "index.html",
+            "icons"               : ["resources/icon.png", "resources/icon@2x.png"],
+            "isViewer"            : false,
+            "EditorsSupport"      : ["word", "cell"],
+            "isVisual"            : true,
+            "isModal"             : true,
+            "isInsideMode"        : false,
+            "initDataType"        : "none",
+            "initData"            : "report",
+            "buttons"             : [
+                {"text": "초안 삽입",  "primary": true},
+                {"text": "닫기",      "primary": false}
+            ],
+            "size"                : [520, 540]
+        }
+    ]
+}

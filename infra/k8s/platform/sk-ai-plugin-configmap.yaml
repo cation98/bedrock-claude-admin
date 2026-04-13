@@ -1,0 +1,220 @@
+# SK AI OnlyOffice Plugin — ConfigMap + 배포 가이드
+#
+# Lane C 결과물 (C2 단계).
+# Lane B의 onlyoffice.yaml volumeMount 구조가 확정된 뒤
+# 이 파일의 initContainer/volumeMount 패턴을 onlyoffice.yaml에 병합한다.
+#
+# 목적: auth-gateway /api/v1/ai/chat/completions 를 호출하는
+#       SK AI 플러그인 파일을 OO DocumentServer 컨테이너의
+#       sdkjs-plugins 디렉토리에 주입.
+#
+# 플러그인 GUID: asc.{7C4F2E1D-3A5B-4C8E-9D0F-1E2B3C4D5A6F}
+# 플러그인 소스: container-image/onlyoffice-plugins/sk-ai/
+#
+# 적용 범위: claude-sessions namespace (onlyoffice Deployment)
+# 적용 시점: Lane B PR merge 후
+---
+# ConfigMap A: 플러그인 메타 설정 (config.json + config.js)
+# 파일 크기 제한: ConfigMap 단일 항목 1MB → 텍스트 파일만 저장
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sk-ai-plugin-meta
+  namespace: claude-sessions
+  labels:
+    app: onlyoffice
+    component: sk-ai-plugin
+data:
+  # ── config.json ──────────────────────────────────────────────────────
+  # OO 플러그인 메타데이터. 4개 변형(요약/번역/교정/보고서)을 정의.
+  config.json: |
+    {
+        "name"       : "SK AI",
+        "nameLocale" : {"ko": "SK AI"},
+        "guid"       : "asc.{7C4F2E1D-3A5B-4C8E-9D0F-1E2B3C4D5A6F}",
+        "baseUrl"    : "",
+        "version"    : "1.0.0",
+        "variations" : [
+            {
+                "description"         : "선택 영역 요약",
+                "descriptionLocale"   : {"ko": "선택 영역 요약"},
+                "url"                 : "index.html",
+                "icons"               : ["resources/icon.png", "resources/icon@2x.png"],
+                "isViewer"            : false,
+                "EditorsSupport"      : ["word", "cell", "slide"],
+                "isVisual"            : true,
+                "isModal"             : true,
+                "isInsideMode"        : false,
+                "initDataType"        : "none",
+                "initData"            : "summarize",
+                "buttons"             : [
+                    {"text": "삽입",  "primary": true},
+                    {"text": "닫기",  "primary": false}
+                ],
+                "size"                : [520, 460]
+            },
+            {
+                "description"         : "한↔영 번역",
+                "descriptionLocale"   : {"ko": "한↔영 번역"},
+                "url"                 : "index.html",
+                "icons"               : ["resources/icon.png", "resources/icon@2x.png"],
+                "isViewer"            : false,
+                "EditorsSupport"      : ["word", "cell", "slide"],
+                "isVisual"            : true,
+                "isModal"             : true,
+                "isInsideMode"        : false,
+                "initDataType"        : "none",
+                "initData"            : "translate",
+                "buttons"             : [
+                    {"text": "삽입",  "primary": true},
+                    {"text": "닫기",  "primary": false}
+                ],
+                "size"                : [520, 460]
+            },
+            {
+                "description"         : "문법 교정",
+                "descriptionLocale"   : {"ko": "문법 교정"},
+                "url"                 : "index.html",
+                "icons"               : ["resources/icon.png", "resources/icon@2x.png"],
+                "isViewer"            : false,
+                "EditorsSupport"      : ["word", "cell", "slide"],
+                "isVisual"            : true,
+                "isModal"             : true,
+                "isInsideMode"        : false,
+                "initDataType"        : "none",
+                "initData"            : "grammar",
+                "buttons"             : [
+                    {"text": "교정본 삽입",  "primary": true},
+                    {"text": "닫기",        "primary": false}
+                ],
+                "size"                : [520, 460]
+            },
+            {
+                "description"         : "보고서 초안 생성",
+                "descriptionLocale"   : {"ko": "보고서 초안 생성"},
+                "url"                 : "index.html",
+                "icons"               : ["resources/icon.png", "resources/icon@2x.png"],
+                "isViewer"            : false,
+                "EditorsSupport"      : ["word", "cell"],
+                "isVisual"            : true,
+                "isModal"             : true,
+                "isInsideMode"        : false,
+                "initDataType"        : "none",
+                "initData"            : "report",
+                "buttons"             : [
+                    {"text": "초안 삽입",  "primary": true},
+                    {"text": "닫기",      "primary": false}
+                ],
+                "size"                : [520, 540]
+            }
+        ]
+    }
+
+  # ── config.js ─────────────────────────────────────────────────────────
+  # 런타임 설정. index.html이 include하면 window.SKAI_CONFIG가 설정됨.
+  # aiEndpoint: auth-gateway와 OO가 동일 도메인(claude.skons.net)이므로
+  #             상대경로 사용 → CORS/hard-code 없음.
+  config.js: |
+    window.SKAI_CONFIG = {
+      aiEndpoint: "/api/v1/ai/chat/completions",
+      model:      "claude-sonnet-4-6"
+    };
+---
+# ConfigMap B: 플러그인 HTML/JS 소스
+# 참고: 실제 배포에서는 아래 data 값이 빌드 파이프라인에서 주입됨.
+#       (git의 container-image/onlyoffice-plugins/sk-ai/ 소스와 동기화)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sk-ai-plugin-src
+  namespace: claude-sessions
+  labels:
+    app: onlyoffice
+    component: sk-ai-plugin
+data:
+  # index.html과 scripts/code.js는 크기가 크므로 별도 ConfigMap에 분리.
+  # 실 배포 시 kubectl create configmap 또는 kustomize secretGenerator 사용 권장.
+  #
+  # 예시 (파이프라인):
+  #   kubectl -n claude-sessions create configmap sk-ai-plugin-src \
+  #     --from-file=index.html=container-image/onlyoffice-plugins/sk-ai/index.html \
+  #     --from-file=code.js=container-image/onlyoffice-plugins/sk-ai/scripts/code.js \
+  #     --dry-run=client -o yaml | kubectl apply -f -
+  #
+  # 아래는 참조용 플레이스홀더 (실제 내용은 파이프라인이 주입)
+  _placeholder: "see container-image/onlyoffice-plugins/sk-ai/"
+---
+# onlyoffice Deployment 패치 — initContainer + volumeMount 추가
+# Lane B의 onlyoffice.yaml 변경과 병합 필요.
+#
+# 적용 방법:
+#   kubectl -n claude-sessions patch deployment onlyoffice \
+#     --patch-file infra/k8s/platform/sk-ai-plugin-configmap.yaml
+#
+# 또는 onlyoffice.yaml에 아래 섹션을 수동 병합.
+#
+# ─── 이 섹션을 onlyoffice.yaml spec.template.spec 에 추가 ───────────────
+#
+# initContainers:
+# - name: sk-ai-plugin-injector
+#   # busybox: 파일 복사만 수행하는 경량 이미지
+#   image: busybox:1.36
+#   command:
+#   - sh
+#   - -c
+#   - |
+#     set -e
+#     PLUGIN_DIR="/plugins/asc.{7C4F2E1D-3A5B-4C8E-9D0F-1E2B3C4D5A6F}"
+#     mkdir -p "${PLUGIN_DIR}/scripts" "${PLUGIN_DIR}/resources"
+#
+#     # config.json, config.js (ConfigMap A)
+#     cp /plugin-meta/config.json "${PLUGIN_DIR}/config.json"
+#     cp /plugin-meta/config.js   "${PLUGIN_DIR}/config.js"
+#
+#     # index.html, scripts/code.js (ConfigMap B)
+#     cp /plugin-src/index.html   "${PLUGIN_DIR}/index.html"
+#     cp /plugin-src/code.js      "${PLUGIN_DIR}/scripts/code.js"
+#
+#     echo "[sk-ai-injector] Plugin files copied to ${PLUGIN_DIR}"
+#     ls -la "${PLUGIN_DIR}"
+#   volumeMounts:
+#   - name: plugin-meta
+#     mountPath: /plugin-meta
+#     readOnly: true
+#   - name: plugin-src
+#     mountPath: /plugin-src
+#     readOnly: true
+#   - name: oo-plugins
+#     mountPath: /plugins
+#
+# ─── volumes 섹션에 추가 ────────────────────────────────────────────────
+#
+# - name: plugin-meta
+#   configMap:
+#     name: sk-ai-plugin-meta
+# - name: plugin-src
+#   configMap:
+#     name: sk-ai-plugin-src
+# - name: oo-plugins
+#   emptyDir: {}
+#
+# ─── containers[onlyoffice].volumeMounts 에 추가 ────────────────────────
+#
+# - name: oo-plugins
+#   mountPath: /var/www/onlyoffice/documentserver/sdkjs-plugins
+#   subPath: ""
+#
+# ⚠️  주의: emptyDir oo-plugins는 Pod 재시작 시마다 initContainer가 다시 복사.
+#     OO DS의 기본 시스템 플러그인(sdkjs-plugins 내 기존 파일)은 보존 필요.
+#     해결책: initContainer에서 cp만 하고 기존 파일 삭제 금지.
+#     또는 subPath 마운트로 SK AI 폴더만 주입:
+#
+# - name: oo-plugins
+#   mountPath: /var/www/onlyoffice/documentserver/sdkjs-plugins/asc.{7C4F2E1D-3A5B-4C8E-9D0F-1E2B3C4D5A6F}
+#   subPath:   asc.{7C4F2E1D-3A5B-4C8E-9D0F-1E2B3C4D5A6F}
+#
+# ─── Lane B 협의 필요 항목 ──────────────────────────────────────────────
+# 1. emptyDir vs subPath 마운트 방식 결정
+# 2. OO DS 기존 시스템 플러그인 보존 여부
+# 3. initContainer 이미지 (busybox:1.36 or alpine:3.19)
+# 4. 파이프라인에서 ConfigMap B 자동 갱신 방법

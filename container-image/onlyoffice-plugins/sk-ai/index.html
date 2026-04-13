@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SK AI</title>
+
+  <!-- OnlyOffice Plugin SDK (로컬 설치 경로에서 로드) -->
+  <script type="text/javascript" src="https://onlyoffice.github.io/sdkjs-plugins/v1/plugins.js"></script>
+  <script type="text/javascript" src="https://onlyoffice.github.io/sdkjs-plugins/v1/plugins-ui.js"></script>
+  <link rel="stylesheet" href="https://onlyoffice.github.io/sdkjs-plugins/v1/plugins.css">
+
+  <!-- ConfigMap 주입 설정 (없어도 code.js 기본값 사용) -->
+  <!-- 운영환경에서는 이 파일이 ConfigMap/initContainer로 마운트됨 -->
+  <script type="text/javascript" src="config.js" onerror="window.__configLoadFailed=true"></script>
+
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Segoe UI', 'Malgun Gothic', Arial, sans-serif;
+      font-size: 13px;
+      color: #333;
+      background: #fff;
+      padding: 0;
+    }
+
+    #sk-ai-container {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      padding: 12px 16px 10px;
+      gap: 10px;
+    }
+
+    #sk-ai-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border-bottom: 1px solid #e0e0e0;
+      padding-bottom: 10px;
+    }
+
+    #sk-ai-badge {
+      display: inline-block;
+      background: #0053A0;
+      color: #fff;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 3px;
+      letter-spacing: 0.5px;
+    }
+
+    #sk-ai-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #1a1a2e;
+    }
+
+    #sk-ai-status-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 24px;
+    }
+
+    .spinner {
+      display: none;
+      width: 16px;
+      height: 16px;
+      border: 2px solid #e0e0e0;
+      border-top-color: #0053A0;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      flex-shrink: 0;
+    }
+
+    .spinner.visible {
+      display: block;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    #sk-ai-status {
+      font-size: 12px;
+      color: #666;
+    }
+
+    #sk-ai-status.error {
+      color: #c0392b;
+    }
+
+    #sk-ai-status.success {
+      color: #27ae60;
+    }
+
+    #sk-ai-result-wrapper {
+      display: none;
+      flex-direction: column;
+      gap: 6px;
+      flex: 1;
+    }
+
+    #sk-ai-result-label {
+      font-size: 11px;
+      color: #888;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    #sk-ai-result {
+      flex: 1;
+      width: 100%;
+      min-height: 220px;
+      resize: vertical;
+      border: 1px solid #d0d0d0;
+      border-radius: 4px;
+      padding: 10px;
+      font-size: 13px;
+      font-family: inherit;
+      line-height: 1.6;
+      color: #222;
+      background: #fafafa;
+      outline: none;
+    }
+
+    #sk-ai-result:focus {
+      border-color: #0053A0;
+      background: #fff;
+    }
+
+    #sk-ai-token-info {
+      font-size: 11px;
+      color: #aaa;
+      text-align: right;
+    }
+
+    #sk-ai-hint {
+      font-size: 11px;
+      color: #999;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+<div id="sk-ai-container">
+
+  <div id="sk-ai-header">
+    <span id="sk-ai-badge">SK AI</span>
+    <span id="sk-ai-title">선택 영역 요약</span>
+  </div>
+
+  <div id="sk-ai-status-row">
+    <div class="spinner" id="sk-ai-spinner"></div>
+    <span id="sk-ai-status">초기화 중...</span>
+  </div>
+
+  <div id="sk-ai-result-wrapper">
+    <span id="sk-ai-result-label">AI 결과</span>
+    <textarea id="sk-ai-result" readonly></textarea>
+    <div id="sk-ai-token-info"></div>
+  </div>
+
+  <div id="sk-ai-hint"></div>
+
+</div>
+
+<script type="text/javascript" src="scripts/code.js"></script>
+</body>
+</html>

@@ -38,6 +38,40 @@ spec:
       labels:
         app: onlyoffice
     spec:
+      # ── SK AI Plugin 주입 (Lane C2 merge, 2026-04-13) ─────────────────────
+      # 목적: OnlyOffice 자체 AI 플러그인(SK AI)을 sdkjs-plugins 디렉토리에 주입.
+      # 소스: container-image/onlyoffice-plugins/sk-ai/ (git)
+      # ConfigMap: scripts/apply-sk-ai-plugin.sh 로 생성 (sk-ai-plugin-meta/src).
+      # subPath 마운트로 SK AI 폴더만 주입하여 OO 번들 플러그인 보존.
+      initContainers:
+      - name: sk-ai-plugin-injector
+        image: busybox:1.36
+        # busybox는 파일 복사만 수행하는 경량 이미지 (~1MB).
+        # ConfigMap에서 파일을 읽어 emptyDir 볼륨에 복사하면
+        # OO 컨테이너가 sdkjs-plugins/{UUID}/ 경로로 보게 된다.
+        command:
+        - sh
+        - -c
+        - |
+          set -e
+          PLUGIN_UUID="asc.{7C4F2E1D-3A5B-4C8E-9D0F-1E2B3C4D5A6F}"
+          PLUGIN_DIR="/plugins/${PLUGIN_UUID}"
+          mkdir -p "${PLUGIN_DIR}/scripts" "${PLUGIN_DIR}/resources"
+          cp /plugin-meta/config.json "${PLUGIN_DIR}/config.json"
+          cp /plugin-meta/config.js   "${PLUGIN_DIR}/config.js"
+          cp /plugin-src/index.html   "${PLUGIN_DIR}/index.html"
+          cp /plugin-src/code.js      "${PLUGIN_DIR}/scripts/code.js"
+          echo "[sk-ai-injector] files copied to ${PLUGIN_DIR}"
+          ls -la "${PLUGIN_DIR}"
+        volumeMounts:
+        - name: sk-ai-plugin-meta
+          mountPath: /plugin-meta
+          readOnly: true
+        - name: sk-ai-plugin-src
+          mountPath: /plugin-src
+          readOnly: true
+        - name: sk-ai-plugin-target
+          mountPath: /plugins
       containers:
       - name: onlyoffice
         # P2-iter3 #2: 태그 pinning — supply-chain risk 차단.
@@ -141,10 +175,26 @@ spec:
         volumeMounts:
         - name: data
           mountPath: /var/lib/onlyoffice
+        # SK AI 플러그인 폴더를 OO sdkjs-plugins 하위에 마운트 (subPath로 다른 플러그인 보존)
+        - name: sk-ai-plugin-target
+          mountPath: /var/www/onlyoffice/documentserver/sdkjs-plugins/asc.{7C4F2E1D-3A5B-4C8E-9D0F-1E2B3C4D5A6F}
+          subPath: asc.{7C4F2E1D-3A5B-4C8E-9D0F-1E2B3C4D5A6F}
       volumes:
       - name: data
         persistentVolumeClaim:
           claimName: onlyoffice-data-pvc
+      # SK AI plugin ConfigMaps (scripts/apply-sk-ai-plugin.sh 로 생성됨)
+      - name: sk-ai-plugin-meta
+        configMap:
+          name: sk-ai-plugin-meta
+          optional: true   # ConfigMap 없어도 OO는 기동 (플러그인만 누락)
+      - name: sk-ai-plugin-src
+        configMap:
+          name: sk-ai-plugin-src
+          optional: true
+      # initContainer가 ConfigMap 파일을 이쪽에 복사, OO 컨테이너가 subPath로 읽음
+      - name: sk-ai-plugin-target
+        emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
