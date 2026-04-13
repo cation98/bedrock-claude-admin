@@ -1,0 +1,15 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: auth-gateway
+  namespace: platform
+  labels:
+    app: auth-gateway
+  annotations:
+    # Phase 1b: HPA max 4 기준, 노드 드레인/업그레이드 시에도 최소 1 replica 유지
+    phase1b.bedrock-claude/rationale: "minAvailable 1 — 롤링 업데이트/노드 드레인 시 서비스 단절 방지"
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: auth-gateway
