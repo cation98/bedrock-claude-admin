@@ -151,7 +151,9 @@ class TestWriteLocalFileToPod:
         )
 
         try:
-            asyncio.get_event_loop().run_until_complete(
+            # asyncio.run()은 항상 새 이벤트 루프를 생성하므로 get_event_loop()
+            # deprecated + 루프 closed 문제(Python 3.12)를 회피한다.
+            asyncio.run(
                 svc.write_local_file_to_pod(
                     "USER",
                     "/home/node/workspace/file.xlsx",
