@@ -203,8 +203,12 @@ class TestPodTokenExchange:
         header = jlib.loads(base64.urlsafe_b64decode(header_b64 + "=" * pad))
         assert header["alg"] == "RS256"
 
-    def test_access_token_sub_is_user_id(self, client, active_session, approved_user):
-        """access_token sub claim은 users.id(str)이어야 한다."""
+    def test_access_token_sub_is_username(self, client, active_session, approved_user):
+        """access_token sub claim은 username(사번)이어야 한다.
+
+        Phase 1 백로그 #4: 전체 consumer(bedrock_proxy/ai/bots/viewers/shared_mounts)가
+        current_user.get("sub")을 사번으로 취급하므로 모든 발급 경로에서 sub=username으로 통일.
+        """
         from app.core.jwt_rs256 import verify_jwt
         ts, raw = active_session
         resp = client.post(
@@ -213,7 +217,9 @@ class TestPodTokenExchange:
         )
         token = resp.json()["access_token"]
         payload = verify_jwt(token, expected_type="access")
-        assert payload["sub"] == str(approved_user.id)
+        assert payload["sub"] == approved_user.username
+        # emp_no도 동일하게 username (명시성 목적으로 병기)
+        assert payload["emp_no"] == approved_user.username
 
     def test_pod_token_replay_rejected_with_401(self, client, active_session):
         """동일 Pod Token을 두 번 교환하면 두 번째는 401을 반환한다."""

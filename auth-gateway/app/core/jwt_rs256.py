@@ -252,8 +252,8 @@ def create_access_token(
     """RS256 access JWT 생성.
 
     Claims:
-        sub     — users.id (UUID 또는 int str)
-        emp_no  — SSO 사번 (e.g. N1102359)
+        sub     — SSO 사번 (username, e.g. N1102359) — 전체 consumer 합의
+        emp_no  — SSO 사번 (sub와 동일, 명시성 목적으로 병기)
         email   — 사용자 이메일
         role    — user | admin
         jti     — UUID4, replay 방지용

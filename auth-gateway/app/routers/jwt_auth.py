@@ -193,8 +193,11 @@ async def pod_token_exchange(
             detail="User not found or not approved.",
         )
 
-    # 5. JWT 발급 — sub=users.id(str), emp_no=username, email 기본값
-    sub = str(user.id)
+    # 5. JWT 발급 — sub=username(사번), emp_no=username, email 기본값
+    # Phase 1 백로그 #4: 전체 consumer(bedrock_proxy/ai/bots/viewers/shared_mounts)가
+    # current_user.get("sub")을 사번(username)으로 취급하므로 sub=username으로 통일.
+    # users.id가 필요한 경우 DB 조회로 확보.
+    sub = user.username
     emp_no = user.username
     # SSO에서 실제 이메일 미제공 시 사번 기반 기본값
     email = f"{user.username.lower()}@skons.net"
