@@ -1258,3 +1258,33 @@ export async function updateAnnouncement(
 export async function deleteAnnouncement(id: number): Promise<void> {
   await request<unknown>(`/api/v1/announcements/${id}`, { method: "DELETE" });
 }
+
+// ---------- UI Split Stats ----------
+
+export interface UiSplitBucket {
+  period_start: string;
+  period_end: string;
+  webchat_users: number;
+  console_users: number;
+  total_events: number;
+}
+
+export interface UiSplitSummary {
+  period: "weekly" | "monthly";
+  window: number;
+  webchat_total_users: number;
+  console_total_users: number;
+  both_users: number;
+  webchat_only_users: number;
+  console_only_users: number;
+  buckets: UiSplitBucket[];
+}
+
+export function fetchUiSplitStats(
+  period: "weekly" | "monthly",
+  window: number
+): Promise<UiSplitSummary> {
+  return request<UiSplitSummary>(
+    `/api/v1/sessions/ui-source/stats?period=${period}&window=${window}`
+  );
+}
