@@ -182,10 +182,18 @@ else
   info "  2) terminal_sessions 행 upsert (pod_name=${TEST_POD_NAME})"
   info "  3) POST /auth/pod-token-exchange"
 
-  # psql 확인
+  # Phase 1c B8: psql 없으면 Python(psycopg2) fallback 사용
+  USE_PY_DB=0
   if ! command -v psql >/dev/null 2>&1; then
-    err "psql 이 필요합니다 (DATABASE_URL 사용 시). brew install libpq 또는 apt-get install postgresql-client"
-    exit 1
+    if python3 -c "import psycopg2" >/dev/null 2>&1; then
+      USE_PY_DB=1
+      info "psql 미설치 → Python(psycopg2) fallback 사용"
+    else
+      err "psql 또는 psycopg2 중 하나가 필요합니다."
+      err "  psql 설치: brew install libpq / apt-get install postgresql-client"
+      err "  또는: pip install psycopg2-binary"
+      exit 1
+    fi
   fi
 
   # ── 랜덤 pod token 생성 (32바이트 hex = 64자) ────────────────────────────────
@@ -198,9 +206,13 @@ print(hashlib.sha256(sys.argv[1].encode()).hexdigest())
 " "$POD_TOKEN_PLAIN")
 
   # ── user_id 조회 ──────────────────────────────────────────────────────────────
-  USER_ID=$(psql "$DATABASE_URL" -t -A -c \
-    "SELECT id FROM users WHERE username = '${TEST_USERNAME}' AND is_approved = true LIMIT 1;" \
-    2>/dev/null | head -1 | tr -d '[:space:]')
+  if [ "$USE_PY_DB" = "1" ]; then
+    USER_ID=$(python3 "$(dirname "$0")/db_helper.py" get-user-id "${TEST_USERNAME}" 2>/dev/null | tr -d '[:space:]')
+  else
+    USER_ID=$(psql "$DATABASE_URL" -t -A -c \
+      "SELECT id FROM users WHERE username = '${TEST_USERNAME}' AND is_approved = true LIMIT 1;" \
+      2>/dev/null | head -1 | tr -d '[:space:]')
+  fi
 
   if [ -z "$USER_ID" ]; then
     err "${TEST_USERNAME} 계정이 users 테이블에 없거나 is_approved=false 입니다."
@@ -219,20 +231,25 @@ print(hashlib.sha256(sys.argv[1].encode()).hexdigest())
   # ── terminal_sessions upsert ─────────────────────────────────────────────────
   # pod-token-exchange 는 pod_token_hash 가 1회 사용 후 Redis blacklist 에 등록됨.
   # 스크립트 재실행 시 새 hash 로 덮어쓰므로 안전하게 재발급 가능.
-  psql "$DATABASE_URL" -q -c "
-    INSERT INTO terminal_sessions
-      (user_id, username, pod_name, pod_status, pod_token_hash,
-       session_type, started_at, created_at, last_active_at)
-    VALUES
-      (${USER_ID}, '${TEST_USERNAME}', '${TEST_POD_NAME}', 'running',
-       '${POD_TOKEN_HASH}', 'workshop', NOW(), NOW(), NOW())
-    ON CONFLICT (pod_name) DO UPDATE SET
-      user_id        = EXCLUDED.user_id,
-      username       = EXCLUDED.username,
-      pod_status     = 'running',
-      pod_token_hash = EXCLUDED.pod_token_hash,
-      last_active_at = NOW();
-  " 2>/dev/null
+  if [ "$USE_PY_DB" = "1" ]; then
+    python3 "$(dirname "$0")/db_helper.py" upsert-session \
+      "${USER_ID}" "${TEST_USERNAME}" "${TEST_POD_NAME}" "${POD_TOKEN_HASH}"
+  else
+    psql "$DATABASE_URL" -q -c "
+      INSERT INTO terminal_sessions
+        (user_id, username, pod_name, pod_status, pod_token_hash,
+         session_type, started_at, created_at, last_active_at)
+      VALUES
+        (${USER_ID}, '${TEST_USERNAME}', '${TEST_POD_NAME}', 'running',
+         '${POD_TOKEN_HASH}', 'workshop', NOW(), NOW(), NOW())
+      ON CONFLICT (pod_name) DO UPDATE SET
+        user_id        = EXCLUDED.user_id,
+        username       = EXCLUDED.username,
+        pod_status     = 'running',
+        pod_token_hash = EXCLUDED.pod_token_hash,
+        last_active_at = NOW();
+    " 2>/dev/null
+  fi
 
   ok "terminal_sessions upsert 완료 (pod_name=${TEST_POD_NAME})"
 
@@ -283,11 +300,16 @@ import hashlib, sys
 print(hashlib.sha256(sys.argv[1].encode()).hexdigest())
 " "$POD_TOKEN_FRESH")
 
-  psql "$DATABASE_URL" -q -c "
-    UPDATE terminal_sessions
-    SET pod_token_hash = '${POD_TOKEN_FRESH_HASH}', last_active_at = NOW()
-    WHERE pod_name = '${TEST_POD_NAME}';
-  " 2>/dev/null
+  if [ "$USE_PY_DB" = "1" ]; then
+    python3 "$(dirname "$0")/db_helper.py" refresh-pod-token \
+      "${TEST_POD_NAME}" "${POD_TOKEN_FRESH_HASH}"
+  else
+    psql "$DATABASE_URL" -q -c "
+      UPDATE terminal_sessions
+      SET pod_token_hash = '${POD_TOKEN_FRESH_HASH}', last_active_at = NOW()
+      WHERE pod_name = '${TEST_POD_NAME}';
+    " 2>/dev/null
+  fi
 
   TEST_POD_TOKEN="$POD_TOKEN_FRESH"
   ok "CP-19 용 신선한 TEST_POD_TOKEN 준비 완료 (미교환 상태)"
