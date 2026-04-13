@@ -151,11 +151,15 @@ spec:
                 secretKeyRef:
                   name: auth-gateway-secrets
                   key: TELEGRAM_BOT_TOKEN
-            - name: REDIS_URL
+            # Phase 1a: rediss:// + auth_token (ElastiCache main_tls)
+            # REDIS_AUTH_TOKEN이 REDIS_URL보다 먼저 정의되어야 K8s env expansion이 정상 동작
+            - name: REDIS_AUTH_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: auth-gateway-secrets
-                  key: REDIS_URL
+                  name: redis-auth-token
+                  key: AUTH_TOKEN
+            - name: REDIS_URL
+              value: "rediss://:$(REDIS_AUTH_TOKEN)@master.bedrock-claude-redis-tls.khpawo.apn2.cache.amazonaws.com:6379/0"
             - name: S3_VAULT_KMS_KEY_ID
               valueFrom:
                 secretKeyRef:
