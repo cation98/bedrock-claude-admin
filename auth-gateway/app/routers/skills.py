@@ -387,6 +387,10 @@ async def approve_skill(
 ):
     """스킬 승인 (관리자).
 
+    SoD(Separation of Duties): 스킬 작성자는 자신이 제출한 스킬을 승인할 수
+    없다. 4-eyes 원칙 위반 시 403 반환. author_username 또는 owner_username 중
+    하나라도 admin 본인 사번과 일치하면 거부.
+
     승인된 스킬은 /approved-contents 엔드포인트를 통해
     새 Pod 생성 시 자동으로 배포됨.
     """
@@ -394,12 +398,27 @@ async def approve_skill(
     if not skill:
         raise HTTPException(status_code=404, detail="Skill not found")
 
+    # SoD: 자기 제출 스킬은 다른 관리자가 승인해야 함 (4-eyes 원칙)
+    admin_sub = admin["sub"]
+    if skill.author_username == admin_sub or skill.owner_username == admin_sub:
+        logger.warning(
+            "SoD violation blocked: admin=%s attempted self-approval on skill=%s (author=%s owner=%s)",
+            admin_sub, skill_id, skill.author_username, skill.owner_username,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "sod_violation",
+                "message": "자신이 제출한 스킬은 승인할 수 없습니다. 다른 관리자에게 승인을 요청하세요.",
+            },
+        )
+
     skill.is_approved = True
-    skill.approved_by = admin["sub"]
+    skill.approved_by = admin_sub
     skill.approved_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(skill)
-    logger.info(f"Skill approved: {skill.title} by {admin['sub']}")
+    logger.info(f"Skill approved: {skill.title} by {admin_sub}")
     return skill
 
 

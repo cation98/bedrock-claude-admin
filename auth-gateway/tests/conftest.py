@@ -50,6 +50,7 @@ from app.routers import bots as bots_router
 from app.routers import surveys as surveys_router
 from app.routers import file_governance as file_governance_router
 from app.routers import file_share as file_share_router
+from app.routers import skills as skills_router
 
 
 # --------------- SQLite JSONB compatibility ---------------
@@ -152,6 +153,7 @@ def _build_test_app() -> FastAPI:
     test_app.include_router(surveys_router.router)
     test_app.include_router(file_governance_router.router)
     test_app.include_router(file_share_router.router)
+    test_app.include_router(skills_router.router)
     return test_app
 
 
