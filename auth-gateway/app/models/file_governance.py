@@ -1,13 +1,32 @@
 """파일 거버넌스 모델 — 사용자 파일의 분류·TTL·상태 관리.
 
 GovernedFile: Pod 에이전트가 보고한 파일 정보 + 자동 분류 결과
+FileClassification / FileStatus: str Enum — 코드 가독성 + 테스트 계약.
 """
 
 from datetime import datetime, timezone
+from enum import Enum
 
 from sqlalchemy import BigInteger, Column, DateTime, Integer, String, Text
 
 from app.core.database import Base
+
+
+class FileClassification(str, Enum):
+    """파일 분류 — classification 컬럼 값 집합."""
+
+    SENSITIVE = "sensitive"
+    NORMAL = "normal"
+    UNKNOWN = "unknown"
+
+
+class FileStatus(str, Enum):
+    """파일 상태 — status 컬럼 값 집합."""
+
+    ACTIVE = "active"
+    QUARANTINE = "quarantine"
+    EXPIRED = "expired"
+    DELETED = "deleted"
 
 
 class GovernedFile(Base):
@@ -21,7 +40,7 @@ class GovernedFile(Base):
     username = Column(String(50), nullable=False, index=True)   # 사용자 사번
     filename = Column(String(255), nullable=False)               # 파일명 (basename)
     file_path = Column(String(500), nullable=False)              # 전체 경로 (고유 식별자)
-    file_type = Column(String(20), default="unknown")            # 확장자 or MIME
+    file_type = Column(String(20), nullable=True)                # 확장자 or MIME (미판별 시 NULL)
     file_size_bytes = Column(BigInteger, default=0)
 
     # 분류 결과

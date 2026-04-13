@@ -1,10 +1,29 @@
 """파일 거버넌스 감사 로그 — 분류·만료 이벤트 기록."""
 
 from datetime import datetime, timezone
+from enum import Enum
 
 from sqlalchemy import Column, DateTime, Integer, String, Text
 
 from app.core.database import Base
+
+
+class FileAuditAction(str, Enum):
+    """파일 감사 로그 액션 유형.
+
+    FileAuditLog.action 컬럼에 저장되는 표준 값. 레거시 raw string
+    ("vault_upload", "vault_download" 등)은 DB가 String(30)이므로 공존 가능 —
+    신규 코드는 이 Enum을 사용하여 오탈자/일관성을 보장.
+    """
+
+    UPLOAD = "upload"
+    CLASSIFY = "classify"
+    DELETE = "delete"
+    SHARE = "share"
+    ACCESS = "access"
+    QUARANTINE = "quarantine"
+    EXPIRE = "expire"
+    EXTEND = "extend"
 
 
 class FileAuditLog(Base):
