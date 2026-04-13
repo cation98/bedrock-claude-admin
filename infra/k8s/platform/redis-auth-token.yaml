@@ -1,0 +1,29 @@
+# redis-auth-token Secret
+#
+# Phase 1a (2026-04-12) 신설. ElastiCache TLS cluster main_tls 인증 토큰 보관.
+# 생성 소스: terraform output -raw redis_tls_auth_token → /tmp/redis-auth-token.txt
+#
+# 수동 생성 (sealed-secret 도입은 Phase 1c 백로그):
+#
+#   TOKEN=$(cat /tmp/redis-auth-token.txt)
+#   kubectl create secret generic redis-auth-token \
+#     --namespace=platform \
+#     --from-literal=AUTH_TOKEN="$TOKEN" \
+#     --dry-run=client -o yaml | kubectl apply -f -
+#
+#   # openwebui ns에도 동일
+#   kubectl create secret generic redis-auth-token \
+#     --namespace=openwebui \
+#     --from-literal=AUTH_TOKEN="$TOKEN" \
+#     --dry-run=client -o yaml | kubectl apply -f -
+#
+# 참조 Deployment (Task 3에서 REDIS_URL secretKeyRef 추가):
+#   - platform/auth-gateway (jti blacklist + pod_token blacklist)
+#   - platform/usage-worker (Redis Stream consumer)
+#   - openwebui/openwebui-pipelines (Stream producer)
+#
+# Rotation 절차:
+#   1. terraform apply (random_password 재생성 — lifecycle ignore_changes는 auth_token만 한정)
+#   2. 새 TOKEN으로 위 kubectl apply 반복
+#   3. ElastiCache는 auth_token 변경 시 replication group update 필요
+#   4. Deployment rollout restart (REDIS_AUTH_TOKEN env 재로드)
