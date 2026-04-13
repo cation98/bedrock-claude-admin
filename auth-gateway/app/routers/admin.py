@@ -605,24 +605,44 @@ def _get_eks_client():
 async def list_nodegroups(
     _admin: dict = Depends(_require_admin),
 ):
-    """EKS 노드그룹 목록 조회."""
+    """EKS 노드그룹 목록 조회.
+
+    개별 nodegroup describe 시 IAM 권한 누락 등 예외가 발생해도 500으로 떨어뜨리지 않고,
+    가능한 그룹만 반환한다. 실패한 그룹은 status='unknown' placeholder로 포함.
+    """
     eks = _get_eks_client()
     cluster = "bedrock-claude-eks"
 
-    ng_names = eks.list_nodegroups(clusterName=cluster)["nodegroups"]
+    try:
+        ng_names = eks.list_nodegroups(clusterName=cluster)["nodegroups"]
+    except Exception as e:
+        logger.error(f"list_nodegroups failed: {e}")
+        return NodeGroupListResponse(groups=[])
+
     groups = []
     for ng_name in ng_names:
-        ng = eks.describe_nodegroup(clusterName=cluster, nodegroupName=ng_name)["nodegroup"]
-        scaling = ng["scalingConfig"]
-        instance_types = ng.get("instanceTypes", ["unknown"])
-        groups.append(NodeGroupInfo(
-            name=ng_name,
-            instance_type=instance_types[0] if instance_types else "unknown",
-            min_size=scaling["minSize"],
-            max_size=scaling["maxSize"],
-            desired_size=scaling["desiredSize"],
-            status=ng["status"],
-        ))
+        try:
+            ng = eks.describe_nodegroup(clusterName=cluster, nodegroupName=ng_name)["nodegroup"]
+            scaling = ng["scalingConfig"]
+            instance_types = ng.get("instanceTypes", ["unknown"])
+            groups.append(NodeGroupInfo(
+                name=ng_name,
+                instance_type=instance_types[0] if instance_types else "unknown",
+                min_size=scaling["minSize"],
+                max_size=scaling["maxSize"],
+                desired_size=scaling["desiredSize"],
+                status=ng["status"],
+            ))
+        except Exception as e:
+            logger.warning(f"describe_nodegroup({ng_name}) failed: {e}")
+            groups.append(NodeGroupInfo(
+                name=ng_name,
+                instance_type="unknown",
+                min_size=0,
+                max_size=0,
+                desired_size=0,
+                status="describe_failed",
+            ))
     return NodeGroupListResponse(groups=groups)
 
 
