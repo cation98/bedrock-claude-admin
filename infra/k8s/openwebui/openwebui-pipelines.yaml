@@ -90,8 +90,11 @@ data:
                 ]
             except Exception as e:
                 print(f"[bedrock_ag_pipe] model list error: {e}")
-                # fallback: EKS 배포 시 알려진 모델 직접 반환
-                return [{"id": "us.anthropic.claude-sonnet-4-6", "name": "Claude Sonnet 4.6"}]
+                # fallback: BAG unreachable 시 알려진 모델 직접 반환 (Phase 1c: Haiku 추가)
+                return [
+                    {"id": "us.anthropic.claude-sonnet-4-6", "name": "Claude Sonnet 4.6"},
+                    {"id": "us.anthropic.claude-haiku-4-5-20251001-v1:0", "name": "Claude Haiku 4.5"},
+                ]
 
         def pipe(
             self,
