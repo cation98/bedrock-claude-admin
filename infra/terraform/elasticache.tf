@@ -170,10 +170,12 @@ output "redis_connection_url" {
 #
 # 주요 변경:
 #   - transit_encryption_enabled: true  → TLS (rediss://)
-#   - at_rest_encryption_enabled: true  → 저장 시 암호화
+#   - at_rest_encryption_enabled: true  → 저장 시 암호화 (AWS 관리 키)
 #   - auth_token: random 64자           → AUTH 명령 기반 인증
 #   - num_cache_clusters: 2             → Multi-AZ HA (automatic failover)
+#   - multi_az_enabled: true            → 다른 AZ에 replica 강제 배치
 #   - node_type: cache.t3.small         → Phase 0 t3.micro보다 여유 용량
+#                                         (Phase 1b cache.t3.medium 업그레이드 예정)
 # =============================================================================
 
 resource "random_password" "redis_auth_token" {
@@ -189,9 +191,11 @@ resource "aws_elasticache_replication_group" "main_tls" {
   replication_group_id = "${var.project_name}-redis-tls"
   description          = "${var.project_name} Redis HA + TLS (Phase 1a)"
 
+  # Phase 1b 업그레이드 예정: cache.t3.medium (jti blacklist + Stream 여유 확보)
   node_type                  = "cache.t3.small"
   num_cache_clusters         = 2
   automatic_failover_enabled = true
+  multi_az_enabled           = true # 다른 AZ 강제 배치 (automatic_failover만으론 불충분)
 
   engine               = "redis"
   engine_version       = "7.1"
@@ -204,10 +208,15 @@ resource "aws_elasticache_replication_group" "main_tls" {
 
   transit_encryption_enabled = true
   at_rest_encryption_enabled = true
-  auth_token                 = random_password.redis_auth_token.result
+  # kms_key_id omitted: AWS 관리 키(aws/elasticache) 사용.
+  # Phase 1b ISMS-P 대응 시 고객 관리 CMK(aws_kms_key.redis)로 전환 예정.
+  auth_token = random_password.redis_auth_token.result
 
-  snapshot_retention_limit = 1
+  # PIPA 최소 보관 기준 7일. Phase 1b에서 30일로 상향 예정.
+  snapshot_retention_limit = 7
   snapshot_window          = "03:00-04:00"
+  # maintenance_window는 snapshot_window(03:00-04:00 UTC)와 겹치지 않게 고정
+  maintenance_window = "sun:05:00-sun:06:00"
 
   tags = {
     Name    = "${var.project_name}-redis-tls"
@@ -215,12 +224,17 @@ resource "aws_elasticache_replication_group" "main_tls" {
     Env     = var.environment
     Service = "sko-claude-ai-agent"
   }
+
+  # auth_token은 수동 rotation 시점에만 교체.
+  # random_password 재생성이 replication group 강제 교체를 유발하지 않도록 lock.
+  lifecycle {
+    ignore_changes = [auth_token]
+  }
 }
 
 output "redis_tls_primary_endpoint" {
   description = "TLS Redis primary endpoint (Phase 1a) — rediss://{endpoint}:6379/0"
   value       = aws_elasticache_replication_group.main_tls.primary_endpoint_address
-  sensitive   = false
 }
 
 output "redis_tls_auth_token" {
