@@ -248,6 +248,8 @@ def create_access_token(
     email: str,
     role: str,
     settings: Optional[Settings] = None,
+    expires_delta: Optional[timedelta] = None,
+    extra_claims: Optional[dict] = None,
 ) -> str:
     """RS256 access JWT 생성.
 
@@ -261,15 +263,24 @@ def create_access_token(
         kid     — 서명 키 ID (JWKS kid와 일치)
         exp     — 만료 timestamp
         iat     — 발급 timestamp
+
+    Args:
+        expires_delta: 지정 시 이 값으로 TTL 오버라이드. None이면 settings 사용.
+            issue #27 Pod 세션용 8h TTL 주입 경로.
+        extra_claims: 페이로드에 병합할 추가 클레임. 예: {"session_type": "pod"}.
+            세션 종류 구분 등 선택적 메타데이터용.
     """
     if settings is None:
         settings = get_settings()
 
     get_private_key()  # kid 초기화 보장
 
-    expire = datetime.now(timezone.utc) + timedelta(
-        minutes=settings.jwt_rs256_access_expire_minutes
-    )
+    if expires_delta is not None:
+        expire = datetime.now(timezone.utc) + expires_delta
+    else:
+        expire = datetime.now(timezone.utc) + timedelta(
+            minutes=settings.jwt_rs256_access_expire_minutes
+        )
     payload = {
         "sub": sub,
         "emp_no": emp_no,
@@ -281,6 +292,8 @@ def create_access_token(
         "exp": expire,
         "iat": datetime.now(timezone.utc),
     }
+    if extra_claims:
+        payload.update(extra_claims)
     return jwt.encode(payload, _private_key_pem_bytes(), algorithm="RS256")
 
 
@@ -290,8 +303,19 @@ def create_refresh_token(
     email: str,
     role: str,
     settings: Optional[Settings] = None,
+    expires_delta: Optional[timedelta] = None,
+    extra_claims: Optional[dict] = None,
 ) -> tuple[str, str]:
     """RS256 refresh JWT 생성.
+
+    Args:
+        sub: JWT subject (사번/username).
+        emp_no: 사번.
+        email: 이메일.
+        role: 권한 역할.
+        settings: 설정 객체. None이면 get_settings() 사용.
+        expires_delta: 커스텀 만료 시간. None이면 settings.jwt_refresh_token_expire_hours 적용.
+        extra_claims: 페이로드에 추가할 임의 클레임 (e.g. {"session_type": "pod"}).
 
     Returns:
         (token_str, jti) — jti는 호출자가 블랙리스트 관리에 활용.
@@ -302,9 +326,12 @@ def create_refresh_token(
     get_private_key()  # kid 초기화 보장
 
     jti = str(uuid.uuid4())
-    expire = datetime.now(timezone.utc) + timedelta(
-        hours=settings.jwt_refresh_token_expire_hours
-    )
+    if expires_delta is not None:
+        expire = datetime.now(timezone.utc) + expires_delta
+    else:
+        expire = datetime.now(timezone.utc) + timedelta(
+            hours=settings.jwt_refresh_token_expire_hours
+        )
     payload = {
         "sub": sub,
         "emp_no": emp_no,
@@ -316,6 +343,8 @@ def create_refresh_token(
         "exp": expire,
         "iat": datetime.now(timezone.utc),
     }
+    if extra_claims:
+        payload.update(extra_claims)
     return jwt.encode(payload, _private_key_pem_bytes(), algorithm="RS256"), jti
 
 
