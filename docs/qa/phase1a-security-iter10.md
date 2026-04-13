@@ -12,7 +12,8 @@
 Phase 1a Batch 1+2+3 구현(Task 1~14) 완료 후 9-checkpoint 내부 security audit 실시.
 `auth-gateway` pod 2개 (676f6f748c-m6x7t, 676f6f748c-zwgqg) 대상으로 live 검증 수행.
 
-**전체 판정**: CONDITIONAL PASS — 7/9 PASS, 2개 non-blocking FAIL (이미지 미재배포)
+**전체 판정**: ~~CONDITIONAL PASS — 7/9 PASS, 2개 non-blocking FAIL (이미지 미재배포)~~  
+**최종 판정 (재배포 후)**: **FULL PASS — 9/9 PASS** (ECR 재빌드 + rollout 완료, 2026-04-13)
 
 ---
 
@@ -177,6 +178,36 @@ audit.py:  usage: audit.py [-h] [--since-days SINCE_DAYS] [--output OUTPUT]
 | `/api/v1/auth/me` 외부 노출 여부 확인 | P1 | ingress에서 외부 접근 시 404 반환 — 의도적 차단인지 ingress 설정 확인 필요 |
 | JWKS rotation 정책 문서화 | P2 | kid deterministic 알고리즘(SHA256 n\|\|e) 운영 문서 작성 |
 | Check 6 재검증 자동화 | P3 | CI/CD에 `curl + grep WWW-Authenticate: Bearer` 게이트 추가 |
+
+---
+
+## Post-rebuild Verification (2026-04-13 KST)
+
+ECR 재빌드 digest: `sha256:9ca9d3a250ce1ac0746d28ceb31d60c3c1a2e6705a18d5a33c536f5ec8585817`  
+Rollout 완료 시각: 2026-04-13 13:34 KST (약 90초 소요)  
+재빌드 베이스 커밋: `9d37060` (feat/phase1a-security-hardening HEAD)
+
+| # | 항목 | 재검증 결과 | 실제 응답 |
+|---|------|-----------|---------|
+| 6 | WWW-Authenticate Bearer | **PASS** | `www-authenticate: Bearer realm="skons.net"` |
+| 7 | 2 replica kid 일치 | **PASS** | pod1=`9973b029e75cbd06`, pod2=`9973b029e75cbd06` |
+
+**최종 판정**: 9/9 PASS — Phase 1a security audit **FULL PASS**
+
+### 재검증 상세
+
+**Check 6** — `curl -sk -i https://claude.skons.net/api/v1/auth/me` (no auth token):
+```
+HTTP/1.1 401 Unauthorized
+www-authenticate: Bearer realm="skons.net"
+```
+
+**Check 7** — 각 replica JWKS `/auth/.well-known/jwks.json` 조회:
+```
+pod/auth-gateway-5c6dc795b4-r5pv2: kid = 9973b029e75cbd06
+pod/auth-gateway-5c6dc795b4-xnj7m: kid = 9973b029e75cbd06
+```
+동일 K8s Secret PEM → SHA256(n||e)[:16] 결정론적 kid 일치 확인.
 
 ---
 
