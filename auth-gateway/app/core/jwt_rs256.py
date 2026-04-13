@@ -118,8 +118,8 @@ def _generate_key() -> rsa.RSAPrivateKey:
     )
 
 
-def _load_key_from_pem(pem: str) -> rsa.RSAPrivateKey:
-    """PEM 문자열에서 RSA private key 로드."""
+def _load_key_from_pem(pem: str | bytes) -> rsa.RSAPrivateKey:
+    """PEM 문자열 또는 bytes에서 RSA private key 로드."""
     return serialization.load_pem_private_key(
         pem.encode() if isinstance(pem, str) else pem,
         password=None,
@@ -133,9 +133,15 @@ def _compute_kid(pem_bytes: bytes) -> str:
     SHA256(n || e)[:16] — JWKS consumer의 kid 불일치 혼란 방지.
 
     Phase 1a security hardening iter#8 권고 반영.
+
+    EC/Ed25519/DH 등 RSA 외 key type은 명시적 TypeError로 reject —
+    silent AttributeError 방지로 운영 debug 가능.
     """
     private = serialization.load_pem_private_key(pem_bytes, password=None)
-    numbers = private.public_key().public_numbers()
+    if not isinstance(private, rsa.RSAPrivateKey):
+        raise TypeError(f"Expected RSA private key, got {type(private).__name__}")
+    public = private.public_key()
+    numbers = public.public_numbers()
     n_bytes = numbers.n.to_bytes((numbers.n.bit_length() + 7) // 8, "big")
     e_bytes = numbers.e.to_bytes((numbers.e.bit_length() + 7) // 8, "big")
     return hashlib.sha256(n_bytes + e_bytes).hexdigest()[:16]

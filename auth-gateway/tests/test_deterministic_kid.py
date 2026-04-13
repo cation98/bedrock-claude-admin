@@ -45,3 +45,18 @@ def test_kid_matches_sha256_n_e():
     e_bytes = numbers.e.to_bytes((numbers.e.bit_length() + 7) // 8, "big")
     expected = hashlib.sha256(n_bytes + e_bytes).hexdigest()[:16]
     assert _compute_kid(pem) == expected, "kid must be SHA256(n||e)[:16]"
+
+
+def test_compute_kid_rejects_non_rsa_key():
+    """EC 키 주입 시 TypeError — silent AttributeError 방지."""
+    import pytest
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    ec_key = ec.generate_private_key(ec.SECP256R1())
+    ec_pem = ec_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    with pytest.raises(TypeError, match="Expected RSA"):
+        _compute_kid(ec_pem)
