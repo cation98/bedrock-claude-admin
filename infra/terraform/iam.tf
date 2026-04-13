@@ -322,6 +322,22 @@ resource "aws_iam_role_policy" "auth_gateway_bedrock_invoke" {
           "bedrock:GetFoundationModel"
         ]
         Resource = "*"
+      },
+      {
+        # admin-dashboard /infra 페이지 + sessions.py _scale_up_nodegroup 용 권한.
+        # 2026-04-13 세션에서 AWS CLI로 우선 put-role-policy 적용 후 tf에도 반영.
+        Sid    = "EKSNodegroupManagement"
+        Effect = "Allow"
+        Action = [
+          "eks:ListNodegroups",
+          "eks:DescribeNodegroup",
+          "eks:UpdateNodegroupConfig",
+          "eks:DescribeCluster"
+        ]
+        Resource = [
+          "arn:aws:eks:ap-northeast-2:680877507363:cluster/bedrock-claude-eks",
+          "arn:aws:eks:ap-northeast-2:680877507363:nodegroup/bedrock-claude-eks/*/*"
+        ]
       }
     ]
   })
