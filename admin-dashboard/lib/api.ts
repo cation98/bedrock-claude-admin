@@ -1096,3 +1096,105 @@ export function sendBroadcast(data: BroadcastRequest): Promise<BroadcastResponse
     body: JSON.stringify(data),
   });
 }
+
+// ---------- Skills Governance ----------
+
+export type SkillApprovalStatus = "pending" | "approved" | "rejected";
+
+export interface SkillPendingProgressItem {
+  skill_id: number;
+  title: string;
+  author_username: string;
+  owner_username: string;
+  category: string;
+  approval_status: SkillApprovalStatus;
+  current_approvals: number;
+  required_approvals: number;
+}
+
+export interface SkillApprover {
+  username: string;
+  approved_at: string;
+}
+
+export interface SkillApprovalProgress {
+  skill_id: number;
+  title: string;
+  author_username: string;
+  owner_username: string;
+  category: string;
+  approval_status: SkillApprovalStatus;
+  required_approvals: number;
+  current_approvers: SkillApprover[];
+  can_current_admin_approve: boolean;
+  sod_blocked: boolean;
+  rejection_reason: string | null;
+}
+
+export interface SkillResponse {
+  skill_id: number;
+  title: string;
+  approval_status: SkillApprovalStatus;
+}
+
+export function fetchPendingSkillsProgress(): Promise<SkillPendingProgressItem[]> {
+  return request<SkillPendingProgressItem[]>("/api/v1/skills/pending-progress");
+}
+
+export function fetchSkillApprovalProgress(skillId: number): Promise<SkillApprovalProgress> {
+  return request<SkillApprovalProgress>(`/api/v1/skills/${skillId}/approval-progress`);
+}
+
+// approve / reject use raw fetch to surface specific 409 / 403 error codes
+export async function approveSkill(skillId: number): Promise<SkillResponse> {
+  const token = getToken();
+  const res = await fetch(`${BASE_URL}/api/v1/skills/${skillId}/approve`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+
+  if (res.status === 401) { logout(); throw new Error("Unauthorized"); }
+
+  const text = await res.text();
+  if (!res.ok) {
+    try {
+      const json = JSON.parse(text);
+      throw new Error(json.error || json.detail || `HTTP ${res.status}`);
+    } catch (e) {
+      if (e instanceof SyntaxError) throw new Error(text || `HTTP ${res.status}`);
+      throw e;
+    }
+  }
+  return JSON.parse(text) as SkillResponse;
+}
+
+export async function rejectSkill(skillId: number, reason: string): Promise<SkillResponse> {
+  const token = getToken();
+  const res = await fetch(
+    `${BASE_URL}/api/v1/skills/${skillId}/reject?reason=${encodeURIComponent(reason)}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    }
+  );
+
+  if (res.status === 401) { logout(); throw new Error("Unauthorized"); }
+
+  const text = await res.text();
+  if (!res.ok) {
+    try {
+      const json = JSON.parse(text);
+      throw new Error(json.error || json.detail || `HTTP ${res.status}`);
+    } catch (e) {
+      if (e instanceof SyntaxError) throw new Error(text || `HTTP ${res.status}`);
+      throw e;
+    }
+  }
+  return JSON.parse(text) as SkillResponse;
+}

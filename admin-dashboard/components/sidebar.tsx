@@ -13,6 +13,7 @@ const NAV_ITEMS = [
   { href: "/audit", label: "감사 로그", icon: "📋" },
   { href: "/security", label: "보안 정책", icon: "🛡" },
   { href: "/data-governance", label: "거버넌스", icon: "📁" },
+  { href: "/skills-governance", label: "스킬 거버넌스", icon: "🎯" },
   { href: "/quota", label: "토큰 정책", icon: "💰" },
   { href: "/usage", label: "토큰 사용량", icon: "📈" },
   { href: "/infra", label: "인프라", icon: "⚙" },
