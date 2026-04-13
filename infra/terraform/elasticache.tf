@@ -161,3 +161,70 @@ output "redis_connection_url" {
   description = "REDIS_URL 값 (redis://endpoint:port/0) — auth-gateway 환경변수에 사용"
   value       = "redis://${aws_elasticache_cluster.redis.cache_nodes[0].address}:${aws_elasticache_cluster.redis.cache_nodes[0].port}/0"
 }
+
+# =============================================================================
+# Phase 1a: ElastiCache HA + TLS Replication Group
+#
+# 기존 Phase 0 standalone(bedrock-claude-redis)과 공존.
+# Task 3에서 K8s manifest를 이 cluster로 포인팅 후 수동 cutover.
+#
+# 주요 변경:
+#   - transit_encryption_enabled: true  → TLS (rediss://)
+#   - at_rest_encryption_enabled: true  → 저장 시 암호화
+#   - auth_token: random 64자           → AUTH 명령 기반 인증
+#   - num_cache_clusters: 2             → Multi-AZ HA (automatic failover)
+#   - node_type: cache.t3.small         → Phase 0 t3.micro보다 여유 용량
+# =============================================================================
+
+resource "random_password" "redis_auth_token" {
+  length  = 64
+  special = false # AWS ElastiCache auth_token: 16-128 chars, no symbols
+  upper   = true
+  lower   = true
+  numeric = true
+}
+
+resource "aws_elasticache_replication_group" "main_tls" {
+  # Phase 1a 신규 HA+TLS. 기존 standalone(aws_elasticache_cluster.redis)와 공존.
+  replication_group_id = "${var.project_name}-redis-tls"
+  description          = "${var.project_name} Redis HA + TLS (Phase 1a)"
+
+  node_type                  = "cache.t3.small"
+  num_cache_clusters         = 2
+  automatic_failover_enabled = true
+
+  engine               = "redis"
+  engine_version       = "7.1"
+  parameter_group_name = "default.redis7"
+
+  port = 6379
+
+  subnet_group_name  = aws_elasticache_subnet_group.redis.name
+  security_group_ids = [aws_security_group.redis.id]
+
+  transit_encryption_enabled = true
+  at_rest_encryption_enabled = true
+  auth_token                 = random_password.redis_auth_token.result
+
+  snapshot_retention_limit = 1
+  snapshot_window          = "03:00-04:00"
+
+  tags = {
+    Name    = "${var.project_name}-redis-tls"
+    Owner   = "N1102359"
+    Env     = var.environment
+    Service = "sko-claude-ai-agent"
+  }
+}
+
+output "redis_tls_primary_endpoint" {
+  description = "TLS Redis primary endpoint (Phase 1a) — rediss://{endpoint}:6379/0"
+  value       = aws_elasticache_replication_group.main_tls.primary_endpoint_address
+  sensitive   = false
+}
+
+output "redis_tls_auth_token" {
+  description = "TLS Redis AUTH token — K8s Secret으로 주입 (plaintext 노출 금지)"
+  value       = random_password.redis_auth_token.result
+  sensitive   = true
+}
