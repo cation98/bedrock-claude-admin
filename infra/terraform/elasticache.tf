@@ -97,70 +97,12 @@ resource "aws_security_group_rule" "eks_to_redis" {
   description              = "EKS nodes to ElastiCache Redis"
 }
 
-# ----- ElastiCache Redis cluster (managed resource — 복구 2026-04-12) -----
+# Phase 0 standalone cluster (bedrock-claude-redis) — Phase 1b (2026-04-13)에서 destroy.
+# 이후 main_tls (aws_elasticache_replication_group.main_tls) 단독 운영.
 #
-# 복구 경위:
-#   이전에는 기존 cluster를 data source로만 참조했음.
-#   terraform apply(drift 동기화) 중 state의 aws_elasticache_cluster.redis resource가
-#   삭제되어 클러스터가 파괴됨. 재생성을 위해 managed resource로 전환.
-#
-# Phase 0 구성 (t3.micro 단일 노드) — 기존과 동일:
-#   - engine: redis 7.x (AWS 기본 최신 7.x 사용)
-#   - node_type: cache.t3.micro (기존 운용 중 사양)
-#   - 단일 노드: num_cache_nodes=1 (Phase 1에서 HA 전환 예정)
-#
-# Phase 1 업그레이드 경로 (TODO):
-#   1. bedrock-claude-redis-ha (t3.medium, 2노드 HA) 신규 생성
-#   2. auth-gateway + Pipelines REDIS_URL 전환
-#   3. 이 resource 삭제
-#
-# K8s 학습 노트: ElastiCache는 EKS Pod에서 직접 접근하는 외부 AWS 서비스.
-#   security_group_ids로 네트워크 접근을 제어하고,
-#   subnet_group_name으로 EKS private subnet에 배치한다.
-
-resource "aws_elasticache_cluster" "redis" {
-  cluster_id           = "${var.project_name}-redis"
-  engine               = "redis"
-  node_type            = "cache.t3.micro"
-  num_cache_nodes      = 1
-  parameter_group_name = "default.redis7"
-  engine_version       = "7.1"
-  port                 = 6379
-
-  # EKS private subnet group — vpc.tf의 eks_private subnet에 배치
-  subnet_group_name = aws_elasticache_subnet_group.redis.name
-  # EKS Pod → Redis 6379 접근 허용 SG
-  security_group_ids = [aws_security_group.redis.id]
-
-  tags = {
-    Name    = "${var.project_name}-redis"
-    Owner   = "N1102359"
-    Env     = var.environment
-    Service = "sko-claude-ai-agent"
-  }
-}
-
-# ----- Outputs -----
-
-output "redis_primary_endpoint" {
-  description = "Redis 엔드포인트 (auth-gateway, Pipelines)"
-  value       = aws_elasticache_cluster.redis.cache_nodes[0].address
-}
-
-output "redis_reader_endpoint" {
-  description = "Redis 엔드포인트 (Phase 0: primary와 동일 — standalone cluster)"
-  value       = aws_elasticache_cluster.redis.cache_nodes[0].address
-}
-
-output "redis_port" {
-  description = "Redis 포트"
-  value       = aws_elasticache_cluster.redis.cache_nodes[0].port
-}
-
-output "redis_connection_url" {
-  description = "REDIS_URL 값 (redis://endpoint:port/0) — auth-gateway 환경변수에 사용"
-  value       = "redis://${aws_elasticache_cluster.redis.cache_nodes[0].address}:${aws_elasticache_cluster.redis.cache_nodes[0].port}/0"
-}
+# 기존 aws_elasticache_cluster.redis (cache.t3.micro, 단일 노드) 및 관련 outputs 삭제.
+# auth-gateway / usage-worker / openwebui-pipelines 는 Phase 1a Task 3 완료 시점에
+# 이미 main_tls (rediss://) 로 전환됨 (refs: 003ecc5, 462e642).
 
 # =============================================================================
 # Phase 1a: ElastiCache HA + TLS Replication Group
