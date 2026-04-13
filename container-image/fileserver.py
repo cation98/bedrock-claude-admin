@@ -1535,6 +1535,12 @@ PORTAL_TEMPLATE = """<!DOCTYPE html>
       <p>전사 공개 앱 둘러보기</p>
       <span class="badge badge-blue">새 탭에서 열기</span>
     </a>
+    <a class="card" href="https://ai-chat.skons.net" target="_blank" style="text-decoration:none;color:inherit" aria-label="AI 채팅 — Open WebUI로 이동">
+      <div class="icon">&#128172;</div>
+      <h2>AI 채팅</h2>
+      <p>Open WebUI 웹 채팅<br>Claude Sonnet 4.6</p>
+      <span class="badge badge-blue">새 탭에서 열기</span>
+    </a>
     <div class="card" style="cursor:pointer" onclick="openHubPage('apps')">
       <div class="icon">&#128202;</div>
       <h2>내 앱 관리</h2>
