@@ -64,7 +64,10 @@ def write_access_cookies(response: Response, access_token: str) -> None:
 
     bedrock_jwt (HttpOnly=True):  서버→브라우저 인증 — JS 접근 불가, XSS 방어
     bedrock_jwt_vis (HttpOnly=False): portal.html getToken() 전용 — JS 읽기 가능
-    SameSite=Lax: SSO 리다이렉트 top-level navigation 호환 유지
+    SameSite=Lax: Phase 1a 재평가 후 유지 결정 — SSO redirect 호환성 우선.
+        Strict 전환 시 sso.skons.net → auth.skons.net 401 loop 가능성.
+        Phase 1c(팀장 50명/외부 SSO 연동) 진입 시 Strict 재평가.
+        결정서: docs/decisions/phase1a-samesite-strict-vs-lax.md
     """
     _shared_opts = dict(
         secure=True,
