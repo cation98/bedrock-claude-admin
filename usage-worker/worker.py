@@ -58,6 +58,13 @@ BATCH_SIZE = 10
 BLOCK_MS = 1000
 RECONNECT_DELAY = 5
 
+# Dead consumer PEL 복구 설정
+# - idle > STALE_IDLE_MS 인 pending 메시지는 dead consumer 소유로 간주해 self로 claim.
+# - k8s Pod 종료 graceful timeout(기본 30s) + 여유 버퍼를 고려해 60s 기본값.
+STALE_IDLE_MS = int(os.environ.get("USAGE_WORKER_STALE_IDLE_MS", 60_000))
+CLAIM_INTERVAL_SEC = int(os.environ.get("USAGE_WORKER_CLAIM_INTERVAL_SEC", 30))
+CLAIM_BATCH = 100
+
 
 # ─── DB 연결 ──────────────────────────────────────────────────────────────────
 
@@ -312,8 +319,18 @@ def run() -> None:
 
 def _consume_loop(r: redis.Redis) -> None:
     _recover_pending(r)
+    last_claim_ts = time.monotonic()
 
     while True:
+        # 주기적으로 dead consumer pending 메시지 claim (at-least-once 보장 강화)
+        if time.monotonic() - last_claim_ts >= CLAIM_INTERVAL_SEC:
+            try:
+                _claim_stale_pending(r)
+            except Exception as e:
+                # claim 실패는 전체 소비 차단하지 않음 — 다음 주기에 재시도
+                logger.warning("Stale claim failed (will retry): %s", e)
+            last_claim_ts = time.monotonic()
+
         results = r.xreadgroup(
             CONSUMER_GROUP,
             CONSUMER_NAME,
@@ -342,6 +359,11 @@ def _consume_loop(r: redis.Redis) -> None:
 
 
 def _recover_pending(r: redis.Redis, max_recover: int = 100) -> None:
+    """이 consumer 자신의 PEL을 읽어 재처리 — 재시작 직후 1회 호출.
+
+    XREADGROUP with id="0"은 자기 consumer의 pending entry만 반환 (redis-py 기준).
+    다른 consumer(특히 죽은 pod)의 pending은 _claim_stale_pending이 담당.
+    """
     results = r.xreadgroup(
         CONSUMER_GROUP,
         CONSUMER_NAME,
@@ -362,6 +384,61 @@ def _recover_pending(r: redis.Redis, max_recover: int = 100) -> None:
             if message_ids:
                 process_batch(r, message_ids, events)
         logger.info("Pending recovery complete")
+
+
+def _claim_stale_pending(r: redis.Redis) -> int:
+    """Dead consumer의 pending 메시지를 self 소유로 transfer 후 처리.
+
+    XAUTOCLAIM(Redis 6.2+)로 idle > STALE_IDLE_MS 인 PEL 엔트리를 cursor 기반
+    순회하며 자신에게 귀속. 재시작 불가한 dead consumer(삭제된 Pod)가 남긴
+    고아 메시지를 복구하여 at-least-once 보장을 유지한다.
+
+    반환: claim 후 성공 처리된 메시지 수.
+    """
+    claimed_total = 0
+    cursor = "0-0"
+    while True:
+        result = r.xautoclaim(
+            STREAM_KEY,
+            CONSUMER_GROUP,
+            CONSUMER_NAME,
+            min_idle_time=STALE_IDLE_MS,
+            start_id=cursor,
+            count=CLAIM_BATCH,
+        )
+        # redis-py 반환: (next_cursor, [(msg_id, fields), ...], [deleted_ids])
+        if isinstance(result, tuple) and len(result) == 3:
+            cursor, messages, _deleted = result
+        else:
+            # 구버전 호환: (next_cursor, messages)
+            cursor, messages = result[0], result[1]
+
+        if not messages:
+            break
+
+        message_ids: list[str] = []
+        events: list[dict] = []
+        for msg_id, fields in messages:
+            ev = parse_event(fields)
+            if ev:
+                events.append(ev)
+                message_ids.append(msg_id)
+            else:
+                # parse 실패 — 재처리해도 실패하므로 ACK하여 PEL 제거
+                r.xack(STREAM_KEY, CONSUMER_GROUP, msg_id)
+                logger.warning("Stale bad event ACKed without processing: id=%s", msg_id)
+
+        if message_ids:
+            process_batch(r, message_ids, events)
+            claimed_total += len(message_ids)
+
+        # cursor "0-0" = 더 스캔할 엔트리 없음
+        if cursor in ("0-0", b"0-0"):
+            break
+
+    if claimed_total:
+        logger.info("Claimed %d stale messages from dead consumers", claimed_total)
+    return claimed_total
 
 
 if __name__ == "__main__":
