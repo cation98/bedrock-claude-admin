@@ -161,3 +161,84 @@ output "redis_connection_url" {
   description = "REDIS_URL 값 (redis://endpoint:port/0) — auth-gateway 환경변수에 사용"
   value       = "redis://${aws_elasticache_cluster.redis.cache_nodes[0].address}:${aws_elasticache_cluster.redis.cache_nodes[0].port}/0"
 }
+
+# =============================================================================
+# Phase 1a: ElastiCache HA + TLS Replication Group
+#
+# 기존 Phase 0 standalone(bedrock-claude-redis)과 공존.
+# Task 3에서 K8s manifest를 이 cluster로 포인팅 후 수동 cutover.
+#
+# 주요 변경:
+#   - transit_encryption_enabled: true  → TLS (rediss://)
+#   - at_rest_encryption_enabled: true  → 저장 시 암호화 (AWS 관리 키)
+#   - auth_token: random 64자           → AUTH 명령 기반 인증
+#   - num_cache_clusters: 2             → Multi-AZ HA (automatic failover)
+#   - multi_az_enabled: true            → 다른 AZ에 replica 강제 배치
+#   - node_type: cache.t3.small         → Phase 0 t3.micro보다 여유 용량
+#                                         (Phase 1b cache.t3.medium 업그레이드 예정)
+# =============================================================================
+
+resource "random_password" "redis_auth_token" {
+  length  = 64
+  special = false # AWS ElastiCache auth_token: 16-128 chars, no symbols
+  upper   = true
+  lower   = true
+  numeric = true
+}
+
+resource "aws_elasticache_replication_group" "main_tls" {
+  # Phase 1a 신규 HA+TLS. 기존 standalone(aws_elasticache_cluster.redis)와 공존.
+  replication_group_id = "${var.project_name}-redis-tls"
+  description          = "${var.project_name} Redis HA + TLS (Phase 1a)"
+
+  # Phase 1b 업그레이드 예정: cache.t3.medium (jti blacklist + Stream 여유 확보)
+  node_type                  = "cache.t3.small"
+  num_cache_clusters         = 2
+  automatic_failover_enabled = true
+  multi_az_enabled           = true # 다른 AZ 강제 배치 (automatic_failover만으론 불충분)
+
+  engine               = "redis"
+  engine_version       = "7.1"
+  parameter_group_name = "default.redis7"
+
+  port = 6379
+
+  subnet_group_name  = aws_elasticache_subnet_group.redis.name
+  security_group_ids = [aws_security_group.redis.id]
+
+  transit_encryption_enabled = true
+  at_rest_encryption_enabled = true
+  # kms_key_id omitted: AWS 관리 키(aws/elasticache) 사용.
+  # Phase 1b ISMS-P 대응 시 고객 관리 CMK(aws_kms_key.redis)로 전환 예정.
+  auth_token = random_password.redis_auth_token.result
+
+  # PIPA 최소 보관 기준 7일. Phase 1b에서 30일로 상향 예정.
+  snapshot_retention_limit = 7
+  snapshot_window          = "03:00-04:00"
+  # maintenance_window는 snapshot_window(03:00-04:00 UTC)와 겹치지 않게 고정
+  maintenance_window = "sun:05:00-sun:06:00"
+
+  tags = {
+    Name    = "${var.project_name}-redis-tls"
+    Owner   = "N1102359"
+    Env     = var.environment
+    Service = "sko-claude-ai-agent"
+  }
+
+  # auth_token은 수동 rotation 시점에만 교체.
+  # random_password 재생성이 replication group 강제 교체를 유발하지 않도록 lock.
+  lifecycle {
+    ignore_changes = [auth_token]
+  }
+}
+
+output "redis_tls_primary_endpoint" {
+  description = "TLS Redis primary endpoint (Phase 1a) — rediss://{endpoint}:6379/0"
+  value       = aws_elasticache_replication_group.main_tls.primary_endpoint_address
+}
+
+output "redis_tls_auth_token" {
+  description = "TLS Redis AUTH token — K8s Secret으로 주입 (plaintext 노출 금지)"
+  value       = random_password.redis_auth_token.result
+  sensitive   = true
+}

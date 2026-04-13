@@ -24,7 +24,7 @@ data "aws_caller_identity" "current" {}
 
 resource "aws_kms_key" "s3_vault" {
   description             = "S3 Vault 버킷 SSE-KMS 암호화 키"
-  deletion_window_in_days = 14   # 삭제 요청 후 14일 유예 (실수 방지)
+  deletion_window_in_days = 30   # Phase 1a 표준: ISMS-P 30일 유예 (실수 방지)
   enable_key_rotation     = true # 연 1회 자동 키 교체 (보안 모범 사례)
   policy = jsonencode({
     Version = "2012-10-17"

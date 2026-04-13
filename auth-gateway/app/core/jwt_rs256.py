@@ -13,6 +13,7 @@
 """
 
 import base64
+import hashlib
 import logging
 import secrets
 import threading
@@ -117,12 +118,33 @@ def _generate_key() -> rsa.RSAPrivateKey:
     )
 
 
-def _load_key_from_pem(pem: str) -> rsa.RSAPrivateKey:
-    """PEM 문자열에서 RSA private key 로드."""
+def _load_key_from_pem(pem: str | bytes) -> rsa.RSAPrivateKey:
+    """PEM 문자열 또는 bytes에서 RSA private key 로드."""
     return serialization.load_pem_private_key(
         pem.encode() if isinstance(pem, str) else pem,
         password=None,
     )
+
+
+def _compute_kid(pem_bytes: bytes) -> str:
+    """공개키 fingerprint 기반 결정론적 kid.
+
+    2 replica가 같은 K8s Secret PEM을 로드하면 동일 kid 반환.
+    SHA256(n || e)[:16] — JWKS consumer의 kid 불일치 혼란 방지.
+
+    Phase 1a security hardening iter#8 권고 반영.
+
+    EC/Ed25519/DH 등 RSA 외 key type은 명시적 TypeError로 reject —
+    silent AttributeError 방지로 운영 debug 가능.
+    """
+    private = serialization.load_pem_private_key(pem_bytes, password=None)
+    if not isinstance(private, rsa.RSAPrivateKey):
+        raise TypeError(f"Expected RSA private key, got {type(private).__name__}")
+    public = private.public_key()
+    numbers = public.public_numbers()
+    n_bytes = numbers.n.to_bytes((numbers.n.bit_length() + 7) // 8, "big")
+    e_bytes = numbers.e.to_bytes((numbers.e.bit_length() + 7) // 8, "big")
+    return hashlib.sha256(n_bytes + e_bytes).hexdigest()[:16]
 
 
 def get_private_key() -> rsa.RSAPrivateKey:
@@ -141,15 +163,26 @@ def get_private_key() -> rsa.RSAPrivateKey:
 
         settings = get_settings()
         if settings.jwt_rs256_private_key:
-            _private_key = _load_key_from_pem(settings.jwt_rs256_private_key)
+            pem_bytes = (
+                settings.jwt_rs256_private_key.encode()
+                if isinstance(settings.jwt_rs256_private_key, str)
+                else settings.jwt_rs256_private_key
+            )
+            _private_key = _load_key_from_pem(pem_bytes)
             logger.info("RS256 private key loaded from jwt_rs256_private_key env var.")
         else:
             _private_key = _generate_key()
+            pem_bytes = _private_key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption(),
+            )
             logger.warning(
                 "jwt_rs256_private_key not set — ephemeral RSA key generated. "
                 "NOT suitable for multi-replica production deployment."
             )
-        _key_id = secrets.token_hex(8)
+        # kid = SHA256(n||e)[:16] — replica 간 결정론적 일치 보장 (Phase 1a iter#8)
+        _key_id = _compute_kid(pem_bytes)
         return _private_key
 
 

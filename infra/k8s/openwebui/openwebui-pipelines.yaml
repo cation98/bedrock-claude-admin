@@ -236,6 +236,8 @@ data:
             self._redis: Optional[aioredis.Redis] = None
 
         async def on_startup(self):
+            # localhost fallback — REDIS_URL 미설정 시만 사용 (정상 운영에서는 도달하지 않음)
+            # Phase 1a 이후 REDIS_URL은 rediss://:<auth_token>@master.bedrock-claude-redis-tls... 형태로 주입됨
             redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
             self._redis = aioredis.from_url(redis_url, decode_responses=True)
             print(f"[budget_gate] Connected to Redis")
@@ -342,6 +344,8 @@ data:
             self._redis: Optional[aioredis.Redis] = None
 
         async def on_startup(self):
+            # localhost fallback — REDIS_URL 미설정 시만 사용 (정상 운영에서는 도달하지 않음)
+            # Phase 1a 이후 REDIS_URL은 rediss://:<auth_token>@master.bedrock-claude-redis-tls... 형태로 주입됨
             redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
             self._redis = aioredis.from_url(redis_url, decode_responses=True)
             print(f"[usage_emit] Connected to Redis, stream={self.valves.stream_key}")
@@ -479,12 +483,16 @@ spec:
                   name: pipelines-secret
                   key: PIPELINES_API_KEY
 
-            # Redis URL (budget gate + usage emit용)
-            - name: REDIS_URL
+            # Phase 1a: rediss:// + auth_token (ElastiCache main_tls)
+            # REDIS_AUTH_TOKEN이 REDIS_URL보다 먼저 정의되어야 K8s env expansion이 정상 동작
+            - name: REDIS_AUTH_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: pipelines-secret
-                  key: REDIS_URL
+                  name: redis-auth-token
+                  key: AUTH_TOKEN
+            # Redis URL (budget gate + usage emit용)
+            - name: REDIS_URL
+              value: "rediss://:$(REDIS_AUTH_TOKEN)@master.bedrock-claude-redis-tls.khpawo.apn2.cache.amazonaws.com:6379/0"
 
             # Platform DB URL (Phase 2 budget reservation 고도화용, Phase 0 optional)
             - name: PLATFORM_DB_URL
