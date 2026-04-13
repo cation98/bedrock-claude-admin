@@ -16,9 +16,10 @@ import logging
 import secrets
 import time
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 
 import boto3
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from kubernetes import client as k8s_client
 from sqlalchemy.orm import Session
 
@@ -33,6 +34,7 @@ from app.schemas.session import (
     SessionResponse,
     UiSourceRequest,
 )
+from app.schemas.ui_split import UiSplitBucket, UiSplitSummary
 from app.schemas.user import POD_TTL_SECONDS_MAP
 from app.services.k8s_service import K8sService, K8sServiceError
 
@@ -740,6 +742,120 @@ async def record_ui_source(
     db.add(event)
     db.commit()
     return {"ok": True, "source": body.source}
+
+
+def _add_months(dt: datetime, n: int) -> datetime:
+    """n개월 후(양수) 또는 전(음수)의 달 첫날 UTC datetime 반환.
+
+    dateutil 없이 순수 산술로 처리.
+    """
+    total = dt.year * 12 + (dt.month - 1) + n
+    year, month_idx = divmod(total, 12)
+    return dt.replace(year=year, month=month_idx + 1, day=1)
+
+
+def _naive(dt: datetime) -> datetime:
+    """timezone 정보를 제거하여 naive UTC datetime으로 반환.
+
+    SQLite는 timezone-aware datetime을 문자열 비교로 처리하므로
+    SQL 필터 및 Python 비교에서 naive datetime을 사용한다.
+    """
+    if dt.tzinfo is not None:
+        return dt.replace(tzinfo=None)
+    return dt
+
+
+@router.get("/ui-source/stats", response_model=UiSplitSummary)
+async def get_ui_source_stats(
+    period: Literal["weekly", "monthly"] = Query(default="weekly"),
+    window: int = Query(default=8, ge=1, le=52),
+    _admin: dict = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """UI Split 주간/월간 집계 (관리자 전용) — T23.
+
+    Args:
+        period: "weekly" (ISO 월요일 기준) 또는 "monthly"
+        window: 반환할 최근 버킷 개수 (1~52, 기본 8)
+
+    Returns:
+        UiSplitSummary: 버킷 목록(오래된 것 → 최신) + 전체 기간 요약
+    """
+    from app.models.ui_source_event import UiSourceEvent
+
+    now = datetime.now(timezone.utc)
+
+    # ── 버킷 경계 목록 생성 (오래된 것 → 최신) ──────────────────────────────
+    if period == "weekly":
+        # 이번 주 월요일 00:00 UTC
+        start_of_current = (now - timedelta(days=now.weekday())).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        bucket_boundaries = [
+            (
+                start_of_current - timedelta(weeks=i),
+                start_of_current - timedelta(weeks=i) + timedelta(weeks=1),
+            )
+            for i in range(window - 1, -1, -1)
+        ]
+    else:  # monthly
+        # 이번 달 1일 00:00 UTC
+        start_of_current = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        bucket_boundaries = [
+            (
+                _add_months(start_of_current, -i),
+                _add_months(start_of_current, -i + 1),
+            )
+            for i in range(window - 1, -1, -1)
+        ]
+
+    # ── 전체 범위 이벤트 일괄 조회 (SQLite 호환: naive UTC 사용) ─────────────
+    oldest_start = _naive(bucket_boundaries[0][0])
+    newest_end = _naive(bucket_boundaries[-1][1])
+
+    events = (
+        db.query(UiSourceEvent)
+        .filter(
+            UiSourceEvent.recorded_at >= oldest_start,
+            UiSourceEvent.recorded_at < newest_end,
+        )
+        .all()
+    )
+
+    # ── 버킷별 집계 ──────────────────────────────────────────────────────────
+    buckets: list[UiSplitBucket] = []
+    for bs, be in bucket_boundaries:
+        bs_n = _naive(bs)
+        be_n = _naive(be)
+        bucket_events = [
+            e for e in events
+            if bs_n <= _naive(e.recorded_at) < be_n
+        ]
+        buckets.append(
+            UiSplitBucket(
+                period_start=bs_n.date(),
+                period_end=be_n.date(),
+                webchat_users=len({e.username for e in bucket_events if e.source == "webchat"}),
+                console_users=len({e.username for e in bucket_events if e.source == "console"}),
+                total_events=len(bucket_events),
+            )
+        )
+
+    # ── 전체 기간 요약 ────────────────────────────────────────────────────────
+    all_webchat = {e.username for e in events if e.source == "webchat"}
+    all_console = {e.username for e in events if e.source == "console"}
+    both = all_webchat & all_console
+
+    return UiSplitSummary(
+        period=period,
+        window=window,
+        webchat_total_users=len(all_webchat),
+        console_total_users=len(all_console),
+        both_users=len(both),
+        webchat_only_users=len(all_webchat - all_console),
+        console_only_users=len(all_console - all_webchat),
+        buckets=buckets,
+    )
 
 
 @router.delete("/", response_model=SessionResponse)
