@@ -97,6 +97,31 @@ class SkillInstall(Base):
     uninstalled_at = Column(DateTime(timezone=True))
 
 
+class SkillApprovalPolicy(Base):
+    """카테고리별 N-of-M 승인 정책 (Phase 2 E).
+
+    행(category) 당 required_approvals 개 이상의 distinct 관리자 APPROVE 이벤트가
+    누적되어야 approval_status='approved'로 전환. 미정의 카테고리는 DEFAULT_REQUIRED(1).
+    """
+
+    __tablename__ = "skill_approval_policies"
+
+    category = Column(String(50), primary_key=True)  # shared_skills.category와 동일 값
+    required_approvals = Column(Integer, nullable=False, default=1)
+    description = Column(Text, nullable=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+
 class SkillGovernanceEvent(Base):
     """스킬 승인/반려/삭제 이력 감사 (Phase 2 B).
 
