@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# =============================================================================
+# Conventional Commit Lint Hook (Phase 1c Backlog B7)
+# =============================================================================
+# 형식: <type>(<scope>): <subject>
+#   type: feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert
+#   scope: 선택 (e.g. phase1a, B5, auth-gateway)
+#   subject: 설명
+#
+# Merge commit / revert commit / fixup은 bypass.
+#
+# 설치:
+#   git config core.hooksPath .githooks
+# =============================================================================
+
+set -euo pipefail
+
+msg_file="$1"
+first_line=$(head -n 1 "$msg_file")
+
+# Merge/revert/fixup bypass
+case "$first_line" in
+    Merge*|Revert*|"fixup!"*|"squash!"*|"amend!"*)
+        exit 0 ;;
+esac
+
+# Conventional commit 패턴
+pattern='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-zA-Z0-9_/.\-]+\))?!?: .+'
+
+if ! echo "$first_line" | grep -Eq "$pattern"; then
+    echo "ERROR: commit message가 conventional commit 형식이 아님" >&2
+    echo "" >&2
+    echo "받은 메시지: $first_line" >&2
+    echo "" >&2
+    echo "기대 형식: <type>(<scope>): <subject>" >&2
+    echo "  예시: feat(auth): add JWT refresh daemon" >&2
+    echo "  허용 type: feat fix docs style refactor perf test build ci chore revert" >&2
+    exit 1
+fi
+
+exit 0
