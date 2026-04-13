@@ -46,8 +46,16 @@ if [ -n "${ANTHROPIC_BASE_URL:-}" ] && [ -n "${SECURE_POD_TOKEN:-}" ] && [ -n "$
 
     if [ -n "${_JWT_RESPONSE}" ]; then
         _ACCESS_TOKEN=$(echo "${_JWT_RESPONSE}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('access_token',''))" 2>/dev/null || echo "")
+        _REFRESH_TOKEN=$(echo "${_JWT_RESPONSE}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('refresh_token',''))" 2>/dev/null || echo "")
         if [ -n "${_ACCESS_TOKEN}" ]; then
             export ANTHROPIC_AUTH_TOKEN="${_ACCESS_TOKEN}"
+            # Token refresh daemon이 파일을 통해 새 토큰을 전달 — claude-wrapper가 이 파일을 읽음
+            echo "${_ACCESS_TOKEN}" > /home/node/.claude-token
+            chmod 600 /home/node/.claude-token
+            if [ -n "${_REFRESH_TOKEN}" ]; then
+                echo "${_REFRESH_TOKEN}" > /home/node/.claude-refresh-token
+                chmod 600 /home/node/.claude-refresh-token
+            fi
             # ANTHROPIC_API_KEY가 이미 설정돼 있으면 제거 — Claude Code가 이를 우선 감지해 프롬프트 띄움
             unset ANTHROPIC_API_KEY 2>/dev/null || true
             unset CLAUDE_CODE_USE_BEDROCK 2>/dev/null || true
@@ -59,7 +67,61 @@ if [ -n "${ANTHROPIC_BASE_URL:-}" ] && [ -n "${SECURE_POD_TOKEN:-}" ] && [ -n "$
         echo "  Proxy:    pod-token-exchange 실패 — Bedrock 직접 경로 유지"
     fi
 
-    unset _JWT_RESPONSE _ACCESS_TOKEN _AG_POD_NAME
+    unset _JWT_RESPONSE _ACCESS_TOKEN _REFRESH_TOKEN _AG_POD_NAME
+fi
+
+# ---------------------------------------------------------------------------
+# T20 Phase 1c: Background token refresh daemon
+# 목적: JWT access_token TTL(15분) 만료 전 자동 refresh. 장시간 CLI 세션 유지.
+# 동작: 600초(10분) 주기 — 15분 TTL 대비 5분 여유.
+#   1. ~/.claude-refresh-token 읽음
+#   2. POST /auth/refresh with body={"refresh_token": "..."}
+#   3. 응답의 새 access_token + refresh_token을 파일에 기록
+#   4. 연속 3회 실패 시 경고 로그 (daemon 중단 안 함)
+# 파일 기반 교환: bash export는 자식 프로세스로 전파 안 되므로 파일로 전달.
+# Claude Code 프로세스는 기존 토큰 유지 — rotation 중에도 호출 영향 없음
+# (auth-gateway는 블랙리스트된 jti만 차단, access_token은 TTL까지 유효).
+# ---------------------------------------------------------------------------
+if [ -n "${AUTH_GATEWAY_URL:-}" ] && [ -f /home/node/.claude-refresh-token ]; then
+    (
+        _FAIL_COUNT=0
+        while true; do
+            sleep 600
+            _REFRESH=$(cat /home/node/.claude-refresh-token 2>/dev/null)
+            if [ -z "${_REFRESH}" ]; then
+                continue
+            fi
+            _RESP=$(curl -sf -X POST \
+                "${AUTH_GATEWAY_URL}/auth/refresh" \
+                -H "Content-Type: application/json" \
+                -d "{\"refresh_token\":\"${_REFRESH}\"}" \
+                --max-time 10 2>/dev/null || echo "")
+            if [ -n "${_RESP}" ]; then
+                _NEW_ACCESS=$(echo "${_RESP}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('access_token',''))" 2>/dev/null || echo "")
+                _NEW_REFRESH=$(echo "${_RESP}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('refresh_token',''))" 2>/dev/null || echo "")
+                if [ -n "${_NEW_ACCESS}" ]; then
+                    echo "${_NEW_ACCESS}" > /home/node/.claude-token
+                    chmod 600 /home/node/.claude-token
+                    if [ -n "${_NEW_REFRESH}" ]; then
+                        echo "${_NEW_REFRESH}" > /home/node/.claude-refresh-token
+                        chmod 600 /home/node/.claude-refresh-token
+                    fi
+                    _FAIL_COUNT=0
+                    # stdout 로그는 /dev/pts 가 아닌 ttyd 로그로 남김
+                    echo "[$(date '+%H:%M:%S')] Token refreshed" >> /tmp/token-refresh.log
+                else
+                    _FAIL_COUNT=$((_FAIL_COUNT + 1))
+                fi
+            else
+                _FAIL_COUNT=$((_FAIL_COUNT + 1))
+            fi
+            if [ "${_FAIL_COUNT}" -ge 3 ]; then
+                echo "[$(date '+%H:%M:%S')] WARNING: token refresh failed 3 times" >> /tmp/token-refresh.log
+                _FAIL_COUNT=0
+            fi
+        done
+    ) &
+    echo "  Token refresh daemon started (600s interval)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -533,6 +595,17 @@ cat > /home/node/.local/bin/claude-wrapper << 'WRAPPER'
 #!/bin/bash
 # Source profile for PATH and env vars
 export PATH="/home/node/.local/bin:$PATH"
+
+# T20 Phase 1c: 최신 access_token을 파일에서 로드 (refresh daemon이 갱신)
+# ttyd가 재연결 또는 사용자가 claude를 재시작할 때마다 실행되므로
+# 최신 토큰이 ANTHROPIC_AUTH_TOKEN에 주입됨.
+if [ -f /home/node/.claude-token ]; then
+    _FRESH_TOKEN=$(cat /home/node/.claude-token 2>/dev/null)
+    if [ -n "${_FRESH_TOKEN}" ]; then
+        export ANTHROPIC_AUTH_TOKEN="${_FRESH_TOKEN}"
+    fi
+    unset _FRESH_TOKEN
+fi
 
 echo ""
 echo "  Claude Code를 시작합니다..."

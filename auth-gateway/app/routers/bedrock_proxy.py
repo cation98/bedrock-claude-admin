@@ -33,7 +33,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
 from app.core.config import Settings, get_settings
+from app.core.database import SessionLocal
 from app.core.security import get_current_user
+from app.routers.admin import _check_user_quota
 
 router = APIRouter(prefix="/v1", tags=["bedrock-proxy"])
 logger = logging.getLogger(__name__)
@@ -129,6 +131,27 @@ async def messages(
     인증: get_current_user() — Bearer 헤더 또는 bedrock_jwt 쿠키.
     """
     username = current_user.get("sub", "unknown")
+
+    # CP-20 Budget Gate: quota 초과 시 429 차단.
+    # quota 미배정 사용자는 통과(세션 생성 시 정책 배정이 정식 경로).
+    _db = SessionLocal()
+    try:
+        quota_info = _check_user_quota(_db, username)
+    finally:
+        _db.close()
+    if quota_info and quota_info["is_exceeded"] and not quota_info["is_unlimited"]:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "error": "token_quota_exceeded",
+                "cost_limit_usd": quota_info["cost_limit_usd"],
+                "current_usage_usd": quota_info["current_usage_usd"],
+                "refresh_cycle": quota_info["refresh_cycle"],
+                "cycle_start": quota_info["cycle_start"],
+                "cycle_end": quota_info["cycle_end"],
+            },
+        )
+
     body = await request.json()
 
     model_input = body.get("model", "claude-sonnet-4-6")
