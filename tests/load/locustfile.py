@@ -14,6 +14,8 @@
 
 환경변수:
   LOCUST_TEST_TOKEN: 테스트용 JWT (issue-test-tokens.sh 로 발급)
+  LOCUST_AUTH_MODE: cookie (기본) | bearer — 기본은 브라우저 동작 재현(bedrock_jwt 쿠키).
+                   Pod 내부/CLI 시뮬레이션이 필요하면 bearer로 전환.
   LOCUST_WEBUI_HOST: 미사용 (Phase 0 호환 유지)
   LOCUST_AG_HOST: 미사용
 
@@ -25,6 +27,10 @@ Phase 1b SLO:
 Phase 0 SLO (레거시 참고):
   - p95 응답시간 < 3s (Open WebUI AI 응답 포함)
   - 에러율 < 1%
+
+Phase 1 백로그 #16:
+  portal.html은 apiFetch()에서 credentials:'include' + Authorization 헤더 제거를
+  사용하므로 부하 테스트도 기본을 쿠키 기반(bedrock_jwt)으로 통일한다.
 """
 
 import os
@@ -33,6 +39,7 @@ from locust import HttpUser, task, between, events
 
 
 TEST_TOKEN = os.environ.get("LOCUST_TEST_TOKEN", "")
+AUTH_MODE = os.environ.get("LOCUST_AUTH_MODE", "cookie").lower()
 
 # Phase 1b SLO 기준 (ms)
 PHASE1B_P95_SLO = 150
@@ -44,9 +51,19 @@ class AuthGatewayUser(HttpUser):
     wait_time = between(2, 8)  # 실제 사용자 패턴: 2~8초 사이 요청 간격
 
     def on_start(self):
-        """세션 시작: JWT 획득."""
+        """세션 시작: portal.html 동작 재현.
+
+        - cookie 모드(기본): bedrock_jwt 쿠키 주입 → 매 요청에 자동 포함.
+          security.get_current_user가 bedrock_jwt 쿠키를 우선 읽는다.
+        - bearer 모드: Authorization 헤더 fallback (Pod 내부 / CLI 시나리오).
+        """
         self.token = TEST_TOKEN
-        self.headers = {"Authorization": f"Bearer {self.token}"}
+        if AUTH_MODE == "bearer":
+            self.headers = {"Authorization": f"Bearer {self.token}"}
+        else:
+            self.headers = {}
+            # Locust HttpUser는 requests.Session 기반 — cookies가 모든 요청에 자동 전송됨
+            self.client.cookies.set("bedrock_jwt", self.token)
 
     @task(5)
     def health_check(self):
