@@ -2205,7 +2205,9 @@ async def approve_app(
     db.refresh(app)
 
     # custom 모드: Ingress 재생성 (auth annotation 제거 → 앱 자체 로그인이 전담)
+    # 실패 시 DB 상태를 pending_approval로 롤백 (ingress 없이 running이면 도달 불가 + 승인 표기 불일치).
     if app.auth_mode == "custom" and app.pod_name:
+        ingress_ok = False
         try:
             from app.services.app_deploy_service import AppDeployService
             from kubernetes.client.exceptions import ApiException
@@ -2228,11 +2230,24 @@ async def approve_app(
                 deploy_svc._create_app_ingress(
                     app.pod_name, slug, app.app_name, app.app_port, auth_mode="custom"
                 )
+                ingress_ok = True
                 logger.info(f"Ingress recreated for approved custom app {app.pod_name}")
             else:
                 logger.error(f"approve_app: no slug for owner {app.owner_username}")
         except Exception as e:
             logger.error(f"approve_app: ingress recreate failed for {app.pod_name}: {e}")
+
+        if not ingress_ok:
+            # 롤백: 승인 취소하고 pending_approval 복귀. 관리자에게 500 알림.
+            app.status = "pending_approval"
+            app.approved_by = None
+            app.approved_at = None
+            app.updated_at = datetime.now(timezone.utc)
+            db.commit()
+            raise HTTPException(
+                status_code=500,
+                detail="Ingress 재생성 실패 — 승인이 롤백되었습니다. 앱 상태를 확인 후 재시도하세요.",
+            )
 
     logger.info(
         f"App approved by {admin_username}: "

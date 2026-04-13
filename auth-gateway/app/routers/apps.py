@@ -1047,6 +1047,10 @@ async def suspend_app(
     username = current_user["sub"]
     app = _get_owned_app(app_name, username, db)
 
+    # 승인 우회 차단: pending_approval/rejected 앱은 회수할 수 없다.
+    # (pending_approval → suspend → resume 3단계로 승인 없이 running 획득 방지)
+    if app.status not in ("running", "suspended"):
+        raise HTTPException(status_code=400, detail="실행 중인 앱만 회수할 수 있습니다")
     if app.status == "suspended":
         raise HTTPException(status_code=400, detail="이미 회수된 앱입니다")
 
