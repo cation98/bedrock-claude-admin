@@ -31,7 +31,14 @@ from app.models.skill import (
     SkillInstall,
 )
 from app.models.user import User
-from app.schemas.skill import SkillListResponse, SkillResponse, SkillSubmitRequest
+from app.schemas.skill import (
+    SkillApprovalProgress,
+    SkillApproverEntry,
+    SkillListResponse,
+    SkillPendingProgressItem,
+    SkillResponse,
+    SkillSubmitRequest,
+)
 
 router = APIRouter(prefix="/api/v1/skills", tags=["skills"])
 logger = logging.getLogger(__name__)
@@ -187,6 +194,36 @@ async def list_pending_skills(
         .all()
     )
     return SkillListResponse(total=len(skills), skills=skills)
+
+
+@router.get("/pending-progress", response_model=list[SkillPendingProgressItem])
+async def list_pending_progress(
+    admin: dict = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """approval_status='pending' 스킬 목록과 각 항목의 승인 진행률 반환 (관리자).
+
+    Admin UI 대시보드에서 "몇 명이 승인했는지 / 몇 명이 필요한지"를 한눈에 보여준다.
+    """
+    skills = (
+        db.query(SharedSkill)
+        .filter(SharedSkill.approval_status == SkillApprovalStatus.PENDING.value)
+        .order_by(SharedSkill.created_at.desc())
+        .all()
+    )
+    return [
+        SkillPendingProgressItem(
+            skill_id=s.id,
+            title=s.title,
+            author_username=s.author_username,
+            owner_username=s.owner_username,
+            category=s.category,
+            approval_status=s.approval_status,
+            current_approvals=_count_distinct_approvers(db, s.id),
+            required_approvals=_required_approvals(db, s.category),
+        )
+        for s in skills
+    ]
 
 
 @router.get("/store")
@@ -556,6 +593,70 @@ async def reject_skill(
     db.refresh(skill)
     logger.info(f"Skill rejected: {skill.title} by {admin_sub} reason={reason!r}")
     return skill
+
+
+@router.get("/{skill_id}/approval-progress", response_model=SkillApprovalProgress)
+async def get_approval_progress(
+    skill_id: int,
+    admin: dict = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """특정 스킬의 승인 진행 상태 상세 조회 (관리자).
+
+    Admin UI에서 "현재 몇 명이 승인했는지, 내가 승인 가능한지, SoD 차단인지"를
+    한 요청으로 판단할 수 있도록 필요한 정보를 모두 반환한다.
+    """
+    skill = db.query(SharedSkill).filter(SharedSkill.id == skill_id).first()
+    if not skill:
+        raise HTTPException(status_code=404, detail="Skill not found")
+
+    # APPROVE 이벤트를 created_at 오름차순으로 조회 → distinct actor 순서 보장
+    approve_events = (
+        db.query(SkillGovernanceEvent)
+        .filter(
+            SkillGovernanceEvent.skill_id == skill_id,
+            SkillGovernanceEvent.event_type == SkillGovernanceEventType.APPROVE.value,
+        )
+        .order_by(SkillGovernanceEvent.created_at)
+        .all()
+    )
+
+    # distinct actor 순서 유지 (중복 actor는 첫 번째 이벤트만 포함)
+    seen: set[str] = set()
+    current_approvers: list[SkillApproverEntry] = []
+    for event in approve_events:
+        if event.actor_username not in seen:
+            seen.add(event.actor_username)
+            current_approvers.append(
+                SkillApproverEntry(
+                    username=event.actor_username,
+                    approved_at=event.created_at,
+                )
+            )
+
+    admin_sub = admin["sub"]
+    sod_blocked = (skill.author_username == admin_sub or skill.owner_username == admin_sub)
+    already_approved = _admin_already_approved(db, skill.id, admin_sub)
+
+    can_current_admin_approve = (
+        skill.approval_status == SkillApprovalStatus.PENDING.value
+        and not sod_blocked
+        and not already_approved
+    )
+
+    return SkillApprovalProgress(
+        skill_id=skill.id,
+        title=skill.title,
+        author_username=skill.author_username,
+        owner_username=skill.owner_username,
+        category=skill.category,
+        approval_status=skill.approval_status,
+        required_approvals=_required_approvals(db, skill.category),
+        current_approvers=current_approvers,
+        can_current_admin_approve=can_current_admin_approve,
+        sod_blocked=sod_blocked,
+        rejection_reason=skill.rejection_reason,
+    )
 
 
 @router.delete("/{skill_id}")

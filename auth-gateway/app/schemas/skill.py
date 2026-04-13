@@ -68,3 +68,46 @@ class SkillResponse(BaseModel):
 class SkillListResponse(BaseModel):
     total: int
     skills: list[SkillResponse]
+
+
+# ==================== 승인 진행률 스키마 (Phase 2 Admin UI) ====================
+
+
+class SkillApproverEntry(BaseModel):
+    """단일 승인자 정보 (username + 승인 시각)."""
+
+    username: str
+    approved_at: datetime
+
+
+class SkillApprovalProgress(BaseModel):
+    """특정 스킬의 승인 진행 상태 상세 (관리자용).
+
+    can_current_admin_approve: 현재 요청 관리자가 지금 승인 버튼을 누를 수 있는지.
+    sod_blocked: SoD 위반(자기 스킬) 여부.
+    """
+
+    skill_id: int
+    title: str | None
+    author_username: str | None
+    owner_username: str | None
+    category: str | None
+    approval_status: str
+    required_approvals: int
+    current_approvers: list[SkillApproverEntry]
+    can_current_admin_approve: bool
+    sod_blocked: bool
+    rejection_reason: str | None
+
+
+class SkillPendingProgressItem(BaseModel):
+    """pending 스킬 목록의 단일 항목 (관리자 대시보드용)."""
+
+    skill_id: int
+    title: str | None
+    author_username: str | None
+    owner_username: str | None
+    category: str | None
+    approval_status: str
+    current_approvals: int
+    required_approvals: int
