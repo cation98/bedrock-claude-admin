@@ -491,7 +491,7 @@ async def webui_verify(
 ):
     """nginx ingress auth_request 콜백 — Open WebUI SSO 연동.
 
-    NGINX Ingress가 chat.skons.net 요청마다 이 엔드포인트를 서브요청으로 호출.
+    NGINX Ingress가 ai-chat.skons.net 요청마다 이 엔드포인트를 서브요청으로 호출.
     200 반환 시 X-SKO-Email/X-SKO-User-Id 헤더를 Open WebUI에 전달.
     401 반환 시 NGINX가 로그인 페이지로 리다이렉트.
 
@@ -504,7 +504,7 @@ async def webui_verify(
     ingress.yaml 설정 참고:
       nginx.ingress.kubernetes.io/auth-url: "http://auth-gateway.platform.svc.cluster.local/api/v1/auth/webui-verify"
       nginx.ingress.kubernetes.io/auth-response-headers: "X-SKO-Email,X-SKO-User-Id"
-      nginx.ingress.kubernetes.io/auth-signin: "https://portal.skons.net/login?redirect=$escaped_request_uri"
+      nginx.ingress.kubernetes.io/auth-signin: "https://claude.skons.net/login?redirect=$escaped_request_uri"
 
     [Phase 1c Backlog B6] Redis revocation 체크 활성화:
       50명 규모에서 Redis RTT(≈1ms)는 Ingress 전체 응답성에 무시할 수준.

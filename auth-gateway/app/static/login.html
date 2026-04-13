@@ -455,7 +455,7 @@
 
             // T10: bedrock_ prefix 쿠키 전환 (dual-write — claude_token은 이전 버전 호환용)
             // api 팀이 T4에서 bedrock_jwt 확정 후 claude_token 라인 제거 예정
-            // Domain=.skons.net: ai.skons.net / chat.skons.net 공유 세션 요건
+            // Domain=.skons.net: ai.skons.net / ai-chat.skons.net / claude.skons.net 공유 세션 요건
             const _cookieAttrs = 'path=/; max-age=28800; SameSite=Lax; Secure; Domain=.skons.net';
             document.cookie = `bedrock_jwt=${token}; ${_cookieAttrs}`;
             document.cookie = `claude_token=${token}; ${_cookieAttrs}`;  // legacy: T10 전환 완료 후 제거

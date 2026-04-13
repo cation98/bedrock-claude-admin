@@ -793,16 +793,16 @@
             <div class="hub-heading">서비스</div>
             <div class="hub-tiles" role="list">
 
-                <!-- 웹 채팅 — Open WebUI (chat.skons.net) -->
+                <!-- AI 채팅 — Open WebUI (ai-chat.skons.net; 이슈 #30) -->
                 <a class="hub-tile hub-tile--webchat"
                    id="tileChatWebui"
-                   href="https://chat.skons.net"
+                   href="https://ai-chat.skons.net"
                    role="listitem"
                    data-source="webchat"
-                   aria-label="웹 채팅 — Open WebUI로 이동">
+                   aria-label="AI 채팅 — Open WebUI로 이동">
                     <span class="hub-tile-badge">NEW</span>
                     <div class="hub-tile-icon" aria-hidden="true">💬</div>
-                    <div class="hub-tile-name">웹 채팅</div>
+                    <div class="hub-tile-name">AI 채팅</div>
                     <div class="hub-tile-desc">AI와 대화 · Claude Sonnet 4.6</div>
                 </a>
 
@@ -1119,7 +1119,7 @@
         // 허용: /로 시작하는 상대경로, https://*.skons.net, https://skons.net
         // 차단: 외부 도메인, http/javascript 등 비https 스키마, 파싱 불가 URL
         function safeRedirect(rawNext) {
-            var fallback = 'https://chat.skons.net';
+            var fallback = 'https://ai-chat.skons.net';
             var decoded;
             try { decoded = decodeURIComponent(rawNext); } catch (e) { return fallback; }
 
@@ -1146,7 +1146,7 @@
             var params = new URLSearchParams(window.location.search);
             if (params.get('refresh') !== '1') return;
             // safeRedirect()로 next 검증 — Open Redirect 방지 (SEC-MED)
-            var next = safeRedirect(params.get('next') || 'https://chat.skons.net');
+            var next = safeRedirect(params.get('next') || 'https://ai-chat.skons.net');
 
             // 오버레이 즉시 표시 — 포털 UI flash 방지
             var overlay = document.getElementById('refreshOverlay');

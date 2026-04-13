@@ -2,7 +2,7 @@
 # Open WebUI — Chat 프론트엔드 (Phase 0)
 #
 # 역할:
-#   사용자 → chat.skons.net → ingress-nginx → Open WebUI(8080)
+#   사용자 → ai-chat.skons.net → ingress-nginx → Open WebUI(8080)
 #              → Pipelines(9099) → Bedrock AG(8080) → AWS Bedrock
 #
 # 인증 플로우:

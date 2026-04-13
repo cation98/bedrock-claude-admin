@@ -2,7 +2,7 @@
 # Open WebUI 네임스페이스
 #
 # 서비스 구성:
-#   - open-webui (Deployment): 사내 AI 웹챗 UI — chat.skons.net
+#   - open-webui (Deployment): 사내 AI 웹챗 UI — ai-chat.skons.net
 #   - bedrock-access-gateway (Deployment): OpenAI 호환 Bedrock 프록시
 #   - openwebui-postgres (StatefulSet): Open WebUI 전용 DB (대화 이력)
 #

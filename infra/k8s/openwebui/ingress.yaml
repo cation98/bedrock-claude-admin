@@ -1,8 +1,11 @@
 # =============================================================================
-# Open WebUI Ingress — chat.skons.net
+# Open WebUI Ingress — ai-chat.skons.net
 #
 # 라우팅:
-#   chat.skons.net/* → open-webui Service (포트 8080)
+#   ai-chat.skons.net/* → open-webui Service (포트 8080)
+#
+# 주: `chat`은 사내 메신저와 혼동 가능 → AI 웹챗 목적을 명시한 `ai-chat`으로 이관 (이슈 #30).
+#     사전에 SK IT측 DNS(ai-chat.skons.net) 및 ACM(*.skons.net wildcard) 확인 필요.
 #
 # 보안 핵심:
 #   - more_clear_input_headers: 외부 X-SKO-Email/X-SKO-User-Id 위조 차단
@@ -44,7 +47,9 @@ metadata:
     #   401 → auth-signin 로그인 페이지로 리다이렉트
     nginx.ingress.kubernetes.io/auth-url: "http://auth-gateway.platform.svc.cluster.local/api/v1/auth/webui-verify"
     nginx.ingress.kubernetes.io/auth-response-headers: "X-SKO-Email,X-SKO-User-Id"
-    nginx.ingress.kubernetes.io/auth-signin: "https://portal.skons.net/login?redirect=$escaped_request_uri"
+    # 이슈 #31: portal.skons.net 은 DNS 미등록 / Ingress 미배포 — 죽은 참조였음.
+    # 실존하는 auth-gateway 호스트(claude.skons.net)의 /login 페이지로 교체.
+    nginx.ingress.kubernetes.io/auth-signin: "https://claude.skons.net/login?redirect=$escaped_request_uri"
 
     # upstream hash: 같은 사용자는 같은 Open WebUI 인스턴스로 라우팅 (세션 연속성)
     nginx.ingress.kubernetes.io/upstream-hash-by: "$cookie_bedrock_webui_session"
@@ -52,7 +57,7 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - host: chat.skons.net
+    - host: ai-chat.skons.net
       http:
         paths:
           - path: /

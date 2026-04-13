@@ -151,7 +151,7 @@
 
     <script>
         // #19: JWT refresh 플로우
-        // 이 페이지는 chat.skons.net/auth/expired 에서 서빙됨
+        // 이 페이지는 ai-chat.skons.net/auth/expired 에서 서빙됨
         // nginx error_page 지시어: `error_page 401 /auth/expired;`
         //
         // 플로우:
@@ -170,7 +170,7 @@
         var originalPath = isOnExpiredPage
             ? (document.referrer
                 ? encodeURIComponent(document.referrer)
-                : encodeURIComponent('https://chat.skons.net'))
+                : encodeURIComponent('https://ai-chat.skons.net'))
             : encodeURIComponent(currentHref);
 
         var countdownEl = document.getElementById('countdownNum');
