@@ -389,3 +389,74 @@ resource "aws_eks_node_group" "dedicated" {
     aws_iam_role_policy_attachment.eks_container_registry,
   ]
 }
+
+# ----- Burst Node Group (spot m5.xlarge) — Phase 1b 50명 burst 수용 -----
+# 평시 desired=0 (비용 없음), 세션 급증 시 Cluster Autoscaler가 자동 scale-out
+#
+# SPOT 인스턴스 전략:
+# - m5.xlarge + m5a.xlarge 멀티풀 → AZ 용량 부족 시 자동 대체
+# - On-Demand 대비 약 70% 비용 절감
+#
+# Taint 없음 (soft 배치):
+# - 일반 Claude 세션 Pod도 이 노드에 스케줄 가능
+# - Pod nodeSelector 없이도 burst 노드 활용 가능
+# - 필요 시 preferredDuringScheduling affinity로 burst 노드 우선 배치 유도 가능
+#
+# lifecycle ignore_changes desired_size:
+# - HPA/CA가 desired를 조정해도 tf plan에서 drift로 표시되지 않도록 방지
+
+resource "aws_eks_node_group" "burst_workers" {
+  cluster_name    = aws_eks_cluster.main.name
+  node_group_name = "${var.project_name}-burst-workers"
+  node_role_arn   = aws_iam_role.eks_nodes.arn
+  subnet_ids      = aws_subnet.eks_private[*].id
+
+  capacity_type  = "SPOT"
+  instance_types = var.eks_burst_node_instance_types
+  disk_size      = 50
+
+  scaling_config {
+    desired_size = var.eks_burst_node_desired_size
+    min_size     = var.eks_burst_node_min_size
+    max_size     = var.eks_burst_node_max_size
+  }
+
+  # 노드 업데이트 시 한 번에 1개씩 교체 (서비스 중단 최소화)
+  update_config {
+    max_unavailable = 1
+  }
+
+  # K8s 레이블: role=burst
+  # - nodeSelector: role=burst 를 지정한 Pod은 이 nodegroup에만 배치됨
+  # - taint 없으므로 일반 Pod도 이 노드에 스케줄 가능 (soft 배치)
+  labels = {
+    role = "burst"
+  }
+
+  # Cluster Autoscaler 자동 탐색 태그
+  # cluster-autoscaler가 이 nodegroup을 관리 대상으로 인식하는 핵심 태그
+  tags = {
+    "k8s.io/cluster-autoscaler/enabled"                 = "true"
+    "k8s.io/cluster-autoscaler/${var.project_name}-eks" = "owned"
+    Name                                                = "${var.project_name}-burst-workers"
+    Owner                                               = "N1102359"
+    Env                                                 = var.environment
+    Service                                             = "sko-claude-ai-agent"
+  }
+
+  # HPA/CA가 desired_size를 동적으로 조정하므로 tf drift 방지
+  lifecycle {
+    ignore_changes = [scaling_config[0].desired_size]
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.eks_worker_node_policy,
+    aws_iam_role_policy_attachment.eks_cni_policy,
+    aws_iam_role_policy_attachment.eks_container_registry,
+  ]
+}
+
+output "burst_workers_nodegroup_arn" {
+  description = "burst-workers nodegroup ARN (Phase 1b SPOT pool)"
+  value       = aws_eks_node_group.burst_workers.arn
+}

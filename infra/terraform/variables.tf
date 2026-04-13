@@ -169,6 +169,34 @@ variable "eks_ingress_node_max_size" {
   default     = 6
 }
 
+# ----- Burst 노드 (spot m5.xlarge — Phase 1b 50명 burst 수용) -----
+# desired=0 으로 평시에는 노드 없음 — Cluster Autoscaler가 HPA 부하에 따라 자동 확장
+# SPOT 인스턴스 사용으로 On-Demand 대비 약 70% 비용 절감
+
+variable "eks_burst_node_instance_types" {
+  description = "burst-workers nodegroup spot instance types (multi-pool, AZ 가용성 확보)"
+  type        = list(string)
+  default     = ["m5.xlarge", "m5a.xlarge"]
+}
+
+variable "eks_burst_node_desired_size" {
+  description = "burst-workers nodegroup desired size (Phase 1b: 0, HPA 발동 시 CA가 자동 scale-out)"
+  type        = number
+  default     = 0
+}
+
+variable "eks_burst_node_min_size" {
+  description = "burst-workers nodegroup min size (0 = 평시 비용 없음)"
+  type        = number
+  default     = 0
+}
+
+variable "eks_burst_node_max_size" {
+  description = "burst-workers nodegroup max size (Phase 1b: 50명 burst 흡수 — m5.xlarge × 4 = 충분)"
+  type        = number
+  default     = 4
+}
+
 # ----- Bedrock -----
 
 variable "bedrock_region" {
