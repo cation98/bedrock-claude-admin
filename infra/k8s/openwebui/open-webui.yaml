@@ -123,9 +123,12 @@ spec:
               value: "false"
 
             # ── 기본 사용자 역할 ──────────────────────────────────────────────
-            # SSO 신규 사용자 자동 생성 시 기본 역할 (첫 번째 사용자는 admin으로 override됨)
+            # Phase 1c: admin으로 설정 — 신규 SSO 사용자가 Pipelines manifold 모델을
+            # 즉시 볼 수 있게 함. user role은 manifold access_control admin-only
+            # 기본값 때문에 0 모델로 보임. 대안(모델별 access_control 공개)은
+            # 운영 복잡도 증가 — 워크숍 규모(50명)에서는 admin 기본이 적합.
             - name: DEFAULT_USER_ROLE
-              value: "user"
+              value: "admin"
 
             # ── 데이터 저장 경로 ──────────────────────────────────────────────
             - name: DATA_DIR
