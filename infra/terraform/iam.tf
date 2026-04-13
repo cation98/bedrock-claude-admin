@@ -50,34 +50,11 @@ resource "aws_iam_role_policy" "bedrock_invoke" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
-      {
-        Sid    = "AllowBedrockInvoke"
-        Effect = "Allow"
-        Action = [
-          "bedrock:InvokeModel",
-          "bedrock:InvokeModelWithResponseStream"
-        ]
-        Resource = [
-          # Foundation models (직접 호출)
-          "arn:aws:bedrock:*::foundation-model/anthropic.claude-*",
-          # Cross-region inference profiles (account ID 포함 필수)
-          "arn:aws:bedrock:*:680877507363:inference-profile/us.anthropic.claude-*",
-          "arn:aws:bedrock:*:680877507363:inference-profile/global.anthropic.claude-*",
-          # Global inference profiles
-          "arn:aws:bedrock:*::inference-profile/us.anthropic.claude-*",
-          "arn:aws:bedrock:*::inference-profile/global.anthropic.claude-*"
-        ]
-      },
-      {
-        Sid    = "AllowModelDiscovery"
-        Effect = "Allow"
-        Action = [
-          "bedrock:ListFoundationModels",
-          "bedrock:GetFoundationModel"
-        ]
-        Resource = "*"
-      },
       # ----- TANGO 알람 데이터 접근 -----
+      # NOTE: Bedrock 관련 statement 2개(AllowBedrockInvoke, AllowModelDiscovery)는
+      # 2026-04-14 issue #20로 제거됨. 사용자 Pod의 Bedrock 경로는 Bedrock AG proxy
+      # (openwebui/bedrock-ag-sa IRSA)를 통해서만 허용된다.
+      # ADR: docs/decisions/ADR-001-bedrock-irsa-narrow.md
       # S3: tango-alarm-logs 버킷 읽기 (1년 아카이브 데이터)
       {
         Sid    = "AllowTangoS3Read"
