@@ -24,6 +24,7 @@ from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.skill import (
     SharedSkill,
+    SkillApprovalPolicy,
     SkillApprovalStatus,
     SkillGovernanceEvent,
     SkillGovernanceEventType,
@@ -37,6 +38,8 @@ logger = logging.getLogger(__name__)
 
 
 # ==================== Helper ====================
+
+DEFAULT_REQUIRED_APPROVALS = 1
 
 
 def _require_admin(current_user: dict = Depends(get_current_user)) -> dict:
@@ -79,6 +82,32 @@ def _log_governance_event(
         detail=detail,
     )
     db.add(event)
+
+
+def _required_approvals(db: Session, category: str | None) -> int:
+    """카테고리별 N-of-M 정족수 조회. 미정의 카테고리는 DEFAULT_REQUIRED_APPROVALS."""
+    if not category:
+        return DEFAULT_REQUIRED_APPROVALS
+    row = db.query(SkillApprovalPolicy).filter(SkillApprovalPolicy.category == category).first()
+    return row.required_approvals if row else DEFAULT_REQUIRED_APPROVALS
+
+
+def _admin_already_approved(db: Session, skill_id: int, admin_sub: str) -> bool:
+    """동일 관리자가 이미 APPROVE 이벤트를 남겼는지 확인 (중복 승인 차단)."""
+    return db.query(SkillGovernanceEvent).filter(
+        SkillGovernanceEvent.skill_id == skill_id,
+        SkillGovernanceEvent.event_type == SkillGovernanceEventType.APPROVE.value,
+        SkillGovernanceEvent.actor_username == admin_sub,
+    ).first() is not None
+
+
+def _count_distinct_approvers(db: Session, skill_id: int) -> int:
+    """APPROVE 이벤트를 남긴 distinct 관리자 수 반환."""
+    from sqlalchemy import func as _func
+    return db.query(_func.count(_func.distinct(SkillGovernanceEvent.actor_username))).filter(
+        SkillGovernanceEvent.skill_id == skill_id,
+        SkillGovernanceEvent.event_type == SkillGovernanceEventType.APPROVE.value,
+    ).scalar() or 0
 
 
 # ==================== 사용자 API ====================
@@ -451,19 +480,33 @@ async def approve_skill(
             },
         )
 
-    skill.is_approved = True
-    skill.approval_status = SkillApprovalStatus.APPROVED.value
-    skill.approved_by = admin_sub
-    skill.approved_at = datetime.now(timezone.utc)
-    _log_governance_event(
-        db,
-        skill_id=skill.id,
-        event_type=SkillGovernanceEventType.APPROVE,
-        actor=admin,
-    )
+    # N-of-M: 동일 관리자의 중복 승인 차단
+    if _admin_already_approved(db, skill.id, admin_sub):
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "duplicate_approval", "message": "이미 이 스킬을 승인한 관리자입니다."},
+        )
+
+    _log_governance_event(db, skill_id=skill.id, event_type=SkillGovernanceEventType.APPROVE, actor=admin)
+    db.flush()  # event가 count 쿼리에 반영되도록
+
+    required = _required_approvals(db, skill.category)
+    current = _count_distinct_approvers(db, skill.id)
+
+    if current >= required:
+        skill.is_approved = True
+        skill.approval_status = SkillApprovalStatus.APPROVED.value
+        skill.approved_by = admin_sub
+        skill.approved_at = datetime.now(timezone.utc)
+        logger.info("Skill approved: %s by %s (%d/%d)", skill.title, admin_sub, current, required)
+    else:
+        logger.info(
+            "Skill approval progress: %s by %s (%d/%d) — still pending",
+            skill.title, admin_sub, current, required,
+        )
+
     db.commit()
     db.refresh(skill)
-    logger.info(f"Skill approved: {skill.title} by {admin_sub}")
     return skill
 
 
