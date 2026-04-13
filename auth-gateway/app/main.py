@@ -10,8 +10,9 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from sqlalchemy import text
 
 from app.core.config import get_settings
@@ -403,6 +404,41 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# GitHub #25: 브라우저(text/html)는 /error 페이지로, API 클라이언트는 JSON 유지.
+# 404/502/503/504 만 대상 — 401/403은 기존 쿠키/리디렉트 플로우가 담당.
+_HTML_ERROR_CODES = {404, 502, 503, 504}
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_error_handler(request: Request, exc: StarletteHTTPException):
+    path = request.url.path
+    accept = request.headers.get("accept", "").lower()
+
+    want_html = (
+        exc.status_code in _HTML_ERROR_CODES
+        and "text/html" in accept
+        and not path.startswith("/api/")      # API 경로는 JSON 유지
+        and not path.startswith("/auth/")     # auth 콜백/교환은 JSON 계약
+        and not path.startswith("/error")     # 재귀 방지
+        and not path.startswith("/static/")   # 정적 파일 404는 리디렉트 없음
+    )
+
+    if want_html:
+        from urllib.parse import quote
+        original_uri = quote(path, safe="")
+        return RedirectResponse(
+            url=f"/error?code={exc.status_code}&uri={original_uri}",
+            status_code=302,
+        )
+
+    # 기본: FastAPI 표준 동작(JSON) 유지
+    return JSONResponse(
+        {"detail": exc.detail},
+        status_code=exc.status_code,
+        headers=getattr(exc, "headers", None) or None,
+    )
 
 # 라우터 등록
 app.include_router(admin.router)
