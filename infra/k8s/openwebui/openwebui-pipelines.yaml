@@ -236,6 +236,8 @@ data:
             self._redis: Optional[aioredis.Redis] = None
 
         async def on_startup(self):
+            # localhost fallback — REDIS_URL 미설정 시만 사용 (정상 운영에서는 도달하지 않음)
+            # Phase 1a 이후 REDIS_URL은 rediss://:<auth_token>@master.bedrock-claude-redis-tls... 형태로 주입됨
             redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
             self._redis = aioredis.from_url(redis_url, decode_responses=True)
             print(f"[budget_gate] Connected to Redis")
@@ -342,6 +344,8 @@ data:
             self._redis: Optional[aioredis.Redis] = None
 
         async def on_startup(self):
+            # localhost fallback — REDIS_URL 미설정 시만 사용 (정상 운영에서는 도달하지 않음)
+            # Phase 1a 이후 REDIS_URL은 rediss://:<auth_token>@master.bedrock-claude-redis-tls... 형태로 주입됨
             redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
             self._redis = aioredis.from_url(redis_url, decode_responses=True)
             print(f"[usage_emit] Connected to Redis, stream={self.valves.stream_key}")

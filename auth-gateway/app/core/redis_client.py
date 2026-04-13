@@ -11,12 +11,39 @@ import logging
 import os
 import socket
 import threading
+from urllib.parse import urlparse
 
 import redis
 
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+def _mask_redis_url(url: str) -> str:
+    """Redis URL에서 password 부분을 **** 로 마스킹한다.
+
+    Phase 1a: ElastiCache TLS cluster 전환 후 REDIS_URL에 auth_token이 포함되므로
+    로그 출력 시 반드시 password 부분을 마스킹하여 CloudWatch/stdout 수집 시
+    credential 유출을 방지한다.
+
+    Args:
+        url: Redis connection URL (e.g. `rediss://:<token>@host:6379/0`).
+
+    Returns:
+        Password가 `****` 로 치환된 URL. 파싱 실패 시 원본 반환 대신
+        scheme + host 정도만 노출되도록 안전하게 fallback.
+    """
+    try:
+        parsed = urlparse(url)
+        if parsed.password:
+            return parsed._replace(
+                netloc=f"{parsed.username or ''}:****@{parsed.hostname}"
+                + (f":{parsed.port}" if parsed.port else "")
+            ).geturl()
+    except Exception:
+        pass
+    return url
 
 _redis_lock = threading.Lock()
 _redis_client: redis.Redis | None = None
@@ -59,7 +86,7 @@ def get_redis() -> redis.Redis | None:
             # 실제 연결 확인
             client.ping()
             _redis_client = client
-            logger.info("Redis 연결 성공: %s", settings.redis_url)
+            logger.info("Redis 연결 성공: %s", _mask_redis_url(settings.redis_url))
             return _redis_client
         except Exception as e:
             logger.warning("Redis 연결 실패 — 인메모리 fallback 사용: %s", e)
