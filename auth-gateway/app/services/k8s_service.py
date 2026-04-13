@@ -279,9 +279,12 @@ class K8sService:
         # 주: ANTHROPIC_API_KEY 대신 ANTHROPIC_AUTH_TOKEN 사용 — 전자는 Claude Code가
         # "Detected a custom API key" 승인 프롬프트를 띄워 UX를 저해함.
         if pod_token and not is_local:
+            # Claude Code 2.x는 BASE_URL 뒤에 "/v1/messages"를 자체 부착.
+            # trailing /v1 을 포함하면 최종 URL이 /v1/v1/messages 가 되어 404.
+            # 기존에는 entrypoint.sh에서 ${VAR%/v1}로 trim했으나 GitHub #26에서 근본 수정.
             env_vars.append(client.V1EnvVar(
                 name="ANTHROPIC_BASE_URL",
-                value="http://auth-gateway.platform.svc.cluster.local/v1",
+                value="http://auth-gateway.platform.svc.cluster.local",
             ))
 
         # 프록시 환경변수 — Pod에서 외부 API 접근 시 Auth Gateway 프록시를 거치도록 설정
