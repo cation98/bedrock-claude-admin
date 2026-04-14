@@ -86,9 +86,35 @@ def _run_select(env_key: str, sql: str, db_name: str) -> str:
         return f"Error ({db_name}): {e}"
 
 
+_DB_ENV_MAP = {
+    "tango": "TANGO_DATABASE_URL",
+    "safety": "SAFETY_DATABASE_URL",
+    "doculog": "DOCULOG_DATABASE_URL",
+}
+
+
 class Tools:
     def __init__(self):
         pass
+
+    def describe_table(self, db: str, table_name: str) -> str:
+        """지정 DB의 특정 테이블 컬럼 목록을 반환. 스키마가 불확실할 때 먼저 호출하여
+        컬럼 이름·타입을 확인한 뒤 query_* 로 정식 쿼리.
+
+        :param db: "tango" | "safety" | "doculog"
+        :param table_name: 테이블명 (예: "safety_activity_tbmactivity")
+        :return: column_name:data_type 목록
+        """
+        env_key = _DB_ENV_MAP.get(db.lower())
+        if not env_key:
+            return f"Error: db='{db}' 지원 안함. 'tango'|'safety'|'doculog' 중 선택."
+        # readonly introspection 쿼리
+        sql = (
+            "SELECT column_name, data_type FROM information_schema.columns "
+            f"WHERE table_name = '{table_name}' ORDER BY ordinal_position"
+        )
+        # information_schema는 시스템 테이블이므로 _require_select_only 는 통과함
+        return _run_select(env_key, sql, f"describe {db}.{table_name}")
 
     def query_tango(self, sql: str) -> str:
         """TANGO 네트워크 알람 DB 조회 (PostgreSQL). 네트워크 장비 고장·복구·이벤트.
