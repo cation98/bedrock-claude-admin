@@ -16,6 +16,8 @@ import {
   createInfraTemplate,
   updateInfraTemplate,
   deleteInfraTemplate,
+  getUnhealthyPods,
+  deleteUnhealthyDeployment,
   type InfraResponse,
   type NodeInfo,
   type User,
@@ -23,6 +25,7 @@ import {
   type InfraTemplateItem,
   type InfraTemplatePolicy,
   type InfraAssignment,
+  type UnhealthyPod,
 } from "@/lib/api";
 import { isAuthenticated } from "@/lib/auth";
 import StatsCard from "@/components/stats-card";
@@ -49,9 +52,19 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 const ROLE_BADGE: Record<string, { bg: string; label: string }> = {
-  system: { bg: "bg-[var(--danger-light)] text-[var(--danger)]", label: "시스템 (삭제 금지)" },
-  presenter: { bg: "bg-[var(--info-light)] text-[var(--info)]", label: "전용 노드" },
-  user: { bg: "bg-[var(--primary-light)] text-[var(--primary)]", label: "사용자" },
+  system:      { bg: "bg-[var(--danger-light)] text-[var(--danger)]",    label: "시스템 (삭제 금지)" },
+  presenter:   { bg: "bg-[var(--info-light)] text-[var(--info)]",        label: "전용 노드" },
+  workload:    { bg: "bg-[var(--warning-light)] text-[var(--warning)]",  label: "OpenWebUI 워크로드 전용" },
+  "user-apps": { bg: "bg-[var(--success-light)] text-[var(--success)]",  label: "사용자 배포 앱 전용" },
+  terminal:    { bg: "bg-[var(--primary-light)] text-[var(--primary)]",  label: "사용자 터미널 전용" },
+  user:        { bg: "bg-[var(--surface-hover)] text-[var(--text-muted)]", label: "사용자" },
+};
+
+const POD_KIND_BADGE: Record<string, string> = {
+  terminal: "bg-[var(--primary-light)] text-[var(--primary)]",
+  workload: "bg-[var(--warning-light)] text-[var(--warning)]",
+  system:   "bg-[var(--danger-light)] text-[var(--danger)]",
+  dummy:    "bg-[var(--surface-hover)] text-[var(--text-muted)]",
 };
 
 function NodeCard({ node, allNodes, onAction }: { node: NodeInfo; allNodes: NodeInfo[]; onAction: () => void }) {
@@ -97,21 +110,38 @@ function NodeCard({ node, allNodes, onAction }: { node: NodeInfo; allNodes: Node
 
       {hasPods ? (
         <div className="divide-y divide-[var(--border)]">
-          {node.pods.map((pod) => (
-            <div key={pod.pod_name} className="flex items-center justify-between px-4 py-2.5">
-              <div>
-                <span className="text-sm font-medium text-[var(--text-primary)]">
-                  {pod.user_name ?? pod.username}
-                </span>
-                <span className="ml-1 text-xs text-[var(--text-muted)]">({pod.username})</span>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="text-xs text-[var(--text-muted)]">
-                  CPU {pod.cpu_request} / Mem {pod.memory_request}
-                </span>
-                <StatusBadge status={pod.status} />
-                {pod.username !== "SYSTEM" && (
-                  <div className="flex gap-1">
+          {node.pods.map((pod) => {
+            const kindBadgeCls = POD_KIND_BADGE[pod.pod_kind ?? "system"] ?? POD_KIND_BADGE.system;
+            const isTerminal = pod.pod_kind === "terminal";
+            const isWorkload = pod.pod_kind === "workload";
+            const isDummy = pod.pod_kind === "dummy";
+            return (
+              <div key={pod.pod_name} className={`flex items-center justify-between px-4 py-2 ${isWorkload ? "bg-[var(--warning-light)]/10" : isDummy ? "opacity-50" : ""}`}>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-medium ${kindBadgeCls}`}>
+                      {isTerminal ? "터미널" : isWorkload ? "워크로드" : isDummy ? "예약석" : "시스템"}
+                    </span>
+                    {pod.namespace && (
+                      <span className="text-[10px] text-[var(--text-muted)] font-mono">{pod.namespace}</span>
+                    )}
+                    <span className="text-sm font-medium text-[var(--text-primary)] truncate">
+                      {pod.user_name ?? pod.username}
+                    </span>
+                    {pod.pod_ip && (
+                      <span className="text-[10px] font-mono text-[var(--text-muted)]">{pod.pod_ip}</span>
+                    )}
+                  </div>
+                  {isWorkload && (
+                    <div className="mt-0.5 text-[10px] font-mono text-[var(--text-muted)] truncate">{pod.pod_name}</div>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 ml-2 shrink-0">
+                  <span className="text-xs text-[var(--text-muted)] whitespace-nowrap">
+                    {pod.cpu_request} / {pod.memory_request}
+                  </span>
+                  <StatusBadge status={pod.status} />
+                  {isTerminal && (
                     <button
                       onClick={async () => {
                         if (confirm(`${pod.user_name ?? pod.username} Pod을 종료하시겠습니까?`)) {
@@ -125,11 +155,11 @@ function NodeCard({ node, allNodes, onAction }: { node: NodeInfo; allNodes: Node
                     >
                       종료
                     </button>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       ) : (
         <div className="px-4 py-4 text-center text-xs text-[var(--text-muted)]">
@@ -151,7 +181,12 @@ export default function InfraPage() {
   const [approvedUsers, setApprovedUsers] = useState<User[]>([]);
   const [assignUser, setAssignUser] = useState("");
   const [assignNode, setAssignNode] = useState("");
+  const [assignSearch, setAssignSearch] = useState("");
+  const [assignDropOpen, setAssignDropOpen] = useState(false);
   const [nodeGroups, setNodeGroups] = useState<NodeGroupInfo[]>([]);
+  const [unhealthy, setUnhealthy] = useState<UnhealthyPod[]>([]);
+  const [unhealthyAt, setUnhealthyAt] = useState<string>("");
+  const [deletingDeploy, setDeletingDeploy] = useState<string>("");
 
   /* ── Left panel: user policy assignments ── */
   const [assignments, setAssignments] = useState<InfraAssignment[]>([]);
@@ -230,18 +265,21 @@ export default function InfraPage() {
   /* ── Data fetch ── */
   const fetchData = useCallback(async () => {
     try {
-      const [res, usersRes, ngRes, templatesRes, assignRes] = await Promise.all([
+      const [res, usersRes, ngRes, templatesRes, assignRes, unhealthyRes] = await Promise.all([
         getInfrastructure(),
         getUsers(),
         getNodeGroups(),
         getInfraTemplates().catch(() => ({ templates: [] as InfraTemplateItem[] })),
         getInfraAssignments().catch(() => ({ assignments: [] as InfraAssignment[] })),
+        getUnhealthyPods().catch(() => ({ pods: [] as UnhealthyPod[], collected_at: "" })),
       ]);
       setData(res);
       setApprovedUsers(usersRes.users.filter((u) => u.is_approved));
       setNodeGroups(ngRes.groups);
       setInfraTemplates(templatesRes.templates);
       setAssignments(assignRes.assignments);
+      setUnhealthy(unhealthyRes.pods);
+      setUnhealthyAt(unhealthyRes.collected_at);
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to fetch");
@@ -372,6 +410,94 @@ export default function InfraPage() {
           </div>
         )}
 
+        {/* Unhealthy Pods — 실시간 비정상 Pod 모니터링 */}
+        {unhealthy.length > 0 && (
+          <div className="mb-6 rounded-lg border border-[var(--danger-light)] bg-[var(--surface)] shadow-sm">
+            <div className="flex items-center justify-between border-b border-[var(--danger-light)] bg-[var(--danger-light)]/30 px-4 py-3">
+              <div>
+                <h3 className="text-sm font-semibold text-[var(--danger)]">
+                  ⚠ 비정상 Pod ({unhealthy.length})
+                </h3>
+                <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+                  CrashLoopBackOff / ImagePullBackOff / Pending(5m+) / Restart≥5 · {unhealthyAt && new Date(unhealthyAt).toLocaleTimeString("ko-KR")}
+                </p>
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="bg-[var(--surface-hover)] text-[var(--text-secondary)]">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium">NS</th>
+                    <th className="px-3 py-2 text-left font-medium">Pod</th>
+                    <th className="px-3 py-2 text-left font-medium">IP</th>
+                    <th className="px-3 py-2 text-left font-medium">Node</th>
+                    <th className="px-3 py-2 text-left font-medium">Status</th>
+                    <th className="px-3 py-2 text-right font-medium">Restarts</th>
+                    <th className="px-3 py-2 text-left font-medium">Age</th>
+                    <th className="px-3 py-2 text-left font-medium">Owner</th>
+                    <th className="px-3 py-2 text-right font-medium">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border)]">
+                  {unhealthy.map((p) => {
+                    const ageH = Math.floor(p.age_seconds / 3600);
+                    const ageM = Math.floor((p.age_seconds % 3600) / 60);
+                    const deployKey = `${p.namespace}/${p.deployment ?? ""}`;
+                    const canDelete = !!p.deployment;
+                    return (
+                      <tr key={p.pod_name} className="hover:bg-[var(--surface-hover)]">
+                        <td className="px-3 py-2 font-mono">{p.namespace}</td>
+                        <td className="px-3 py-2 font-mono text-[var(--text-primary)]" title={p.message ?? ""}>
+                          {p.pod_name}
+                        </td>
+                        <td className="px-3 py-2 font-mono text-[var(--text-secondary)]">{p.pod_ip ?? "-"}</td>
+                        <td className="px-3 py-2 font-mono text-[var(--text-secondary)]">{p.node_name ? shortNode(p.node_name) : "-"}</td>
+                        <td className="px-3 py-2">
+                          <span className="inline-block rounded-full bg-[var(--danger-light)] px-2 py-0.5 text-xs font-medium text-[var(--danger)]">
+                            {p.status}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono">{p.restarts}</td>
+                        <td className="px-3 py-2 font-mono text-[var(--text-secondary)]">
+                          {ageH > 0 ? `${ageH}h${ageM}m` : `${ageM}m`}
+                        </td>
+                        <td className="px-3 py-2 font-mono text-[var(--text-secondary)]">
+                          {p.owner ?? "-"}{p.app_name ? ` / ${p.app_name}` : ""}
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          {canDelete ? (
+                            <button
+                              disabled={deletingDeploy === deployKey}
+                              onClick={async () => {
+                                if (!confirm(`Deployment 삭제: ${p.namespace}/${p.deployment}\n연관 Service도 함께 삭제됩니다.`)) return;
+                                setDeletingDeploy(deployKey);
+                                try {
+                                  await deleteUnhealthyDeployment(p.namespace, p.deployment!);
+                                  setSuccess(`${p.namespace}/${p.deployment} 삭제됨`);
+                                  fetchData();
+                                } catch (err) {
+                                  setError(err instanceof Error ? err.message : "삭제 실패");
+                                } finally {
+                                  setDeletingDeploy("");
+                                }
+                              }}
+                              className="rounded-md border border-[var(--danger)] px-2 py-1 text-xs font-medium text-[var(--danger)] hover:bg-[var(--danger-light)] disabled:opacity-50"
+                            >
+                              {deletingDeploy === deployKey ? "삭제 중..." : "Deploy 삭제"}
+                            </button>
+                          ) : (
+                            <span className="text-[var(--text-muted)]">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
         {data && (
           <div className="mb-4 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-[var(--text-primary)]">노드 / Pod 현황</h2>
@@ -454,34 +580,103 @@ export default function InfraPage() {
                 </div>
               </div>
 
-              {/* Pod 할당 (simple) */}
+              {/* Pod 할당 — 사용자 검색 + 노드 선택 */}
               <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 shadow-sm">
-                <h3 className="mb-2 text-sm font-semibold text-[var(--text-primary)]">Pod 할당</h3>
-                <div className="flex gap-2">
-                  <select
-                    value={assignUser}
-                    onChange={(e) => setAssignUser(e.target.value)}
-                    className="flex-1 rounded-md border border-[var(--border-strong)] px-2 py-1.5 text-sm"
-                  >
-                    <option value="">사용자 선택</option>
-                    {approvedUsers
-                      .filter((u) => !data?.nodes.some((n) => n.pods.some((p) => p.username === u.username)))
-                      .map((u) => (
-                        <option key={u.username} value={u.username}>{u.name ?? u.username} ({u.username})</option>
-                      ))}
-                  </select>
+                <h3 className="mb-3 text-sm font-semibold text-[var(--text-primary)]">Pod 할당</h3>
+                <div className="flex gap-2 items-start">
+
+                  {/* ── 사용자 검색 드롭다운 ── */}
+                  <div className="relative flex-1">
+                    <div
+                      className={`flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-sm cursor-text ${assignDropOpen || assignUser ? "border-[var(--primary)]" : "border-[var(--border-strong)]"}`}
+                      onClick={() => { setAssignDropOpen(true); }}
+                    >
+                      {assignUser ? (
+                        <>
+                          <span className="font-medium text-[var(--text-primary)]">
+                            {approvedUsers.find((u) => u.username === assignUser)?.name ?? assignUser}
+                          </span>
+                          <span className="text-xs text-[var(--text-muted)]">({assignUser})</span>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setAssignUser(""); setAssignSearch(""); }}
+                            className="ml-auto text-[var(--text-muted)] hover:text-[var(--danger)]"
+                          >✕</button>
+                        </>
+                      ) : (
+                        <input
+                          autoFocus={assignDropOpen}
+                          placeholder="이름 또는 사번 검색..."
+                          value={assignSearch}
+                          onChange={(e) => { setAssignSearch(e.target.value); setAssignDropOpen(true); }}
+                          onFocus={() => setAssignDropOpen(true)}
+                          onBlur={() => setTimeout(() => setAssignDropOpen(false), 150)}
+                          className="w-full bg-transparent outline-none placeholder-[var(--text-muted)] text-[var(--text-primary)]"
+                        />
+                      )}
+                    </div>
+
+                    {/* 드롭다운 목록 */}
+                    {assignDropOpen && !assignUser && (
+                      <div className="absolute z-50 mt-1 w-full max-h-56 overflow-y-auto rounded-md border border-[var(--border)] bg-[var(--surface)] shadow-lg">
+                        {approvedUsers
+                          .filter((u) => {
+                            const q = assignSearch.toLowerCase();
+                            const hasPod = data?.nodes.some((n) => n.pods.some((p) => p.username === u.username));
+                            if (hasPod) return false; // 이미 Pod 있는 사용자 제외
+                            if (!q) return true;
+                            return (
+                              u.username.toLowerCase().includes(q) ||
+                              (u.name ?? "").toLowerCase().includes(q)
+                            );
+                          })
+                          .slice(0, 20)
+                          .map((u) => (
+                            <button
+                              key={u.username}
+                              onMouseDown={() => {
+                                setAssignUser(u.username);
+                                setAssignSearch("");
+                                setAssignDropOpen(false);
+                              }}
+                              className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-[var(--surface-hover)]"
+                            >
+                              <div>
+                                <span className="font-medium text-[var(--text-primary)]">{u.name ?? u.username}</span>
+                                <span className="ml-1 text-xs text-[var(--text-muted)]">({u.username})</span>
+                              </div>
+                              {u.team_name && (
+                                <span className="text-[10px] text-[var(--text-muted)]">{u.team_name}</span>
+                              )}
+                            </button>
+                          ))}
+                        {approvedUsers.filter((u) => {
+                          const q = assignSearch.toLowerCase();
+                          const hasPod = data?.nodes.some((n) => n.pods.some((p) => p.username === u.username));
+                          return !hasPod && (q ? u.username.toLowerCase().includes(q) || (u.name ?? "").toLowerCase().includes(q) : true);
+                        }).length === 0 && (
+                          <div className="px-3 py-2 text-xs text-[var(--text-muted)]">검색 결과 없음</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* ── 노드 선택 ── */}
                   <select
                     value={assignNode}
                     onChange={(e) => setAssignNode(e.target.value)}
-                    className="flex-1 rounded-md border border-[var(--border-strong)] px-2 py-1.5 text-sm"
+                    className="flex-1 rounded-md border border-[var(--border-strong)] px-2 py-1.5 text-sm text-[var(--text-primary)] bg-[var(--surface)]"
                   >
                     <option value="">노드 자동 배치</option>
-                    {data?.nodes.filter((n) => n.node_role !== "system").map((n) => (
-                      <option key={n.node_name} value={n.node_name}>
-                        {shortNode(n.node_name)} ({n.instance_type}) - Pod {n.pods.filter((p) => p.username !== "SYSTEM").length}개
-                      </option>
-                    ))}
+                    {data?.nodes
+                      .filter((n) => n.node_role === "terminal" || n.node_role === "user")
+                      .map((n) => (
+                        <option key={n.node_name} value={n.node_name}>
+                          {shortNode(n.node_name)} ({n.instance_type}) — Pod {n.pods.filter((p) => p.pod_kind === "terminal").length}개
+                        </option>
+                      ))}
                   </select>
+
+                  {/* ── 할당 버튼 ── */}
                   <button
                     disabled={!assignUser}
                     onClick={async () => {
@@ -490,14 +685,26 @@ export default function InfraPage() {
                         await assignPod(assignUser, assignNode || undefined);
                         setAssignUser("");
                         setAssignNode("");
+                        setAssignSearch("");
                         fetchData();
                       } catch (err) { setError(err instanceof Error ? err.message : "할당 실패"); }
                     }}
-                    className="rounded-md bg-[var(--primary)] px-4 py-1.5 text-sm font-medium text-white hover:bg-[var(--primary-hover)] disabled:opacity-50"
+                    className="rounded-md bg-[var(--primary)] px-4 py-1.5 text-sm font-medium text-white hover:bg-[var(--primary-hover)] disabled:opacity-50 whitespace-nowrap"
                   >
                     할당
                   </button>
                 </div>
+
+                {/* 선택된 사용자 확인 */}
+                {assignUser && (
+                  <div className="mt-2 text-xs text-[var(--text-muted)]">
+                    <span className="font-medium text-[var(--primary)]">
+                      {approvedUsers.find((u) => u.username === assignUser)?.name ?? assignUser}
+                    </span>
+                    {" "}({assignUser}) →{" "}
+                    {assignNode ? shortNode(assignNode) : "자동 배치"}
+                  </div>
+                )}
               </div>
 
               {/* ── User Infra Policy Table ── */}

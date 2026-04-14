@@ -204,3 +204,29 @@ variable "bedrock_region" {
   type        = string
   default     = "us-east-1"
 }
+
+# ----- User Apps Workers Nodegroup -----
+
+variable "eks_user_apps_instance_types" {
+  description = "user-apps-workers: 사용자 배포 앱 전용 (bin-packing, t3.medium으로 고밀도 배치)"
+  type        = list(string)
+  default     = ["t3.medium"]
+}
+
+variable "eks_user_apps_desired_size" {
+  description = "user-apps-workers 초기 노드 수 (Cluster Autoscaler가 동적 조정)"
+  type        = number
+  default     = 1
+}
+
+variable "eks_user_apps_min_size" {
+  description = "user-apps-workers 최소 노드 수 (0 = 앱 없을 때 비용 절감)"
+  type        = number
+  default     = 0
+}
+
+variable "eks_user_apps_max_size" {
+  description = "user-apps-workers 최대 노드 수"
+  type        = number
+  default     = 5
+}

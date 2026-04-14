@@ -185,6 +185,9 @@ class PodInfo(BaseModel):
     cpu_request: str
     memory_request: str
     created_at: str | None = None
+    pod_ip: str | None = None
+    namespace: str | None = None
+    pod_kind: str = "terminal"  # "terminal" | "workload" | "system" | "dummy"
 
 
 class NodeInfo(BaseModel):
@@ -193,7 +196,7 @@ class NodeInfo(BaseModel):
     status: str
     cpu_capacity: str
     memory_capacity: str
-    node_role: str = "user"  # "system" | "presenter" | "user"
+    node_role: str = "user"  # "system" | "presenter" | "user" | "workload"
     pods: list[PodInfo]
 
 
@@ -237,9 +240,25 @@ async def get_infrastructure(
             continue
 
         # 노드 역할 판별
-        node_role = "user"
-        if labels.get("role") == "presenter":
+        node_label_role = labels.get("role", "")
+        nodegroup = labels.get("eks.amazonaws.com/nodegroup", "")
+        if node_label_role == "presenter":
             node_role = "presenter"
+        elif node_label_role == "system" or nodegroup in ("system-node-large",):
+            node_role = "system"
+        elif node_label_role in ("user-apps",) or nodegroup.endswith("user-apps-workers"):
+            # t3.medium 사용자 배포 앱 전용 노드 (bin-packing)
+            node_role = "user-apps"
+        elif node_label_role in ("claude-terminal",) or nodegroup in ("bedrock-claude-nodes", "claude-workers"):
+            # m5.large 워크로드 노드 — openwebui 등 공유 서비스
+            node_role = "workload"
+        elif node_label_role in ("claude-dedicated",) or nodegroup in ("bedrock-claude-dedicated-nodes",):
+            # 사용자 터미널 전용 노드 (nodeSelector: role=claude-dedicated)
+            node_role = "terminal"
+        elif node_label_role == "ingress" or nodegroup in ("ingress-workers",):
+            node_role = "system"
+        else:
+            node_role = "user"
 
         node_map[name] = NodeInfo(
             node_name=name,
@@ -290,7 +309,47 @@ async def get_infrastructure(
     except Exception:
         pass
 
-    # User pods
+    # Workload namespace pods (openwebui, claude-apps)
+    # claude-sessions 제외: 해당 ns에는 사용자 터미널 Pod가 포함되어 있어 아래 terminal 스캔과 중복됨
+    _WORKLOAD_NAMESPACES = ("openwebui", "claude-apps")
+    for wl_ns in _WORKLOAD_NAMESPACES:
+        try:
+            wl_pods = v1.list_namespaced_pod(namespace=wl_ns)
+        except Exception:
+            continue
+        for pod in wl_pods.items:
+            node_name = pod.spec.node_name or "unscheduled"
+            if node_name not in node_map:
+                continue
+            labels_pod = pod.metadata.labels or {}
+            # 터미널/더미 Pod는 아래 terminal 스캔에서 별도 처리 — 중복 방지
+            if labels_pod.get("app") in ("claude-terminal", "overprovisioning"):
+                continue
+            app_label = labels_pod.get("app-name") or labels_pod.get("app") or pod.metadata.name.rsplit("-", 2)[0]
+            container = pod.spec.containers[0] if pod.spec.containers else None
+            cpu_req = mem_req = "-"
+            if container and container.resources and container.resources.requests:
+                cpu_req = container.resources.requests.get("cpu", "-")
+                mem_req = container.resources.requests.get("memory", "-")
+            pod_info = PodInfo(
+                pod_name=pod.metadata.name,
+                username="WORKLOAD",
+                user_name=app_label,
+                status=pod.status.phase or "Unknown",
+                node_name=node_name,
+                cpu_request=cpu_req,
+                memory_request=mem_req,
+                created_at=pod.metadata.creation_timestamp.isoformat() if pod.metadata.creation_timestamp else None,
+                pod_ip=pod.status.pod_ip,
+                namespace=wl_ns,
+                pod_kind="workload",
+            )
+            node_map[node_name].pods.append(pod_info)
+            # user-apps / terminal / system 노드 역할은 유지 — workload로 덮어쓰지 않음
+            if node_map[node_name].node_role not in ("system", "user-apps", "terminal"):
+                node_map[node_name].node_role = "workload"
+
+    # User terminal pods
     pods = v1.list_namespaced_pod(namespace=namespace, label_selector="app=claude-terminal")
     total_pods = 0
     for pod in pods.items:
@@ -314,6 +373,9 @@ async def get_infrastructure(
             cpu_request=cpu_req,
             memory_request=mem_req,
             created_at=pod.metadata.creation_timestamp.isoformat() if pod.metadata.creation_timestamp else None,
+            pod_ip=pod.status.pod_ip,
+            namespace=namespace,
+            pod_kind="terminal",
         )
 
         if node_name in node_map:
@@ -876,6 +938,433 @@ async def auto_scale_down(
             logger.error(f"Failed to scale down {name}: {e}")
 
     return {"scaled_down": scaled_down, "checked_nodes": len(nodes)}
+
+
+# ==================== Unhealthy Pods ====================
+
+class UnhealthyPod(BaseModel):
+    namespace: str
+    pod_name: str
+    pod_ip: str | None = None
+    node_name: str | None = None
+    status: str
+    reason: str | None = None
+    restarts: int = 0
+    age_seconds: int = 0
+    owner: str | None = None
+    app_name: str | None = None
+    deployment: str | None = None
+    message: str | None = None
+
+
+class UnhealthyPodsResponse(BaseModel):
+    pods: list[UnhealthyPod]
+    collected_at: str
+
+
+_UNHEALTHY_NAMESPACES = ("claude-apps", "claude-sessions", "platform", "openwebui")
+_RESTART_THRESHOLD = 5
+
+
+@router.get("/infra/unhealthy-pods", response_model=UnhealthyPodsResponse)
+async def list_unhealthy_pods(
+    _admin: dict = Depends(_require_admin),
+):
+    """비정상 Pod 실시간 조회 (CrashLoopBackOff, ImagePullBackOff, Pending 장기화 등)."""
+    v1 = client.CoreV1Api()
+    now = datetime.now(timezone.utc)
+    unhealthy: list[UnhealthyPod] = []
+
+    for ns in _UNHEALTHY_NAMESPACES:
+        try:
+            pods = v1.list_namespaced_pod(namespace=ns)
+        except Exception as e:
+            logger.warning(f"list_namespaced_pod({ns}) failed: {e}")
+            continue
+
+        for pod in pods.items:
+            phase = pod.status.phase or "Unknown"
+            statuses = pod.status.container_statuses or []
+            restarts = sum(s.restart_count for s in statuses)
+
+            bad_reason: str | None = None
+            bad_message: str | None = None
+            for s in statuses:
+                waiting = getattr(s.state, "waiting", None)
+                if waiting and waiting.reason in (
+                    "CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull",
+                    "CreateContainerConfigError", "CreateContainerError",
+                    "RunContainerError", "InvalidImageName",
+                ):
+                    bad_reason = waiting.reason
+                    bad_message = waiting.message
+                    break
+
+            is_unhealthy = (
+                bad_reason is not None
+                or phase in ("Failed", "Unknown")
+                or restarts >= _RESTART_THRESHOLD
+                or (phase == "Pending" and pod.metadata.creation_timestamp
+                    and (now - pod.metadata.creation_timestamp).total_seconds() > 300)
+            )
+            if not is_unhealthy:
+                continue
+
+            labels = pod.metadata.labels or {}
+            age = 0
+            if pod.metadata.creation_timestamp:
+                age = int((now - pod.metadata.creation_timestamp).total_seconds())
+
+            # deployment 이름 추출 (ReplicaSet owner → deployment 접두부)
+            deployment = None
+            for ref in (pod.metadata.owner_references or []):
+                if ref.kind == "ReplicaSet":
+                    # rs name: <deploy>-<hash>
+                    deployment = ref.name.rsplit("-", 1)[0]
+                    break
+
+            unhealthy.append(UnhealthyPod(
+                namespace=ns,
+                pod_name=pod.metadata.name,
+                pod_ip=pod.status.pod_ip,
+                node_name=pod.spec.node_name,
+                status=bad_reason or phase,
+                reason=bad_reason,
+                restarts=restarts,
+                age_seconds=age,
+                owner=labels.get("owner"),
+                app_name=labels.get("app-name") or labels.get("app"),
+                deployment=deployment,
+                message=(bad_message[:200] if bad_message else None),
+            ))
+
+    unhealthy.sort(key=lambda p: (-p.restarts, p.namespace, p.pod_name))
+    return UnhealthyPodsResponse(
+        pods=unhealthy,
+        collected_at=now.isoformat(),
+    )
+
+
+class DeleteDeploymentRequest(BaseModel):
+    namespace: str
+    deployment: str
+
+
+@router.post("/infra/delete-deployment")
+async def delete_unhealthy_deployment(
+    req: DeleteDeploymentRequest,
+    _admin: dict = Depends(_require_admin),
+):
+    """불량 Deployment + 연관 Service 삭제 (claude-apps / platform / openwebui 내)."""
+    if req.namespace not in _UNHEALTHY_NAMESPACES:
+        raise HTTPException(status_code=400, detail=f"namespace not allowed: {req.namespace}")
+
+    apps = client.AppsV1Api()
+    core = client.CoreV1Api()
+    deleted = {"deployment": False, "service": False}
+
+    try:
+        apps.delete_namespaced_deployment(name=req.deployment, namespace=req.namespace)
+        deleted["deployment"] = True
+    except client.ApiException as e:
+        if e.status != 404:
+            raise HTTPException(status_code=500, detail=f"deployment delete failed: {e.reason}")
+
+    try:
+        core.delete_namespaced_service(name=req.deployment, namespace=req.namespace)
+        deleted["service"] = True
+    except client.ApiException as e:
+        if e.status != 404:
+            logger.warning(f"service delete failed: {e.reason}")
+
+    logger.info(f"admin deleted deployment {req.namespace}/{req.deployment}: {deleted}")
+    return {"namespace": req.namespace, "deployment": req.deployment, **deleted}
+
+
+# ==================== Admin App Management ====================
+
+class AdminAppInfo(BaseModel):
+    id: int
+    owner_username: str
+    owner_name: str | None = None
+    app_name: str
+    app_url: str
+    pod_name: str | None = None
+    status: str
+    version: str
+    visibility: str
+    app_port: int
+    pod_status: str | None = None
+    pod_ip: str | None = None
+    node_name: str | None = None
+    restarts: int = 0
+    view_count: int = 0
+    unique_viewers: int = 0
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class AdminAppsResponse(BaseModel):
+    apps: list[AdminAppInfo]
+    total: int
+    collected_at: str
+
+
+@router.get("/apps/list", response_model=AdminAppsResponse)
+async def admin_list_apps(
+    status_filter: str | None = None,
+    _admin: dict = Depends(_require_admin),
+):
+    """관리자용 전체 배포 앱 목록 (K8s 실시간 상태 포함)."""
+    from app.core.database import SessionLocal
+    from app.models.app import DeployedApp as AppModel
+    from app.models.user import User
+
+    db = SessionLocal()
+    try:
+        q = db.query(AppModel, User).outerjoin(User, AppModel.owner_username == User.username)
+        if status_filter:
+            q = q.filter(AppModel.status == status_filter)
+        rows = q.order_by(AppModel.created_at.desc()).all()
+    finally:
+        db.close()
+
+    # K8s 실시간 Pod 상태 수집
+    v1 = client.CoreV1Api()
+    pod_map: dict[str, dict] = {}
+    try:
+        pods = v1.list_namespaced_pod(namespace="claude-apps")
+        for pod in pods.items:
+            labels = pod.metadata.labels or {}
+            key = f"{labels.get('owner','')}/{labels.get('app-name','')}"
+            statuses = pod.status.container_statuses or []
+            restarts = sum(s.restart_count for s in statuses)
+            waiting = None
+            for s in statuses:
+                w = getattr(s.state, "waiting", None)
+                if w:
+                    waiting = w.reason
+                    break
+            pod_map[key] = {
+                "pod_status": waiting or pod.status.phase or "Unknown",
+                "pod_ip": pod.status.pod_ip,
+                "node_name": pod.spec.node_name,
+                "restarts": restarts,
+            }
+    except Exception as e:
+        logger.warning(f"K8s pod status fetch failed: {e}")
+
+    now = datetime.now(timezone.utc)
+    apps_out = []
+    for app, user in rows:
+        key = f"{app.owner_username.lower()}/{app.app_name.lower()}"
+        k8s = pod_map.get(key, {})
+        apps_out.append(AdminAppInfo(
+            id=app.id,
+            owner_username=app.owner_username,
+            owner_name=user.name if user else None,
+            app_name=app.app_name,
+            app_url=app.app_url,
+            pod_name=app.pod_name,
+            status=app.status,
+            version=app.version,
+            visibility=app.visibility,
+            app_port=app.app_port,
+            pod_status=k8s.get("pod_status"),
+            pod_ip=k8s.get("pod_ip"),
+            node_name=k8s.get("node_name"),
+            restarts=k8s.get("restarts", 0),
+            view_count=getattr(app, "view_count", 0) or 0,
+            unique_viewers=getattr(app, "unique_viewers", 0) or 0,
+            created_at=app.created_at.isoformat() if app.created_at else None,
+            updated_at=app.updated_at.isoformat() if app.updated_at else None,
+        ))
+
+    return AdminAppsResponse(apps=apps_out, total=len(apps_out), collected_at=now.isoformat())
+
+
+class AdminAppActionRequest(BaseModel):
+    owner_username: str
+    app_name: str
+
+
+@router.post("/apps/stop")
+async def admin_stop_app(
+    req: AdminAppActionRequest,
+    _admin: dict = Depends(_require_admin),
+    settings: Settings = Depends(get_settings),
+):
+    """관리자: 앱 중지 (replicas=0). DB status는 유지."""
+    apps_v1 = client.AppsV1Api()
+    from app.core.database import SessionLocal
+    from app.models.app import DeployedApp as AppModel
+
+    db = SessionLocal()
+    try:
+        app = db.query(AppModel).filter(
+            AppModel.owner_username == req.owner_username,
+            AppModel.app_name == req.app_name,
+        ).first()
+        if not app or not app.pod_name:
+            raise HTTPException(status_code=404, detail="앱을 찾을 수 없습니다")
+        pod_name = app.pod_name
+        app.status = "stopped"
+        app.updated_at = datetime.now(timezone.utc)
+        db.commit()
+    finally:
+        db.close()
+
+    try:
+        apps_v1.patch_namespaced_deployment_scale(
+            name=pod_name,
+            namespace="claude-apps",
+            body={"spec": {"replicas": 0}},
+        )
+    except client.ApiException as e:
+        if e.status != 404:
+            raise HTTPException(status_code=500, detail=f"스케일 다운 실패: {e.reason}")
+
+    logger.info(f"admin stopped app {req.owner_username}/{req.app_name}")
+    return {"stopped": True, "app_name": req.app_name, "owner": req.owner_username}
+
+
+@router.post("/apps/start")
+async def admin_start_app(
+    req: AdminAppActionRequest,
+    _admin: dict = Depends(_require_admin),
+    settings: Settings = Depends(get_settings),
+):
+    """관리자: 중지된 앱 재시작 (replicas=1)."""
+    apps_v1 = client.AppsV1Api()
+    from app.core.database import SessionLocal
+    from app.models.app import DeployedApp as AppModel
+
+    db = SessionLocal()
+    try:
+        app = db.query(AppModel).filter(
+            AppModel.owner_username == req.owner_username,
+            AppModel.app_name == req.app_name,
+        ).first()
+        if not app or not app.pod_name:
+            raise HTTPException(status_code=404, detail="앱을 찾을 수 없습니다")
+        pod_name = app.pod_name
+        app.status = "running"
+        app.updated_at = datetime.now(timezone.utc)
+        db.commit()
+    finally:
+        db.close()
+
+    try:
+        apps_v1.patch_namespaced_deployment_scale(
+            name=pod_name,
+            namespace="claude-apps",
+            body={"spec": {"replicas": 1}},
+        )
+    except client.ApiException as e:
+        if e.status != 404:
+            raise HTTPException(status_code=500, detail=f"스케일 업 실패: {e.reason}")
+
+    logger.info(f"admin started app {req.owner_username}/{req.app_name}")
+    return {"started": True, "app_name": req.app_name, "owner": req.owner_username}
+
+
+@router.post("/apps/reapprove")
+async def admin_reapprove_app(
+    req: AdminAppActionRequest,
+    _admin: dict = Depends(_require_admin),
+    settings: Settings = Depends(get_settings),
+):
+    """관리자: 회수된 앱을 재승인 대기 상태로 전환.
+
+    suspended → pending_approval: 기존 승인 페이지(/apps/pending)에서 관리자가
+    앱 내용을 검토한 뒤 명시적으로 승인해야만 서비스가 재개됩니다.
+    Pod와 Ingress는 승인 시점에 재생성됩니다.
+    """
+    from app.core.database import SessionLocal
+    from app.models.app import DeployedApp as AppModel
+
+    db = SessionLocal()
+    try:
+        app = db.query(AppModel).filter(
+            AppModel.owner_username == req.owner_username,
+            AppModel.app_name == req.app_name,
+        ).first()
+        if not app:
+            raise HTTPException(status_code=404, detail="앱을 찾을 수 없습니다")
+        if app.status != "suspended":
+            raise HTTPException(status_code=400, detail=f"회수된 앱만 재승인 요청 가능합니다 (현재: {app.status})")
+        app.status = "pending_approval"
+        app.approved_by = None
+        app.approved_at = None
+        app.updated_at = datetime.now(timezone.utc)
+        db.commit()
+    finally:
+        db.close()
+
+    logger.info(f"admin re-queued app {req.owner_username}/{req.app_name} for approval review")
+    return {"reapprove_queued": True, "app_name": req.app_name, "owner": req.owner_username}
+
+
+@router.post("/apps/recall")
+async def admin_recall_app(
+    req: AdminAppActionRequest,
+    _admin: dict = Depends(_require_admin),
+    settings: Settings = Depends(get_settings),
+):
+    """관리자: 배포 회수 — 갤러리 제거 + 외부 접근 차단 + Pod 종료.
+
+    사용자의 코드/데이터(EFS)는 보존됩니다.
+    사용자는 본인 터미널에서 앱을 다시 배포할 수 있습니다.
+    완전 삭제(K8s 리소스 + DB)는 관리자 권한으로도 허용하지 않습니다.
+    """
+    from app.core.database import SessionLocal
+    from app.models.app import DeployedApp as AppModel
+    from kubernetes.client.exceptions import ApiException
+
+    apps_v1 = client.AppsV1Api()
+    net_v1 = client.NetworkingV1Api()
+    core_v1 = client.CoreV1Api()
+
+    db = SessionLocal()
+    try:
+        app = db.query(AppModel).filter(
+            AppModel.owner_username == req.owner_username,
+            AppModel.app_name == req.app_name,
+        ).first()
+        if not app:
+            raise HTTPException(status_code=404, detail="앱을 찾을 수 없습니다")
+        if app.status == "suspended":
+            raise HTTPException(status_code=400, detail="이미 회수된 앱입니다")
+        pod_name = app.pod_name
+
+        # DB: 상태를 suspended, 비공개로 전환 (코드/데이터는 건드리지 않음)
+        app.status = "suspended"
+        app.visibility = "private"
+        app.updated_at = datetime.now(timezone.utc)
+        db.commit()
+    finally:
+        db.close()
+
+    if pod_name:
+        # Pod 종료 (replicas=0)
+        try:
+            apps_v1.patch_namespaced_deployment_scale(
+                name=pod_name, namespace="claude-apps",
+                body={"spec": {"replicas": 0}},
+            )
+        except ApiException as e:
+            if e.status != 404:
+                logger.warning(f"scale-down failed for recalled app {pod_name}: {e.reason}")
+
+        # Ingress 삭제 — 외부 경로 차단
+        try:
+            net_v1.delete_namespaced_ingress(name=pod_name, namespace="claude-apps")
+        except ApiException as e:
+            if e.status != 404:
+                logger.warning(f"ingress delete failed for recalled app {pod_name}: {e.reason}")
+
+    logger.info(f"admin recalled app {req.owner_username}/{req.app_name} — K8s scaled-0, ingress removed, DB=suspended/private")
+    return {"recalled": True, "app_name": req.app_name, "owner": req.owner_username}
 
 
 # ==================== Audit Logs ====================

@@ -79,6 +79,21 @@ spec:
         - port: 7681        # ttyd 웹 터미널 포트
           protocol: TCP
 
+    # auth-gateway(platform ns)에서 오는 파일서버 접근 허용
+    # OnlyOffice 문서 다운로드 시 auth-gateway → user Pod fileserver (8080) 프록시 경로
+    # stream_file: GET /api/v1/viewers/file/{user}/{path}?token= → http://{pod_ip}:8080/api/download
+    # 이 규칙 없이는 OnlyOffice가 "다운로드하지 못했습니다" 오류를 표시함
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: platform
+          podSelector:
+            matchLabels:
+              app: auth-gateway
+      ports:
+        - port: 8080
+          protocol: TCP
+
   egress:
     # DNS 해석 허용 (UDP 53 + TCP 53)
     # to: [] → 목적지를 제한하지 않음 (kube-dns는 모든 Pod에서 접근 필요)
@@ -262,6 +277,21 @@ spec:
               app: onlyoffice
       ports:
         - port: 80
+          protocol: TCP
+
+    # 사용자 터미널 Pod 파일서버 허용 (OnlyOffice 문서 다운로드용)
+    # auth-gateway stream_file: OnlyOffice DS가 요청한 document.url을 받아
+    # user Pod fileserver(8080)에서 파일을 가져와 중계
+    # 이 규칙 없이는 NetworkPolicy가 연결을 차단하여 "다운로드하지 못했습니다" 발생
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: claude-sessions
+          podSelector:
+            matchLabels:
+              app: claude-terminal
+      ports:
+        - port: 8080
           protocol: TCP
 
 ---

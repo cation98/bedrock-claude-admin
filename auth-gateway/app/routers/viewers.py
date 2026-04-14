@@ -13,6 +13,7 @@ import logging
 import os
 import secrets
 import time
+import urllib.parse
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -483,9 +484,10 @@ def _build_onlyoffice_config(
     if file_download_url is None:
         token_owner = file_owner_username or username
         file_token = _create_file_token(token_owner, filename)
+        encoded_filename = urllib.parse.quote(filename, safe="/")
         file_download_url = (
             f"http://auth-gateway.platform.svc.cluster.local"
-            f"/api/v1/viewers/file/{token_owner}/{filename}?token={file_token}"
+            f"/api/v1/viewers/file/{token_owner}/{encoded_filename}?token={file_token}"
         )
 
     # 편집 불가 확장자는 강제 view-only (OnlyOffice가 저장 시 포맷 손실)
@@ -625,11 +627,17 @@ def _validate_office_path(file_path: str) -> str:
 
 
 def _personal_download_url(username: str, file_path: str) -> str:
-    """개인 파일 다운로드용 URL(one-time token 포함) 생성."""
+    """개인 파일 다운로드용 URL(one-time token 포함) 생성.
+
+    file_path에 공백·한글 등 non-ASCII가 포함될 수 있으므로 percent-encoding 필수.
+    OO DS(Node.js)는 URL에 리터럴 공백·한글이 있으면 HTTP 요청 자체를 만들지 못해
+    "다운로드하지 못했습니다" 오류가 발생한다.
+    """
     file_token = _create_file_token(username, file_path)
+    encoded_path = urllib.parse.quote(file_path, safe="/")
     return (
         f"http://auth-gateway.platform.svc.cluster.local"
-        f"/api/v1/viewers/file/{username}/{file_path}?token={file_token}"
+        f"/api/v1/viewers/file/{username}/{encoded_path}?token={file_token}"
     )
 
 
@@ -744,9 +752,10 @@ async def onlyoffice_shared_editor(
     # Pod 내부 경로: {username}의 workspace 기준 shared-data/{dataset_name}/{sub_path}
     shared_rel_path = f"shared-data/{dataset.dataset_name}/{file_path}"
     file_token = _create_file_token(dataset.owner_username, shared_rel_path)
+    encoded_shared_path = urllib.parse.quote(shared_rel_path, safe="/")
     file_download_url = (
         f"http://auth-gateway.platform.svc.cluster.local"
-        f"/api/v1/viewers/file/{dataset.owner_username}/{shared_rel_path}?token={file_token}"
+        f"/api/v1/viewers/file/{dataset.owner_username}/{encoded_shared_path}?token={file_token}"
     )
 
     config = _build_onlyoffice_config(
@@ -1118,6 +1127,10 @@ _ALLOWED_CALLBACK_URL_HOSTS = {
     # 로컬 개발
     "localhost",
     "127.0.0.1",
+    # OO DS 9.x + $the_host=claude.skons.net 설정으로 인해
+    # callback body.url이 https://claude.skons.net/cache/... 로 생성됨.
+    # _save_edited_file 에서 내부 cluster DNS 로 rewrite 처리함.
+    "claude.skons.net",
 }
 
 
@@ -1165,6 +1178,19 @@ async def _save_edited_file(session: EditSession, download_url: str, filetype: s
         ).geturl()
         logger.warning(
             f"Rewrote OO callback URL from {_parsed.hostname} loopback to cluster DNS: "
+            f"{download_url} → {_rewritten}"
+        )
+        download_url = _rewritten
+    elif _parsed.hostname == "claude.skons.net":
+        # OO DS 9.x + $the_host=claude.skons.net 설정으로 인해
+        # callback body.url 이 https://claude.skons.net/cache/... 로 생성됨.
+        # 외부 ingress 경유 없이 cluster 내부 OO DS Service 로 직접 다운로드.
+        _rewritten = _parsed._replace(
+            scheme="http",
+            netloc="onlyoffice.claude-sessions.svc.cluster.local",
+        ).geturl()
+        logger.warning(
+            f"Rewrote OO callback URL from external host to cluster DNS: "
             f"{download_url} → {_rewritten}"
         )
         download_url = _rewritten

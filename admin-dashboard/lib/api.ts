@@ -288,8 +288,32 @@ export interface DeployedApp {
   acl_count?: number;
   view_count: number;
   unique_viewers: number;
+  dau?: number;
+  wau?: number;
+  mau?: number;
+  like_count?: number;
+  liked_by_me?: boolean;
+  author_name?: string;
+  author_team?: string;
   created_at: string | null;
   updated_at: string | null;
+}
+
+export interface AppAnalytics {
+  app_name: string;
+  app_id: number;
+  dau: number;
+  wau: number;
+  mau: number;
+  total_views: number;
+  total_unique_viewers: number;
+  daily_trend: { date: string; views: number; unique_users: number }[];
+  period_days: number;
+  generated_at: string;
+}
+
+export function getAppAnalytics(appName: string, days = 30): Promise<AppAnalytics> {
+  return request<AppAnalytics>(`/api/v1/apps/${appName}/analytics?days=${days}`);
 }
 
 export interface DeployedAppsResponse {
@@ -298,6 +322,68 @@ export interface DeployedAppsResponse {
 
 export function getAdminApps(): Promise<DeployedAppsResponse> {
   return request<DeployedAppsResponse>("/api/v1/admin/apps");
+}
+
+// ---------- Admin App Management ----------
+
+export interface AdminAppInfo {
+  id: number;
+  owner_username: string;
+  owner_name: string | null;
+  app_name: string;
+  app_url: string;
+  pod_name: string | null;
+  status: string;
+  version: string;
+  visibility: string;
+  app_port: number;
+  pod_status: string | null;
+  pod_ip: string | null;
+  node_name: string | null;
+  restarts: number;
+  view_count: number;
+  unique_viewers: number;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface AdminAppsResponse {
+  apps: AdminAppInfo[];
+  total: number;
+  collected_at: string;
+}
+
+export function getAdminAppList(statusFilter?: string): Promise<AdminAppsResponse> {
+  const qs = statusFilter ? `?status_filter=${statusFilter}` : "";
+  return request<AdminAppsResponse>(`/api/v1/admin/apps/list${qs}`);
+}
+
+export function adminStopApp(ownerUsername: string, appName: string): Promise<{ stopped: boolean }> {
+  return request(`/api/v1/admin/apps/stop`, {
+    method: "POST",
+    body: JSON.stringify({ owner_username: ownerUsername, app_name: appName }),
+  });
+}
+
+export function adminStartApp(ownerUsername: string, appName: string): Promise<{ started: boolean }> {
+  return request(`/api/v1/admin/apps/start`, {
+    method: "POST",
+    body: JSON.stringify({ owner_username: ownerUsername, app_name: appName }),
+  });
+}
+
+export function adminRecallApp(ownerUsername: string, appName: string): Promise<{ recalled: boolean }> {
+  return request(`/api/v1/admin/apps/recall`, {
+    method: "POST",
+    body: JSON.stringify({ owner_username: ownerUsername, app_name: appName }),
+  });
+}
+
+export function adminReapproveApp(ownerUsername: string, appName: string): Promise<{ reapprove_queued: boolean }> {
+  return request(`/api/v1/admin/apps/reapprove`, {
+    method: "POST",
+    body: JSON.stringify({ owner_username: ownerUsername, app_name: appName }),
+  });
 }
 
 export function getGalleryApps(): Promise<DeployedAppsResponse> {
@@ -680,6 +766,9 @@ export interface PodInfo {
   cpu_request: string;
   memory_request: string;
   created_at: string | null;
+  pod_ip: string | null;
+  namespace: string | null;
+  pod_kind: "terminal" | "workload" | "system" | "dummy";
 }
 
 export interface NodeInfo {
@@ -701,6 +790,39 @@ export interface InfraResponse {
 
 export function getInfrastructure(): Promise<InfraResponse> {
   return request<InfraResponse>("/api/v1/admin/infrastructure");
+}
+
+// ---------- Unhealthy Pods ----------
+
+export interface UnhealthyPod {
+  namespace: string;
+  pod_name: string;
+  pod_ip: string | null;
+  node_name: string | null;
+  status: string;
+  reason: string | null;
+  restarts: number;
+  age_seconds: number;
+  owner: string | null;
+  app_name: string | null;
+  deployment: string | null;
+  message: string | null;
+}
+
+export interface UnhealthyPodsResponse {
+  pods: UnhealthyPod[];
+  collected_at: string;
+}
+
+export function getUnhealthyPods(): Promise<UnhealthyPodsResponse> {
+  return request<UnhealthyPodsResponse>("/api/v1/admin/infra/unhealthy-pods");
+}
+
+export function deleteUnhealthyDeployment(namespace: string, deployment: string): Promise<{ namespace: string; deployment: string; deployment_deleted: boolean; service_deleted: boolean }> {
+  return request(`/api/v1/admin/infra/delete-deployment`, {
+    method: "POST",
+    body: JSON.stringify({ namespace, deployment }),
+  });
 }
 
 // ---------- Security Policies ----------

@@ -175,6 +175,17 @@ class AppDeployService:
                         },
                     ),
                     spec=client.V1PodSpec(
+                # 사용자 배포 앱 전용 노드(user-apps-workers)에만 배치
+                # taint dedicated=user-apps:NoSchedule + nodeSelector 조합으로 격리
+                node_selector={"role": "user-apps"},
+                tolerations=[
+                    client.V1Toleration(
+                        key="dedicated",
+                        operator="Equal",
+                        value="user-apps",
+                        effect="NoSchedule",
+                    ),
+                ],
                 # Pod-level 보안 컨텍스트: 비-root 실행 강제
                 security_context=client.V1PodSecurityContext(
                     run_as_non_root=True,

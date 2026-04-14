@@ -22,7 +22,7 @@ Endpoints:
 import asyncio
 import logging
 import re
-from datetime import datetime, date, timezone
+from datetime import datetime, date, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -530,6 +530,32 @@ async def list_gallery_apps(
     )
     dau_map: dict[int, int] = {row.app_id: row.dau for row in dau_stats}
 
+    # ── MAU: 최근 30일 고유 조회자 ──────────────────────────────────────
+    month_start = datetime.now(timezone.utc) - timedelta(days=30)
+    mau_stats = (
+        db.query(
+            AppView.app_id,
+            func.count(func.distinct(AppView.viewer_user_id)).label("mau"),
+        )
+        .filter(AppView.app_id.in_(app_ids), AppView.viewed_at >= month_start)
+        .group_by(AppView.app_id)
+        .all()
+    )
+    mau_map: dict[int, int] = {row.app_id: row.mau for row in mau_stats}
+
+    # ── WAU: 최근 7일 고유 조회자 ───────────────────────────────────────
+    week_start = datetime.now(timezone.utc) - timedelta(days=7)
+    wau_stats = (
+        db.query(
+            AppView.app_id,
+            func.count(func.distinct(AppView.viewer_user_id)).label("wau"),
+        )
+        .filter(AppView.app_id.in_(app_ids), AppView.viewed_at >= week_start)
+        .group_by(AppView.app_id)
+        .all()
+    )
+    wau_map: dict[int, int] = {row.app_id: row.wau for row in wau_stats}
+
     # ── 좋아요 집계 (N+1 방지) ───────────────────────────────────────────
     like_stats = (
         db.query(
@@ -572,6 +598,8 @@ async def list_gallery_apps(
             "view_count": vc,
             "unique_viewers": uv,
             "dau": dau,
+            "wau": wau_map.get(app.id, 0),
+            "mau": mau_map.get(app.id, 0),
             "like_count": like_count,
             "liked_by_me": liked_by_me,
             "created_at": app.created_at.isoformat() if app.created_at else None,
@@ -648,6 +676,85 @@ async def toggle_app_like(
     like_count = db.query(func.count(AppLike.id)).filter(AppLike.app_id == app.id).scalar()
 
     return {"liked": liked, "like_count": like_count}
+
+
+# ==================== 앱 Analytics ====================
+
+
+@router.get("/{app_name}/analytics")
+async def get_app_analytics(
+    app_name: str,
+    days: int = Query(default=30, ge=7, le=90),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """앱 상세 분석 데이터 (일별 조회수 트렌드, DAU/WAU/MAU).
+
+    소유자 또는 admin만 상세 analytics 조회 가능.
+    """
+    username = current_user["sub"]
+    role = current_user.get("role", "user")
+
+    app = db.query(DeployedApp).filter(DeployedApp.app_name == app_name).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="앱을 찾을 수 없습니다")
+    if role != "admin" and app.owner_username != username:
+        raise HTTPException(status_code=403, detail="접근 권한이 없습니다")
+
+    now = datetime.now(timezone.utc)
+    start = now - timedelta(days=days)
+
+    # 일별 조회수 + 고유 사용자 수
+    daily = (
+        db.query(
+            func.date(AppView.viewed_at).label("day"),
+            func.count(AppView.id).label("views"),
+            func.count(func.distinct(AppView.viewer_user_id)).label("unique_users"),
+        )
+        .filter(AppView.app_id == app.id, AppView.viewed_at >= start)
+        .group_by(func.date(AppView.viewed_at))
+        .order_by(func.date(AppView.viewed_at))
+        .all()
+    )
+
+    today_start = datetime.combine(date.today(), datetime.min.time()).replace(tzinfo=timezone.utc)
+    week_start = now - timedelta(days=7)
+    month_start = now - timedelta(days=30)
+
+    dau = db.query(func.count(func.distinct(AppView.viewer_user_id))).filter(
+        AppView.app_id == app.id, AppView.viewed_at >= today_start
+    ).scalar() or 0
+
+    wau = db.query(func.count(func.distinct(AppView.viewer_user_id))).filter(
+        AppView.app_id == app.id, AppView.viewed_at >= week_start
+    ).scalar() or 0
+
+    mau = db.query(func.count(func.distinct(AppView.viewer_user_id))).filter(
+        AppView.app_id == app.id, AppView.viewed_at >= month_start
+    ).scalar() or 0
+
+    total_views = db.query(func.count(AppView.id)).filter(AppView.app_id == app.id).scalar() or 0
+    total_unique = db.query(func.count(func.distinct(AppView.viewer_user_id))).filter(AppView.app_id == app.id).scalar() or 0
+
+    return {
+        "app_name": app_name,
+        "app_id": app.id,
+        "dau": dau,
+        "wau": wau,
+        "mau": mau,
+        "total_views": total_views,
+        "total_unique_viewers": total_unique,
+        "daily_trend": [
+            {
+                "date": str(row.day),
+                "views": row.views,
+                "unique_users": row.unique_users,
+            }
+            for row in daily
+        ],
+        "period_days": days,
+        "generated_at": now.isoformat(),
+    }
 
 
 # ==================== 공유 관리 (통합 조회/일괄 회수) ====================

@@ -460,3 +460,73 @@ output "burst_workers_nodegroup_arn" {
   description = "burst-workers nodegroup ARN (Phase 1b SPOT pool)"
   value       = aws_eks_node_group.burst_workers.arn
 }
+
+# ----- User Apps Workers Nodegroup (t3.medium) — 사용자 배포 앱 전용 -----
+# 목적: claude.skons.net/gallery 등 사용자가 배포한 웹앱을 별도 노드에 격리
+# 정책: bin-packing (고밀도 배치) — 앱당 리소스가 작으므로 t3.medium에 최대 적재
+#   - cpu request 250m / memory 512Mi → t3.medium(2vCPU/4GiB)에 약 6~7개 앱 수용
+#   - Cluster Autoscaler: min=0(유휴 시 비용 없음), max=5 자동 확장
+#
+# 노드 taint: dedicated=user-apps:NoSchedule
+#   → _create_app_pod에서 toleration 추가된 앱 Pod만 이 노드에 배치됨
+#   → openwebui, 터미널 Pod 등 다른 워크로드의 혼입 차단
+#
+# 스케줄링 정책 (bin-packing):
+#   Cluster Autoscaler expander=least-waste + kube-scheduler의 NodeResourcesMostAllocated
+#   → 기존 노드를 최대한 채운 뒤 신규 노드 스케일업 (비용 최소화)
+
+resource "aws_eks_node_group" "user_apps" {
+  cluster_name    = aws_eks_cluster.main.name
+  node_group_name = "${var.project_name}-user-apps-workers"
+  node_role_arn   = aws_iam_role.eks_nodes.arn
+  subnet_ids      = aws_subnet.eks_private[*].id
+
+  instance_types = var.eks_user_apps_instance_types
+
+  scaling_config {
+    desired_size = var.eks_user_apps_desired_size
+    min_size     = var.eks_user_apps_min_size
+    max_size     = var.eks_user_apps_max_size
+  }
+
+  update_config {
+    max_unavailable = 1
+  }
+
+  labels = {
+    role = "user-apps"
+  }
+
+  # 사용자 앱 Pod만 허용 — 다른 워크로드 혼입 차단
+  taint {
+    key    = "dedicated"
+    value  = "user-apps"
+    effect = "NO_SCHEDULE"
+  }
+
+  # Cluster Autoscaler: bin-packing을 위해 least-waste expander 사용
+  # (cluster-autoscaler ConfigMap의 expander=least-waste와 연동)
+  tags = {
+    "k8s.io/cluster-autoscaler/enabled"                 = "true"
+    "k8s.io/cluster-autoscaler/${var.project_name}-eks" = "owned"
+    Name                                                = "${var.project_name}-user-apps-workers"
+    Owner                                               = "N1102359"
+    Env                                                 = var.environment
+    Service                                             = "sko-claude-ai-agent"
+  }
+
+  lifecycle {
+    ignore_changes = [scaling_config[0].desired_size]
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.eks_worker_node_policy,
+    aws_iam_role_policy_attachment.eks_cni_policy,
+    aws_iam_role_policy_attachment.eks_container_registry,
+  ]
+}
+
+output "user_apps_workers_nodegroup_arn" {
+  description = "user-apps-workers nodegroup ARN (사용자 배포 앱 전용)"
+  value       = aws_eks_node_group.user_apps.arn
+}
