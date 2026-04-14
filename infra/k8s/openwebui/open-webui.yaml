@@ -119,6 +119,32 @@ spec:
             - name: ENABLE_OLLAMA_API
               value: "false"
 
+            # ── DB Query Tool용 readonly 자격증명 (Option A / 이슈 #42 Phase 2 MCP로 이관 예정) ──
+            # Open WebUI Tools(db_query)가 psycopg2로 사내 DB 직접 조회.
+            # Secret `openwebui-db-readonly` 는 repo 미커밋 (자격증명 별도 관리) — 3개 키:
+            #   SAFETY_DATABASE_URL, TANGO_DATABASE_URL, DOCULOG_DATABASE_URL
+            # 모두 readonly 계정 (`claude_readonly` / `doculog_reader`).
+            # optional: true — secret 미존재 시 Pod 기동 차단하지 않음 (tool만 Error 반환).
+            # 참고: infra/openwebui-tools/db_tools.py
+            - name: SAFETY_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: openwebui-db-readonly
+                  key: SAFETY_DATABASE_URL
+                  optional: true
+            - name: TANGO_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: openwebui-db-readonly
+                  key: TANGO_DATABASE_URL
+                  optional: true
+            - name: DOCULOG_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: openwebui-db-readonly
+                  key: DOCULOG_DATABASE_URL
+                  optional: true
+
             # ── 사용자 등록 제한 ──────────────────────────────────────────────
             # ENABLE_SIGNUP=false는 /auth/signup 폼 접근만 차단.
             # Trusted header auth(WEBUI_AUTH_TRUSTED_EMAIL_HEADER)를 통한
