@@ -38,3 +38,32 @@ def test_webui_verify_expired_refresh_returns_401(create_test_user):
     assert resp.status_code == 401
     # 만료된 refresh로는 재발급되지 않아야 함
     assert "bedrock_jwt=" not in resp.headers.get("Set-Cookie", "")
+
+
+def test_webui_verify_expired_access_valid_refresh_silently_reissues(create_test_user):
+    """access 만료 + refresh 유효 → 200 + Set-Cookie(bedrock_jwt)."""
+    user = create_test_user(username="N1102359")
+    settings = get_settings()
+    # 만료된 access token 생성
+    expired_access = create_access_token(
+        user.username, "", "", "user", settings,
+        expires_delta=timedelta(seconds=-1),
+    )
+    # 유효한 refresh token 생성 (12h 기본 TTL)
+    # create_refresh_token은 (token_str, jti) 튜플을 반환
+    valid_refresh, _ = create_refresh_token(
+        user.username, "", "", "user", settings,
+    )
+    resp = client.get(
+        "/api/v1/auth/webui-verify",
+        cookies={
+            "bedrock_jwt": expired_access,
+            "bedrock_refresh": valid_refresh,
+        },
+    )
+    assert resp.status_code == 200
+    # 새 access cookie가 Set-Cookie로 내려와야 함
+    set_cookie = resp.headers.get("Set-Cookie", "")
+    assert "bedrock_jwt=" in set_cookie, f"Expected new bedrock_jwt cookie, got: {set_cookie!r}"
+    # X-SKO-Email 헤더 정상
+    assert resp.headers.get("X-SKO-Email") == f"{user.username}@skons.net"
