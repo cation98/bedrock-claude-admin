@@ -75,8 +75,19 @@ data:
             self.name = "Bedrock AG/"  # Open WebUI 모델 목록 표시 prefix
             self.valves = self.Valves()
 
+        # ─────────────────────────────────────────────────────────────────
+        # 승인된 모델만 드롭다운에 노출 (고정 화이트리스트).
+        # BAG은 ListInferenceProfiles로 20+개 모델을 노출하지만 IAM/운영 정책상
+        # global.anthropic Claude Sonnet 4.6 + Haiku 4.5 만 사용.
+        # apac.*, twelvelabs.*, amazon.nova-* 등은 IAM Resource 미커버 → 400.
+        # ─────────────────────────────────────────────────────────────────
+        _ALLOWED_MODELS = {
+            "global.anthropic.claude-sonnet-4-6": "Claude Sonnet 4.6",
+            "global.anthropic.claude-haiku-4-5-20251001-v1:0": "Claude Haiku 4.5",
+        }
+
         def pipelines(self) -> List[dict]:
-            """BAG에서 사용 가능한 모델 목록을 반환."""
+            """BAG에서 사용 가능한 모델 목록을 _ALLOWED_MODELS 와 교집합하여 반환."""
             try:
                 r = requests.get(
                     f"{self.valves.OPENAI_API_BASE_URL}/models",
@@ -84,16 +95,18 @@ data:
                     timeout=10,
                 )
                 r.raise_for_status()
+                bag_ids = {m["id"] for m in r.json().get("data", [])}
                 return [
-                    {"id": m["id"], "name": m["id"]}
-                    for m in r.json().get("data", [])
+                    {"id": mid, "name": name}
+                    for mid, name in self._ALLOWED_MODELS.items()
+                    if mid in bag_ids
                 ]
             except Exception as e:
                 print(f"[bedrock_ag_pipe] model list error: {e}")
-                # fallback: BAG unreachable 시 알려진 모델 직접 반환 (Phase 1c: Haiku 추가)
+                # fallback: BAG unreachable 시에도 화이트리스트 동일 노출
                 return [
-                    {"id": "us.anthropic.claude-sonnet-4-6", "name": "Claude Sonnet 4.6"},
-                    {"id": "us.anthropic.claude-haiku-4-5-20251001-v1:0", "name": "Claude Haiku 4.5"},
+                    {"id": mid, "name": name}
+                    for mid, name in self._ALLOWED_MODELS.items()
                 ]
 
         def pipe(

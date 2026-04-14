@@ -186,8 +186,9 @@ spec:
             # ── 기본 모델 ─────────────────────────────────────────────────────
             # Pipelines bedrock_ag_pipe manifold prefix + BAG 모델 ID
             # 형식: "{manifold_id}.{bag_model_id}"
+            # 2026-04-14: us.* → global.* (BAG의 ListInferenceProfiles 결과에 us.* 미포함)
             - name: DEFAULT_MODELS
-              value: "bedrock_ag_pipe.us.anthropic.claude-sonnet-4-6"
+              value: "bedrock_ag_pipe.global.anthropic.claude-sonnet-4-6"
 
           resources:
             requests:
