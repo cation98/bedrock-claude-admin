@@ -123,6 +123,11 @@ data:
             payload = {**body, "model": actual_model}
             url = f"{self.valves.OPENAI_API_BASE_URL}/chat/completions"
 
+            # 주의: 본 함수는 yield를 포함하므로 Python이 제너레이터로 처리한다.
+            # 제너레이터 내부의 `return value`는 StopIteration에 value만 담길 뿐,
+            # 호출자가 값을 받지 못한다 → non-streaming 시 응답 유실.
+            # 해법: non-streaming도 yield로 바디(raw JSON text)를 전달한다.
+            # Open WebUI Pipelines는 제너레이터가 반환한 str/bytes를 그대로 응답으로 사용한다.
             try:
                 if body.get("stream"):
                     with requests.post(
@@ -134,7 +139,8 @@ data:
                 else:
                     r = requests.post(url, headers=headers, json=payload, timeout=120)
                     r.raise_for_status()
-                    return r.json()
+                    # OpenAI-compatible chat.completion JSON (문자열)로 yield
+                    yield r.text
             except Exception as e:
                 print(f"[bedrock_ag_pipe] pipe error: {e}")
                 return f"Error: {e}"
