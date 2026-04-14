@@ -21,8 +21,13 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings, get_settings
 from app.core.database import get_db
 from app.core.jwt_rs256 import create_refresh_token as create_rs256_refresh_token
+from app.core.jwt_rs256 import (
+    _verify_jwt_signature_only,
+    create_access_token as jwt_create_access_token,
+    is_jti_blacklisted,
+)
 from app.core.security import create_access_token, get_current_user
-from app.routers.jwt_auth import write_access_cookies
+from app.routers.jwt_auth import write_access_cookies, REFRESH_COOKIE_NAME
 from app.models.audit_log import AuditAction
 from app.models.two_factor_code import TwoFactorCode
 from app.models.user import User
@@ -562,15 +567,19 @@ async def webui_verify(
     401 반환 시 NGINX가 로그인 페이지로 리다이렉트.
 
     검증 흐름:
-      bedrock_jwt 쿠키 (HttpOnly) → RS256 검증 → username 추출
-      → X-SKO-Email: {username}@skons.net 헤더 응답
-      → ingress auth-response-headers로 Open WebUI에 전달
-      → WEBUI_AUTH_TRUSTED_EMAIL_HEADER=X-SKO-Email 로 자동 로그인/생성
+      1. bedrock_jwt access 쿠키 유효 → 200 + X-SKO-Email (기존 경로)
+      2. access 만료/없음 + bedrock_refresh 유효 → silent refresh:
+         새 access 발급 → Set-Cookie → 200 + X-SKO-Email
+      3. 둘 다 무효 → 401 (auth-signin 경로 실행)
+
+    Silent refresh는 refresh jti를 blacklist하지 않는다.
+    Hub의 /auth/refresh 엔드포인트만 blacklist+rotation을 담당한다.
+    (두 경로 동시 호출 시 replay 오탐 방지)
 
     ingress.yaml 설정 참고:
       nginx.ingress.kubernetes.io/auth-url: "http://auth-gateway.platform.svc.cluster.local/api/v1/auth/webui-verify"
-      nginx.ingress.kubernetes.io/auth-response-headers: "X-SKO-Email,X-SKO-User-Id"
-      nginx.ingress.kubernetes.io/auth-signin: "https://claude.skons.net/login?redirect=$escaped_request_uri"
+      nginx.ingress.kubernetes.io/auth-response-headers: "X-SKO-Email,X-SKO-User-Id,Set-Cookie"
+      nginx.ingress.kubernetes.io/auth-signin: "https://claude.skons.net/webapp-login"
 
     [Phase 1c Backlog B6] Redis revocation 체크 활성화:
       50명 규모에서 Redis RTT(≈1ms)는 Ingress 전체 응답성에 무시할 수준.
@@ -579,52 +588,76 @@ async def webui_verify(
     """
     from app.core.jwt_rs256 import is_user_revoked
     from app.core.security import decode_token
+    from jose import JWTError
 
     # bedrock_jwt 쿠키 우선 (SSO 로그인 시 설정됨)
-    token = request.cookies.get("bedrock_jwt", "")
-    if not token:
-        # claude_token legacy fallback
-        token = request.cookies.get("claude_token", "")
+    token = request.cookies.get("bedrock_jwt", "") or request.cookies.get("claude_token", "")
+    payload = decode_token(token, settings) if token else None
 
-    if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required",
-            headers={"WWW-Authenticate": 'Bearer realm="skons.net"'},
-        )
-
-    payload = decode_token(token, settings)
-    if not payload:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
-            headers={"WWW-Authenticate": 'Bearer realm="skons.net"'},
-        )
-
-    username = payload.get("sub", "")
-    if not username:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token missing subject",
-        )
-
-    # Phase 1c B6: 사용자 레벨 revoke 확인 (cascade revoke 즉시 반영)
-    # Redis 실패 시 fail-open — 인증 자체는 JWT 서명에 이미 검증됨
-    try:
-        if is_user_revoked(username):
+    if payload:
+        # 경로 1: access 유효 — 기존 동작 유지
+        username = payload.get("sub", "")
+        if not username:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Session has been revoked",
+                detail="Token missing subject",
                 headers={"WWW-Authenticate": 'Bearer realm="skons.net"'},
             )
-    except HTTPException:
-        raise
-    except Exception:
-        pass  # Redis 장애 시 JWT 서명만으로 통과
+        # Phase 1c B6: 사용자 레벨 revoke 확인 (cascade revoke 즉시 반영)
+        # Redis 실패 시 fail-open — 인증 자체는 JWT 서명에 이미 검증됨
+        try:
+            if is_user_revoked(username):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Session has been revoked",
+                    headers={"WWW-Authenticate": 'Bearer realm="skons.net"'},
+                )
+        except HTTPException:
+            raise
+        except Exception:
+            pass  # Redis 장애 시 JWT 서명만으로 통과
 
-    # NGINX auth-response-headers로 Open WebUI에 전달되는 헤더
-    # Open WebUI WEBUI_AUTH_TRUSTED_EMAIL_HEADER=X-SKO-Email 로 자동 로그인
-    response.headers["X-SKO-Email"] = f"{username}@skons.net"
-    response.headers["X-SKO-User-Id"] = username
+        # NGINX auth-response-headers로 Open WebUI에 전달되는 헤더
+        response.headers["X-SKO-Email"] = f"{username}@skons.net"
+        response.headers["X-SKO-User-Id"] = username
+        return {"ok": True}
 
-    return {"ok": True}
+    # 경로 2: access 없음/만료 → bedrock_refresh로 silent refresh 시도
+    raw_refresh = request.cookies.get(REFRESH_COOKIE_NAME, "")
+    if raw_refresh:
+        try:
+            # RS256 서명 + 만료 검증 (jti blacklist 미포함 — replay는 Hub /auth/refresh 담당)
+            refresh_payload = _verify_jwt_signature_only(raw_refresh, expected_type="refresh")
+        except JWTError:
+            refresh_payload = None
+
+        if refresh_payload:
+            sub = refresh_payload.get("sub", "")
+            emp_no = refresh_payload.get("emp_no", "")
+            email = refresh_payload.get("email", "")
+            role = refresh_payload.get("role", "user")
+            jti = refresh_payload.get("jti", "")
+
+            # 사용자 revoke + jti blacklist 이중 검증 (Redis 장애 시 fail-open)
+            revoked = False
+            try:
+                revoked = is_user_revoked(sub) or (bool(jti) and is_jti_blacklisted(jti))
+            except Exception:
+                revoked = False  # Redis 장애 시 서명만으로 통과
+
+            if sub and not revoked:
+                # 새 access token 발급 — refresh는 그대로 유지
+                # Hub /auth/refresh 엔드포인트가 rotation + blacklist 담당
+                new_access = jwt_create_access_token(sub, emp_no, email, role, settings)
+                write_access_cookies(response, new_access)
+
+                response.headers["X-SKO-Email"] = f"{sub}@skons.net"
+                response.headers["X-SKO-User-Id"] = sub
+                return {"ok": True}
+
+    # 경로 3: access + refresh 모두 무효 → 401 (NGINX가 auth-signin으로 리다이렉트)
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Authentication required",
+        headers={"WWW-Authenticate": 'Bearer realm="skons.net"'},
+    )
