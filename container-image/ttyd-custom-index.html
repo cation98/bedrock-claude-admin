@@ -7,7 +7,45 @@
 <style>
   /* ttyd 기본 스타일 유지 */
   html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
-  #terminal { height: 100%; }
+  #terminal { position: absolute; top: 36px; left: 0; right: 0; bottom: 0; }
+
+  /* 모드 선택 상단 바 */
+  #mode-bar {
+    position: fixed; top: 0; left: 0; right: 0; height: 36px;
+    background: #0d1117; border-bottom: 1px solid #30363d;
+    display: flex; align-items: center; gap: 8px; padding: 0 12px;
+    font: 12px/1 -apple-system, "Segoe UI", Roboto, sans-serif; color: #c9d1d9;
+    z-index: 50;
+  }
+  #mode-bar .label { color: #8b949e; margin-right: 4px; }
+  #mode-bar button {
+    background: #161b22; color: #c9d1d9; border: 1px solid #30363d;
+    padding: 5px 12px; border-radius: 4px; cursor: pointer; font-size: 12px;
+    transition: all 120ms;
+  }
+  #mode-bar button:hover { border-color: #58a6ff; color: #fff; }
+  #mode-bar button.active { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  #mode-bar .hint { margin-left: auto; color: #6e7681; font-size: 11px; }
+
+  /* 모드 변경 확인 모달 */
+  #mode-modal {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 2000;
+    align-items: center; justify-content: center;
+  }
+  #mode-modal.active { display: flex; }
+  #mode-modal .card {
+    background: #161b22; border: 1px solid #30363d; border-radius: 10px;
+    padding: 24px; max-width: 420px; color: #c9d1d9; font-family: -apple-system, sans-serif;
+  }
+  #mode-modal h3 { margin: 0 0 12px; color: #fff; font-size: 16px; }
+  #mode-modal p { margin: 8px 0; font-size: 13px; line-height: 1.5; color: #8b949e; }
+  #mode-modal .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }
+  #mode-modal button {
+    padding: 8px 16px; border-radius: 6px; border: 1px solid #30363d;
+    background: #21262d; color: #c9d1d9; cursor: pointer; font-size: 13px;
+  }
+  #mode-modal button.primary { background: #238636; border-color: #2ea043; color: #fff; }
+  #mode-modal button:hover { filter: brightness(1.15); }
 
   /* 이미지 붙여넣기 미리보기 */
   #paste-preview {
@@ -35,6 +73,25 @@
 </style>
 </head>
 <body>
+<div id="mode-bar">
+  <span class="label">모드:</span>
+  <button id="btn-mode-1" onclick="requestModeChange('1')">답변만 받기</button>
+  <button id="btn-mode-2" onclick="requestModeChange('2')">진행과정 자세히 보기</button>
+  <span class="hint">클릭 시 터미널이 재시작됩니다.</span>
+</div>
+
+<div id="mode-modal">
+  <div class="card">
+    <h3 id="mode-modal-title">모드를 변경하시겠습니까?</h3>
+    <p id="mode-modal-desc"></p>
+    <p style="color:#da3633;">⚠ 진행 중인 Claude 세션이 종료되고 브라우저가 새로고침됩니다.</p>
+    <div class="actions">
+      <button onclick="closeModeModal()">취소</button>
+      <button class="primary" id="mode-modal-confirm">변경하고 재시작</button>
+    </div>
+  </div>
+</div>
+
 <div id="terminal"></div>
 
 <div id="paste-preview">
@@ -200,6 +257,53 @@ function showToast(msg) {
   t.textContent = msg;
   t.style.display = 'block';
   setTimeout(function() { t.style.display = 'none'; }, 2000);
+}
+
+// ─── 모드 선택 바 ─────────────────────────────────────────────
+// fileserver.py(포트 8080) 의 /api/set-mode 로 POST.
+// Ingress가 /files/{HOSTNAME}/ → pod:8080/ 으로 라우팅하므로
+// 현재 window.location 에서 /terminal/ → /files/ 로 치환해 호출.
+function getFileserverBase() {
+  // 예: /terminal/claude-terminal-n1102359/  →  /files/claude-terminal-n1102359/
+  var p = window.location.pathname.replace(/\/terminal\//, '/files/');
+  // 마지막 슬래시 보정
+  if (!p.endsWith('/')) p += '/';
+  return p;
+}
+
+function requestModeChange(mode) {
+  var modal = document.getElementById('mode-modal');
+  var desc = document.getElementById('mode-modal-desc');
+  var confirm = document.getElementById('mode-modal-confirm');
+  if (mode === '1') {
+    desc.textContent = '답변만 받기 모드로 전환합니다. 진행 과정 로그는 표시되지 않고 최종 답변만 나옵니다.';
+  } else {
+    desc.textContent = '진행 과정 자세히 보기 모드로 전환합니다. 도구 호출/사고 과정이 모두 표시됩니다.';
+  }
+  confirm.onclick = function() { applyModeChange(mode); };
+  modal.classList.add('active');
+}
+
+function closeModeModal() {
+  document.getElementById('mode-modal').classList.remove('active');
+}
+
+function applyModeChange(mode) {
+  var base = getFileserverBase();
+  fetch(base + 'api/set-mode', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode: mode })
+  }).then(function(res) {
+    if (!res.ok) {
+      showToast('모드 변경 실패 (HTTP ' + res.status + ')');
+      return;
+    }
+    showToast('모드를 변경했습니다. 새로고침 중...');
+    setTimeout(function() { window.location.reload(); }, 600);
+  }).catch(function(err) {
+    showToast('네트워크 오류: ' + err.message);
+  });
 }
 </script>
 </body>

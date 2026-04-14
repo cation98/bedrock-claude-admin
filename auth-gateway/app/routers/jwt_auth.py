@@ -320,13 +320,31 @@ async def refresh_token_endpoint(
     else:
         new_access_token = create_access_token(sub, emp_no, email, role, settings)
 
+    # 새 refresh token 발급 (rotation) — 응답 body에 포함해 클라이언트가 갱신하도록.
+    # rotation 미구현 시 client가 옛 refresh 재사용 → 이미 blacklist된 jti → cascade revoke.
+    # Pod daemon / admin-dashboard 모두 _NEW_REFRESH 처리 코드 있음. 쿠키 기반 client는
+    # 아래 set_cookie 로 동시 갱신.
+    new_refresh_result = create_refresh_token(sub, emp_no, email, role, settings)
+    new_refresh_token = new_refresh_result[0] if isinstance(new_refresh_result, tuple) else new_refresh_result
+
     # 쿠키 업데이트 — Dual Cookie (bedrock_jwt + bedrock_jwt_vis 동시 갱신)
     write_access_cookies(response, new_access_token)
+    # refresh cookie 도 rotation 반영
+    response.set_cookie(
+        key=REFRESH_COOKIE_NAME,
+        value=new_refresh_token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        domain=COOKIE_DOMAIN,
+        max_age=REFRESH_TTL_SECONDS,
+    )
 
-    logger.debug("Access token refreshed for sub=%s", sub)
+    logger.debug("Access+refresh tokens rotated for sub=%s", sub)
 
     return {
         "access_token": new_access_token,
+        "refresh_token": new_refresh_token,
         "token_type": "bearer",
         "expires_in": ACCESS_TTL_SECONDS,
     }

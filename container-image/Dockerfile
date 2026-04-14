@@ -169,6 +169,12 @@ RUN chmod +x /usr/local/bin/deploy.sh
 COPY scripts/share-sync.sh /usr/local/bin/share-sync.sh
 RUN chmod +x /usr/local/bin/share-sync.sh
 
+# 모드 선택 래퍼 — 답변만 받기 / 진행과정 자세히 보기
+COPY scripts/ask.sh /usr/local/bin/ask
+COPY scripts/ask-loop.sh /usr/local/bin/ask-loop
+COPY scripts/switch-mode.sh /usr/local/bin/switch-mode
+RUN chmod +x /usr/local/bin/ask /usr/local/bin/ask-loop /usr/local/bin/switch-mode
+
 # ttyd 커스텀 index.html — Ctrl+C/V 클립보드 + 이미지 붙여넣기
 RUN mkdir -p /usr/local/share/ttyd
 COPY ttyd-custom-index.html /usr/local/share/ttyd/index.html

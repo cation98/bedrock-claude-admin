@@ -59,6 +59,23 @@ if [ -n "${ANTHROPIC_BASE_URL:-}" ] && [ -n "${SECURE_POD_TOKEN:-}" ] && [ -n "$
             # ANTHROPIC_API_KEY가 이미 설정돼 있으면 제거 — Claude Code가 이를 우선 감지해 프롬프트 띄움
             unset ANTHROPIC_API_KEY 2>/dev/null || true
             unset CLAUDE_CODE_USE_BEDROCK 2>/dev/null || true
+            # Claude Code 2.x는 ANTHROPIC_AUTH_TOKEN + AWS IRSA env(AWS_ROLE_ARN,
+            # AWS_WEB_IDENTITY_TOKEN_FILE) 조합을 감지하면 Bedrock API Keys 모드로 자동 전환해
+            # JWT를 Bearer로 bedrock-runtime에 직접 전달 — Bedrock이 prefix 검증 실패로
+            # 403 "Invalid API Key format: Must start with pre-defined prefix" 응답.
+            # auth-gateway /v1 경로만 쓰도록 IRSA env를 모두 제거.
+            unset AWS_ROLE_ARN AWS_WEB_IDENTITY_TOKEN_FILE 2>/dev/null || true
+            unset AWS_STS_REGIONAL_ENDPOINTS AWS_DEFAULT_REGION AWS_REGION 2>/dev/null || true
+            # Anthropic-compatible 프로토콜이므로 model ID는 Anthropic-style로 교체.
+            # Claude Code가 자체 카탈로그로 client-side validation하므로 Bedrock profile ID
+            # (`global.anthropic.*`)을 쓰면 "may not exist" 오류 발생.
+            # auth-gateway bedrock_proxy.py의 MODEL_MAP이 이를 다시 Bedrock ID로 resolve.
+            export ANTHROPIC_DEFAULT_SONNET_MODEL="claude-sonnet-4-6"
+            export ANTHROPIC_DEFAULT_HAIKU_MODEL="claude-haiku-4-5"
+            # Claude Code 2.x는 ANTHROPIC_BASE_URL 값 뒤에 `/v1/messages`를 자체적으로 붙임.
+            # 주입된 값이 이미 `/v1`로 끝나면 최종 URL이 `/v1/v1/messages` → 404.
+            # (auth-gateway k8s_service.py의 주입값을 수정하기 전까지의 컨테이너-측 보정)
+            export ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL%/v1}"
             echo "  Proxy:    ${ANTHROPIC_BASE_URL} (Bedrock AG T20, JWT issued)"
         else
             echo "  Proxy:    JWT 파싱 실패 — Bedrock 직접 경로 유지"
@@ -252,6 +269,18 @@ fi
 # ---------------------------------------------------------------------------
 git config --global user.name "${USER_DISPLAY_NAME}"
 git config --global user.email "${USER_ID}@skons.net"
+
+# Git HTTP 프록시 — HTTPS_PROXY가 주입되어 있으면 git config에도 복제.
+# 이유: `claude plugin install`이 내부적으로 git clone subprocess를 실행할 때
+#       curl 백엔드가 CONNECT 요청에 Proxy-Authorization 헤더를 실지 않아
+#       egress proxy가 user=- 로 인식하고 차단하는 케이스가 있음.
+#       git config http.proxy 에 명시적으로 auth 포함 URL을 박으면
+#       git이 직접 해당 프록시를 통해 인증된 요청을 보냄.
+if [ -n "${HTTPS_PROXY:-}" ]; then
+    git config --global http.proxy "${HTTPS_PROXY}"
+    git config --global https.proxy "${HTTPS_PROXY}"
+    echo "  Git proxy 설정 완료 (egress authenticated)"
+fi
 
 # ---------------------------------------------------------------------------
 # 4) 작업 디렉토리 준비
@@ -607,17 +636,48 @@ if [ -f /home/node/.claude-token ]; then
     unset _FRESH_TOKEN
 fi
 
+# 모드 선택 — ~/.claude-mode 에 저장된 값 기반으로 분기
+# 1 = 답변만 받기 (기본) — ask-loop REPL
+# 2 = 진행 과정 자세히 보기 — 기존 claude TUI
+MODE_FILE="/home/node/.claude-mode"
+MODE=$(cat "${MODE_FILE}" 2>/dev/null | tr -d '[:space:]')
+
+if [ -z "${MODE}" ]; then
+    # 최초 접속 — 선택 화면
+    echo ""
+    echo "  ╔══════════════════════════════════════════════════════╗"
+    echo "  ║  Claude Code — 시작 모드 선택                        ║"
+    echo "  ╠══════════════════════════════════════════════════════╣"
+    echo "  ║                                                      ║"
+    echo "  ║  [1] 답변만 받기  (추천)                             ║"
+    echo "  ║      • 최종 답변만 표시                              ║"
+    echo "  ║      • 진행 과정(사고/도구 호출) 숨김                ║"
+    echo "  ║                                                      ║"
+    echo "  ║  [2] 진행 과정 자세히 보기                           ║"
+    echo "  ║      • 코드 작업, 도구 호출, 사고 과정 전부 표시     ║"
+    echo "  ║      • 개발자·전문가 권장                            ║"
+    echo "  ║                                                      ║"
+    echo "  ║  (언제든 'switch-mode' 명령 또는 상단 버튼으로       ║"
+    echo "  ║   전환 가능)                                         ║"
+    echo "  ╚══════════════════════════════════════════════════════╝"
+    echo ""
+    read -r -p "  선택 [1/2, 기본 1]: " MODE
+    [ "${MODE}" != "2" ] && MODE="1"
+    echo "${MODE}" > "${MODE_FILE}"
+    echo ""
+fi
+
+if [ "${MODE}" = "1" ]; then
+    exec /usr/local/bin/ask-loop
+fi
+
 echo ""
-echo "  Claude Code를 시작합니다..."
+echo "  Claude Code를 시작합니다... (진행 과정 자세히 보기 모드)"
 echo ""
 
-# Run Claude Code
-# --continue: 이전 대화가 있으면 이어서 시작. 없으면(신규 사용자) 새 대화 시작.
-CLAUDE_ARGS="--dangerously-skip-permissions"
-if [ -d "/home/node/.claude/projects" ] && [ "$(find /home/node/.claude/projects -name '*.jsonl' 2>/dev/null | head -1)" ]; then
-    CLAUDE_ARGS="${CLAUDE_ARGS} --continue"
-fi
-claude ${CLAUDE_ARGS} \
+# Run Claude Code — 자세히 보기 모드
+# --continue 옵션 제거: 이전 대화 자동 이어받기 없음 (매 세션 새로 시작)
+claude --dangerously-skip-permissions \
     --append-system-prompt "항상 한국어로 응답하세요. 사용자의 이름을 인지하고 존칭을 사용하세요."
 
 # Claude exited — backup conversations to EFS

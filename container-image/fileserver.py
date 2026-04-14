@@ -104,6 +104,9 @@ class FileServerHandler(SimpleHTTPRequestHandler):
         if parsed.path == '/api/mkdir':
             self._handle_mkdir()
             return
+        if parsed.path == '/api/set-mode':
+            self._handle_set_mode()
+            return
         # --- End webapp management API ---
 
         if parsed.path != "/upload":
@@ -412,6 +415,32 @@ class FileServerHandler(SimpleHTTPRequestHandler):
         try:
             os.makedirs(real_target, exist_ok=True)
             self._send_json(200, {"success": True})
+        except OSError as e:
+            self._send_json(500, {"error": str(e)})
+
+    def _handle_set_mode(self):
+        """Claude 시작 모드 설정 API — POST /api/set-mode  body: {"mode": "1" | "2"}
+
+        1 = 답변만 받기 (ask-loop REPL)
+        2 = 진행 과정 자세히 보기 (claude TUI)
+        파일 ~/.claude-mode 에 저장 — 다음 터미널 세션부터 반영.
+        """
+        try:
+            body = self._read_body()
+            data = json.loads(body)
+        except (json.JSONDecodeError, ValueError):
+            self._send_json(400, {"error": "invalid JSON body"})
+            return
+        mode = str(data.get("mode", "")).strip()
+        if mode not in ("1", "2"):
+            self._send_json(400, {"error": "mode must be '1' or '2'"})
+            return
+        home = os.path.expanduser("~")
+        mode_file = os.path.join(home, ".claude-mode")
+        try:
+            with open(mode_file, "w") as f:
+                f.write(mode + "\n")
+            self._send_json(200, {"success": True, "mode": mode})
         except OSError as e:
             self._send_json(500, {"error": str(e)})
 
