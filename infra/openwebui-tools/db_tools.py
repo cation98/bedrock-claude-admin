@@ -43,7 +43,14 @@ def _format_result(cols, rows) -> str:
         rows = rows[:_MAX_ROWS]
         truncated = True
     if not rows:
-        return "(결과 없음)"
+        # 환각 방지: 명시적 EMPTY_RESULT 태그로 모델이 무조건 인식.
+        # 모델은 이 반환을 받으면 "조회 결과 없음"으로 답하거나 사용자에게 조건
+        # 재확인을 요청해야 하며 **절대 데이터를 지어내지 말 것**.
+        return (
+            "EMPTY_RESULT: 매칭되는 행이 0건입니다. "
+            "WHERE 조건 재검토 필요 (region/team 철자·AT TIME ZONE·날짜 범위). "
+            "사용자에게 '조회 결과 없음' 사실대로 답하고, 수치나 팀명을 절대 환각/추측하지 마세요."
+        )
     header = "| " + " | ".join(str(c) for c in cols) + " |"
     sep = "| " + " | ".join("---" for _ in cols) + " |"
     body = [
