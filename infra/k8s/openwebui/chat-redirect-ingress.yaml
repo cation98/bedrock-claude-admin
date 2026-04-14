@@ -1,0 +1,36 @@
+# =============================================================================
+# chat.skons.net → ai-chat.skons.net 301 Permanent Redirect
+#
+# 배경: 2026-04-14 이슈 #30 으로 Open WebUI 호스트를 `chat.skons.net` → `ai-chat.skons.net` 이관.
+#       일부 사용자의 북마크·기록에 남은 chat.skons.net 접속 시 404(default backend) 가 떴음.
+#       별도 ingress 규칙으로 301 permanent redirect 설정.
+#
+# 동작: chat.skons.net/* (GET/POST 등 모든 메서드·경로)
+#       → 301 Moved Permanently → https://ai-chat.skons.net$request_uri
+#
+# 영향 범위: openwebui namespace 만. 사용자 Pod(claude-sessions) 무영향.
+# =============================================================================
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: chat-legacy-redirect
+  namespace: openwebui
+  annotations:
+    # nginx-ingress: 모든 요청을 ai-chat.skons.net으로 301 영구 이동
+    nginx.ingress.kubernetes.io/permanent-redirect: "https://ai-chat.skons.net$request_uri"
+    nginx.ingress.kubernetes.io/permanent-redirect-code: "301"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: chat.skons.net
+      http:
+        paths:
+          # 경로는 의미 없음 (리다이렉트만 수행하지만 backend 필수이므로 dummy 지정)
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: open-webui
+                port:
+                  number: 8080
