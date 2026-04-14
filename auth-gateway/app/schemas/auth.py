@@ -8,6 +8,7 @@ class LoginRequest(BaseModel):
 
 class LoginResponse(BaseModel):
     access_token: str
+    refresh_token: str | None = None  # admin dashboard 등 body-based refresh 경로용
     token_type: str = "bearer"
     username: str
     name: str | None = None

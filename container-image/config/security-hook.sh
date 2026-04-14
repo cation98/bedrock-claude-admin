@@ -28,7 +28,7 @@ if [ "$TOOL" = "Bash" ]; then
         exit 2
     fi
     # 외부 데이터 전송 차단 (curl/wget은 settings.json deny에서도 차단하지만 이중 방어)
-    if echo "$CMD" | grep -qiE 'curl\s+.*(-d|--data|--upload)|wget\s+.*--post|nc\s|ncat\s|socat\s'; then
+    if echo "$CMD" | grep -qiE '(^|[;&|[:space:]])(curl\s+.*(-d|--data|--upload)|wget\s+.*--post|nc|ncat|socat)(\s|$)'; then
         echo "BLOCKED: outbound data transfer" >&2
         exit 2
     fi

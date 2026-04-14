@@ -3,7 +3,7 @@
 import { FormEvent, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { login, verify2fa, LoginStep1Response } from "@/lib/api";
-import { setToken, setUser, isAuthenticated } from "@/lib/auth";
+import { setToken, setRefreshToken, setUser, isAuthenticated } from "@/lib/auth";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -53,6 +53,7 @@ export default function LoginPage() {
 
       // No 2FA - proceed directly
       setToken(res.access_token);
+      setRefreshToken(res.refresh_token);
       setUser({ username: res.username, name: res.name, role: res.role });
       router.push("/dashboard");
     } catch (err) {
@@ -73,6 +74,7 @@ export default function LoginPage() {
     try {
       const res = await verify2fa({ code_id: codeId, code: tfaCode });
       setToken(res.access_token);
+      setRefreshToken(res.refresh_token);
       setUser({ username: res.username, name: res.name, role: res.role });
       router.push("/dashboard");
     } catch (err) {

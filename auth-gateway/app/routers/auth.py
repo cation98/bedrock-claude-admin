@@ -8,17 +8,19 @@ Endpoints:
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Union
 
 import httpx
 import psycopg2
 import psycopg2.extras
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.core.database import get_db
+from app.core.jwt_rs256 import create_refresh_token as create_rs256_refresh_token
 from app.core.security import create_access_token, get_current_user
 from app.routers.jwt_auth import write_access_cookies
 from app.models.audit_log import AuditAction
@@ -246,9 +248,23 @@ def _issue_jwt(user: User, settings: Settings, request: Request | None = None) -
         "role": user.role,
         "type": "access",
     }
-    access_token = create_access_token(token_data, settings)
+    # admin은 refresh 인터셉터 정착 전까지 자동 로그아웃 빈도 완화 목적 8시간 부여.
+    # 일반 사용자는 기존 15분 유지(Pod 플로우는 refresh 동작).
+    expires_delta = timedelta(hours=8) if user.role == "admin" else None
+    access_token = create_access_token(token_data, settings, expires_delta=expires_delta)
+    # admin dashboard는 쿠키 미사용(Bearer localStorage)이므로 body 로 refresh 전달.
+    # jwt_rs256.create_refresh_token 는 pod 플로우와 동일한 RS256 서명 키를 사용한다.
+    email = f"{user.username.lower()}@skons.net"
+    refresh_token, _jti = create_rs256_refresh_token(
+        sub=user.username,
+        emp_no=user.username,
+        email=email,
+        role=user.role,
+        settings=settings,
+    )
     return LoginResponse(
         access_token=access_token,
+        refresh_token=refresh_token,
         username=user.username,
         name=user.name,
         role=user.role,
@@ -481,6 +497,56 @@ async def get_me(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return user
+
+
+class _RefreshBody(BaseModel):
+    refresh_token: str
+
+
+@router.post("/refresh", response_model=LoginResponse)
+async def refresh_admin_token(
+    body: _RefreshBody,
+    settings: Settings = Depends(get_settings),
+    db: Session = Depends(get_db),
+):
+    """admin dashboard 전용 body-based refresh.
+
+    - 기존 /auth/refresh (jwt_auth 라우터)는 쿠키 기반 + jwt_rs256 token 형식.
+    - 이 엔드포인트는 body 기반 + _issue_jwt 와 동일한 토큰 형식을 반환해
+      admin login 응답 (access_token + refresh_token) 과 스키마/페이로드 정합을 유지한다.
+    - rotation: 사용된 refresh jti 를 즉시 blacklist 하여 재사용 차단.
+    """
+    from jose import JWTError
+    from app.core.jwt_rs256 import (
+        _verify_jwt_signature_only,
+        blacklist_jti,
+        is_jti_blacklisted,
+        is_user_revoked,
+    )
+
+    try:
+        payload = _verify_jwt_signature_only(body.refresh_token, expected_type="refresh")
+    except JWTError as e:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
+
+    sub = payload.get("sub", "")
+    jti = payload.get("jti", "")
+
+    if is_user_revoked(sub):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session revoked")
+
+    if jti and is_jti_blacklisted(jti):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token replay detected")
+
+    user = db.query(User).filter(User.username == sub).first()
+    if not user or not user.is_approved:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+
+    if jti:
+        # 12시간 (refresh TTL 과 동일)
+        blacklist_jti(jti, ttl_seconds=12 * 60 * 60)
+
+    return _issue_jwt(user, settings, None)
 
 
 @router.get("/webui-verify", status_code=200)

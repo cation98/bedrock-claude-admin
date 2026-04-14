@@ -1,4 +1,5 @@
 const TOKEN_KEY = "bedrock_admin_token";
+const REFRESH_KEY = "bedrock_admin_refresh";
 const USER_KEY = "bedrock_admin_user";
 
 export interface User {
@@ -14,6 +15,16 @@ export function getToken(): string | null {
 
 export function setToken(token: string): void {
   localStorage.setItem(TOKEN_KEY, token);
+}
+
+export function getRefreshToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(REFRESH_KEY);
+}
+
+export function setRefreshToken(token: string | null | undefined): void {
+  if (!token) return;
+  localStorage.setItem(REFRESH_KEY, token);
 }
 
 export function getUser(): User | null {
@@ -33,6 +44,7 @@ export function setUser(user: User): void {
 
 export function logout(): void {
   localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(REFRESH_KEY);
   localStorage.removeItem(USER_KEY);
   window.location.href = "/";
 }

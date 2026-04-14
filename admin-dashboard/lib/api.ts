@@ -1,30 +1,72 @@
-import { getToken, logout } from "./auth";
+import {
+  getRefreshToken,
+  getToken,
+  logout,
+  setRefreshToken,
+  setToken,
+} from "./auth";
 
 const BASE_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-async function request<T>(
-  path: string,
-  options: RequestInit = {}
-): Promise<T> {
+// 동시 401 발생 시 단일 refresh 호출로 수렴시키는 공유 Promise.
+let inFlightRefresh: Promise<boolean> | null = null;
+
+async function tryRefresh(): Promise<boolean> {
+  if (inFlightRefresh) return inFlightRefresh;
+  const refresh = getRefreshToken();
+  if (!refresh) return false;
+
+  inFlightRefresh = (async () => {
+    try {
+      const res = await fetch(`${BASE_URL}/api/v1/auth/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: refresh }),
+      });
+      if (!res.ok) return false;
+      const data = (await res.json()) as {
+        access_token?: string;
+        refresh_token?: string | null;
+      };
+      if (!data.access_token) return false;
+      setToken(data.access_token);
+      if (data.refresh_token) setRefreshToken(data.refresh_token);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      inFlightRefresh = null;
+    }
+  })();
+  return inFlightRefresh;
+}
+
+async function fetchWithAuth(path: string, options: RequestInit): Promise<Response> {
   const token = getToken();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(options.headers as Record<string, string>),
   };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  return fetch(`${BASE_URL}${path}`, { ...options, headers });
+}
 
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
-
-  const res = await fetch(`${BASE_URL}${path}`, {
-    ...options,
-    headers,
-  });
+async function request<T>(
+  path: string,
+  options: RequestInit = {}
+): Promise<T> {
+  let res = await fetchWithAuth(path, options);
 
   if (res.status === 401) {
-    logout();
-    throw new Error("Unauthorized");
+    const refreshed = await tryRefresh();
+    if (refreshed) {
+      res = await fetchWithAuth(path, options);
+    }
+    if (res.status === 401) {
+      logout();
+      throw new Error("Unauthorized");
+    }
   }
 
   if (!res.ok) {
@@ -44,6 +86,7 @@ export interface LoginRequest {
 
 export interface LoginResponse {
   access_token: string;
+  refresh_token?: string | null;
   username: string;
   name: string;
   role: string;
