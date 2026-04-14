@@ -3,23 +3,7 @@
 # Community Edition 제한: 동시 편집 20명
 # AGPL v3 라이선스 — 사내 내부 사용 가능, 수정 시 소스 공개 의무
 #
-# 스토리지: EFS 기반 PVC 사용
-#   - Pod 재시작 시 편집 세션/캐시 데이터 보존 (콜백 진행 중 데이터 손실 방지)
-#   - ReadWriteMany: 향후 replica 증설 대비
-#   - StorageClass: efs-sc (infra/k8s/efs-storage.yaml에서 정의)
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: onlyoffice-data-pvc
-  namespace: claude-sessions
-spec:
-  accessModes:
-    - ReadWriteMany
-  storageClassName: efs-sc
-  resources:
-    requests:
-      storage: 20Gi  # EFS는 탄력적 용량 — 논리적 값
+# 스토리지: emptyDir (OO DS 작업 캐시 — Pod 재시작 시 초기화 무방)
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -53,16 +37,15 @@ spec:
         - sh
         - -c
         - |
-          set -e
           PLUGIN_UUID="asc.{7C4F2E1D-3A5B-4C8E-9D0F-1E2B3C4D5A6F}"
           PLUGIN_DIR="/plugins/${PLUGIN_UUID}"
           mkdir -p "${PLUGIN_DIR}/scripts" "${PLUGIN_DIR}/resources"
-          cp /plugin-meta/config.json "${PLUGIN_DIR}/config.json"
-          cp /plugin-meta/config.js   "${PLUGIN_DIR}/config.js"
-          cp /plugin-src/index.html   "${PLUGIN_DIR}/index.html"
-          cp /plugin-src/code.js      "${PLUGIN_DIR}/scripts/code.js"
-          echo "[sk-ai-injector] files copied to ${PLUGIN_DIR}"
-          ls -la "${PLUGIN_DIR}"
+          # ConfigMap이 없을 때(optional: true)도 Pod이 기동되도록 조건부 복사
+          [ -f /plugin-meta/config.json ] && cp /plugin-meta/config.json "${PLUGIN_DIR}/config.json" || echo "[sk-ai-injector] config.json 없음 — 플러그인 스킵"
+          [ -f /plugin-meta/config.js ]   && cp /plugin-meta/config.js   "${PLUGIN_DIR}/config.js"   || true
+          [ -f /plugin-src/index.html ]   && cp /plugin-src/index.html   "${PLUGIN_DIR}/index.html"  || true
+          [ -f /plugin-src/code.js ]      && cp /plugin-src/code.js      "${PLUGIN_DIR}/scripts/code.js" || true
+          echo "[sk-ai-injector] done (plugin files: $(ls ${PLUGIN_DIR} 2>/dev/null | wc -l))"
         volumeMounts:
         - name: sk-ai-plugin-meta
           mountPath: /plugin-meta
@@ -137,19 +120,24 @@ spec:
             port: 80
           initialDelaySeconds: 30
           periodSeconds: 10
-        # ── F2-c: postStart — local.json 직접 패치 (H2 수정) ────────────────
-        # ONLYOFFICE_DOCS_PARAMS는 OO entrypoint가 local.json을 생성하기 전에
-        # 적용되지 않을 수 있다. postStart에서 entrypoint 완료 후 직접 패치하여
-        # inbox JWT 검증이 확실히 비활성화됨을 보장한다.
+        # ── F2-c: postStart — OO DS 9.x 완전 패치 ───────────────────────────
+        # OO DS 9.x에서 환경변수(ALLOW_PRIVATE_IP_ADDRESS, JWT_INBOX_ENABLED 등)가
+        # local.json에 미적용되는 버그가 있어 postStart에서 직접 패치한다.
+        #
+        # 패치 항목:
+        #   local.json:
+        #     1. inbox JWT 검증 비활성화 — auth-gateway 파일 응답에 JWT 미포함
+        #     2. allowPrivateIPAddress=true — callback URL(172.20.x.x ClusterIP) 허용
+        #     3. blockPrivateIP=false — externalRequest 사설 IP 차단 해제
+        #   nginx ds.conf:
+        #     4. $the_scheme=https, $the_host=claude.skons.net 하드코딩
+        #        — OO DS가 캐시/콜백 URL을 https://claude.skons.net/... 으로 생성
+        #        — Mixed Content(http:// vs https:// 페이지) 차단 방지
         #
         # 흐름:
-        #   1. OO entrypoint 실행 → local.json 생성 (JWT_ENABLED=true 포함)
-        #   2. postStart 실행 → local.json의 inbox 설정을 false로 덮어씀
-        #   3. supervisorctl로 docservice 재시작 → 변경사항 반영
-        #
-        # 주의: postStart 실패 시 Pod이 CrashLoopBackOff가 될 수 있음.
-        #   || true 로 실패를 흡수하여 OO는 기동하되 inbox JWT 검증이 활성화될 수 있음.
-        #   → OO Pod 로그에서 "jwt|token|unauthorized" 로 확인.
+        #   1. OO entrypoint → local.json 생성, nginx 기동
+        #   2. postStart(sleep 10) → local.json + ds.conf 패치
+        #   3. nginx reload + docservice 재시작 → 즉시 반영
         lifecycle:
           postStart:
             exec:
@@ -157,21 +145,50 @@ spec:
                 - bash
                 - -c
                 - |
-                  sleep 5
+                  sleep 10
+                  # ── 1. local.json 패치 ──────────────────────────────────────
                   python3 -c "
-                  import json,time
-                  for i in range(10):
+                  import json, time
+                  for i in range(15):
                       try:
-                          with open('/etc/onlyoffice/documentserver/local.json') as f:
+                          p = '/etc/onlyoffice/documentserver/local.json'
+                          with open(p) as f:
                               cfg = json.load(f)
-                          cfg['services']['CoAuthoring']['token']['enable']['request']['inbox'] = False
-                          with open('/etc/onlyoffice/documentserver/local.json','w') as f:
-                              json.dump(cfg,f,indent=2)
-                          print('inbox JWT disabled')
+                          # inbox JWT 검증 비활성화
+                          ca = cfg.setdefault('services', {}).setdefault('CoAuthoring', {})
+                          ca.setdefault('token', {}).setdefault('enable', {}).setdefault('request', {})['inbox'] = False
+                          # Private IP 허용 (callback URL: 172.20.x.x ClusterIP)
+                          ca.setdefault('request-filtering-agent', {})['allowPrivateIPAddress'] = True
+                          ca['request-filtering-agent']['allowMetaIPAddress'] = True
+                          # externalRequest blockPrivateIP 해제
+                          cfg.setdefault('externalRequest', {}).setdefault('action', {})['blockPrivateIP'] = False
+                          with open(p, 'w') as f:
+                              json.dump(cfg, f, indent=2)
+                          print('local.json patched: inbox=false, allowPrivateIP=true, blockPrivateIP=false')
                           break
-                      except:
+                      except Exception as e:
+                          print(f'retry {i}: {e}')
                           time.sleep(2)
-                  " && supervisorctl restart ds:docservice 2>/dev/null || true
+                  " 2>&1
+                  # ── 2. nginx ds.conf 패치 — HTTPS scheme + 외부 호스트명 ────
+                  cat > /etc/nginx/conf.d/ds.conf << 'NGINX_EOF'
+                  include /etc/nginx/includes/http-common.conf;
+                  server {
+                    listen 0.0.0.0:80;
+                    listen [::]:80 default_server;
+                    server_tokens off;
+                    # OO DS는 ingress(TLS종단) 뒤에서 동작 — 항상 HTTPS로 외부 URL 생성
+                    # Mixed Content 방지: 브라우저(HTTPS)가 http:// 캐시 URL을 차단하지 않도록
+                    set $the_scheme https;
+                    set $the_host claude.skons.net;
+                    set $secure_link_secret c94mzQ8fAuGHgkYq0HAf;
+                    include /etc/nginx/includes/ds-*.conf;
+                  }
+                  NGINX_EOF
+                  nginx -t 2>&1 && nginx -s reload 2>&1
+                  # ── 3. docservice 재시작 — 변경사항 즉시 반영 ──────────────
+                  supervisorctl restart ds:docservice 2>/dev/null
+                  echo "OO DS 9.x patch complete"
         volumeMounts:
         - name: data
           mountPath: /var/lib/onlyoffice
@@ -181,8 +198,7 @@ spec:
           subPath: asc.{7C4F2E1D-3A5B-4C8E-9D0F-1E2B3C4D5A6F}
       volumes:
       - name: data
-        persistentVolumeClaim:
-          claimName: onlyoffice-data-pvc
+        emptyDir: {}  # OO DS 작업 데이터 (캐시, 임시파일) — Pod 재시작 시 초기화 무관
       # SK AI plugin ConfigMaps (scripts/apply-sk-ai-plugin.sh 로 생성됨)
       - name: sk-ai-plugin-meta
         configMap:
