@@ -27,7 +27,7 @@ from app.core.jwt_rs256 import (
     is_jti_blacklisted,
 )
 from app.core.security import create_access_token, get_current_user
-from app.routers.jwt_auth import write_access_cookies, REFRESH_COOKIE_NAME
+from app.routers.jwt_auth import write_access_cookies, write_refresh_cookie, REFRESH_COOKIE_NAME
 from app.models.audit_log import AuditAction
 from app.models.two_factor_code import TwoFactorCode
 from app.models.user import User
@@ -306,6 +306,8 @@ async def login(
             logger.info(f"Test account login bypass: {user.username}")
             jwt_result = _issue_jwt(user, settings, http_request)
             write_access_cookies(response, jwt_result.access_token)
+            if jwt_result.refresh_token:
+                write_refresh_cookie(response, jwt_result.refresh_token)
             return jwt_result
 
     # ── Admin 계정 SSO 매핑 ──
@@ -350,6 +352,8 @@ async def login(
         )
         jwt_result = _issue_jwt(user, settings, http_request)
         write_access_cookies(response, jwt_result.access_token)
+        if jwt_result.refresh_token:
+            write_refresh_cookie(response, jwt_result.refresh_token)
         return jwt_result
 
     # ── 테스트 계정 2FA 우회 ──
@@ -361,6 +365,8 @@ async def login(
         logger.info(f"Test account 2FA bypass: {user.username}")
         jwt_result = _issue_jwt(user, settings, http_request)
         write_access_cookies(response, jwt_result.access_token)
+        if jwt_result.refresh_token:
+            write_refresh_cookie(response, jwt_result.refresh_token)
         return jwt_result
 
     # ── 2FA 흐름 ──
@@ -489,6 +495,8 @@ async def verify_2fa(
     logger.info(f"2FA verified, JWT issued: {username}")
     jwt_result = _issue_jwt(user, settings, http_request)
     write_access_cookies(response, jwt_result.access_token)
+    if jwt_result.refresh_token:
+        write_refresh_cookie(response, jwt_result.refresh_token)
     return jwt_result
 
 
