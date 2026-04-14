@@ -112,6 +112,13 @@ spec:
                   name: pipelines-secret
                   key: PIPELINES_API_KEY
 
+            # ── Ollama 비활성화 ───────────────────────────────────────────────
+            # Open WebUI 기본값은 Ollama 자동 탐색(localhost:11434) → 본 배포는
+            # Ollama 미사용이므로 호출 실패 로그/프론트엔드 500(GET /ollama/api/tags)
+            # 유발. 명시적으로 비활성화.
+            - name: ENABLE_OLLAMA_API
+              value: "false"
+
             # ── 사용자 등록 제한 ──────────────────────────────────────────────
             # ENABLE_SIGNUP=false는 /auth/signup 폼 접근만 차단.
             # Trusted header auth(WEBUI_AUTH_TRUSTED_EMAIL_HEADER)를 통한
