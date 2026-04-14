@@ -17,8 +17,16 @@ spec:
     - Egress
 
   egress:
-    # DNS 허용 (필수)
-    - ports:
+    # DNS 조회 — kube-system의 CoreDNS에만 허용 (외부 DNS 서버 직접 접근 차단)
+    # DNS-over-TCP 터널(iodine 등)을 통한 데이터 반출 경로 차단
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
         - port: 53
           protocol: UDP
         - port: 53
@@ -47,7 +55,9 @@ spec:
         - port: 80
           protocol: TCP
 
-    # RDS ReadOnly Replica (Safety DB 접근)
+    # RDS ReadOnly Replica (VPC 내부 Private Subnet)
+    # 주의: 10.0.0.0/8은 VPC 전체 CIDR — 실제 RDS 서브넷 CIDR로 좁히면 더 안전
+    # (현재 RDS 서브넷: 운영팀 확인 후 구체적 CIDR로 교체 권장)
     - to:
         - ipBlock:
             cidr: 10.0.0.0/8   # VPC 내부 CIDR
