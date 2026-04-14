@@ -240,8 +240,10 @@
         let loginCredentials = null;
 
         // URL params
+        // return_url: legacy 상대경로 전용 (e.g. /portal/)
+        // rd: nginx auth-signin에서 자동 추가하는 절대 URL (e.g. https://ai-chat.skons.net/)
         const params = new URLSearchParams(window.location.search);
-        const returnUrl = params.get('return_url') || '/portal/';
+        const returnUrl = params.get('return_url') || params.get('rd') || '/portal/';
 
         // Auto-focus username field on load
         window.addEventListener('DOMContentLoaded', function() {
@@ -393,10 +395,18 @@
             const _cookieAttrs = 'path=/; max-age=28800; SameSite=Lax; Secure; Domain=.skons.net';
             document.cookie = `bedrock_jwt=${token}; ${_cookieAttrs}`;
             document.cookie = `claude_token=${token}; ${_cookieAttrs}`;  // legacy: T10 전환 완료 후 제거
-            // return_url 검증: 상대 경로만 허용 (open redirect 방지)
+            // 검증: 상대경로(/로 시작, //는 차단) 또는 https://*.skons.net 절대 URL만 허용
+            // (ai-chat.skons.net 등 인증 완료 후 원 페이지 복귀용 — Open Redirect 방지)
             let safeUrl = '/portal/';
             if (returnUrl && returnUrl.startsWith('/') && !returnUrl.startsWith('//')) {
                 safeUrl = returnUrl;
+            } else if (returnUrl) {
+                try {
+                    const u = new URL(returnUrl);
+                    if (u.protocol === 'https:' && (u.hostname === 'skons.net' || u.hostname.endsWith('.skons.net'))) {
+                        safeUrl = u.href;
+                    }
+                } catch (e) { /* invalid URL → fallback */ }
             }
             window.location.href = safeUrl;
         }

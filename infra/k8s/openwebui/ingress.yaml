@@ -48,8 +48,10 @@ metadata:
     nginx.ingress.kubernetes.io/auth-url: "http://auth-gateway.platform.svc.cluster.local/api/v1/auth/webui-verify"
     nginx.ingress.kubernetes.io/auth-response-headers: "X-SKO-Email,X-SKO-User-Id"
     # 이슈 #31: portal.skons.net 은 DNS 미등록 / Ingress 미배포 — 죽은 참조였음.
-    # 실존하는 auth-gateway 호스트(claude.skons.net)의 /login 페이지로 교체.
-    nginx.ingress.kubernetes.io/auth-signin: "https://claude.skons.net/login?redirect=$escaped_request_uri"
+    # auth-gateway /webapp-login (SSO+2FA 경량 로그인, Pod 미생성) 으로 교체.
+    # nginx가 rd=<original_url> 쿼리를 자동 추가 → webapp-login.html이 읽어 재이동.
+    # /login 라우트는 auth-gateway main.py에 존재하지 않아 404 발생 — 해당 참조 제거.
+    nginx.ingress.kubernetes.io/auth-signin: "https://claude.skons.net/webapp-login"
 
     # upstream hash: 같은 사용자는 같은 Open WebUI 인스턴스로 라우팅 (세션 연속성)
     nginx.ingress.kubernetes.io/upstream-hash-by: "$cookie_bedrock_webui_session"
