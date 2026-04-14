@@ -67,3 +67,33 @@ def test_webui_verify_expired_access_valid_refresh_silently_reissues(create_test
     assert "bedrock_jwt=" in set_cookie, f"Expected new bedrock_jwt cookie, got: {set_cookie!r}"
     # X-SKO-Email 헤더 정상
     assert resp.headers.get("X-SKO-Email") == f"{user.username}@skons.net"
+
+
+def test_webui_verify_revoked_refresh_returns_401(create_test_user, monkeypatch):
+    """refresh jti가 blacklist에 있으면 401 (silent refresh 거부)."""
+    user = create_test_user(username="N1102359")
+    settings = get_settings()
+    # 만료된 access token
+    expired_access = create_access_token(
+        user.username, "", "", "user", settings,
+        expires_delta=timedelta(seconds=-1),
+    )
+    # 유효한 refresh token (jti는 monkeypatch로 blacklist 처리)
+    valid_refresh, _ = create_refresh_token(user.username, "", "", "user", settings)
+
+    # is_jti_blacklisted를 항상 True로 패치 — silent refresh 거부 시뮬레이션
+    monkeypatch.setattr(
+        "app.routers.auth.is_jti_blacklisted",
+        lambda jti: True,
+    )
+
+    resp = client.get(
+        "/api/v1/auth/webui-verify",
+        cookies={
+            "bedrock_jwt": expired_access,
+            "bedrock_refresh": valid_refresh,
+        },
+    )
+    assert resp.status_code == 401
+    # 재발급 쿠키 없어야 함
+    assert "bedrock_jwt=" not in resp.headers.get("Set-Cookie", "")
