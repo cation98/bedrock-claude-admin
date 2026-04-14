@@ -1367,6 +1367,112 @@ async def admin_recall_app(
     return {"recalled": True, "app_name": req.app_name, "owner": req.owner_username}
 
 
+# ==================== Maintenance Mode ====================
+
+class MaintenanceRequest(BaseModel):
+    is_active: bool
+    title: str = "서비스 점검 중"
+    description: str = ""
+    start_time: str | None = None   # ISO 8601
+    end_time: str | None = None     # ISO 8601
+
+
+class MaintenanceResponse(BaseModel):
+    is_active: bool
+    title: str
+    description: str
+    start_time: str | None = None
+    end_time: str | None = None
+    updated_by: str | None = None
+    updated_at: str | None = None
+
+
+def _get_or_create_maintenance(db) -> "MaintenanceModel":
+    from app.models.maintenance import MaintenanceMode as MaintenanceModel
+    row = db.query(MaintenanceModel).filter(MaintenanceModel.id == 1).first()
+    if not row:
+        row = MaintenanceModel(id=1)
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+    return row
+
+
+@router.get("/maintenance", response_model=MaintenanceResponse)
+async def get_maintenance(
+    _admin: dict = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """점검 모드 현재 상태 조회."""
+    row = _get_or_create_maintenance(db)
+    return MaintenanceResponse(
+        is_active=row.is_active,
+        title=row.title,
+        description=row.description,
+        start_time=row.start_time.isoformat() if row.start_time else None,
+        end_time=row.end_time.isoformat() if row.end_time else None,
+        updated_by=row.updated_by,
+        updated_at=row.updated_at.isoformat() if row.updated_at else None,
+    )
+
+
+@router.post("/maintenance", response_model=MaintenanceResponse)
+async def set_maintenance(
+    req: MaintenanceRequest,
+    admin: dict = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """점검 모드 설정/해제."""
+    from datetime import datetime, timezone
+    row = _get_or_create_maintenance(db)
+    row.is_active = req.is_active
+    row.title = req.title.strip() or "서비스 점검 중"
+    row.description = req.description.strip()
+    row.updated_by = admin["sub"]
+    row.updated_at = datetime.now(timezone.utc)
+
+    if req.start_time:
+        try:
+            row.start_time = datetime.fromisoformat(req.start_time)
+        except ValueError:
+            row.start_time = None
+    else:
+        row.start_time = None
+
+    if req.end_time:
+        try:
+            row.end_time = datetime.fromisoformat(req.end_time)
+        except ValueError:
+            row.end_time = None
+    else:
+        row.end_time = None
+
+    db.commit()
+    db.refresh(row)
+
+    # Redis 캐시 무효화 (미들웨어가 다음 요청에서 DB 재조회)
+    try:
+        from app.core.redis_client import get_redis
+        r = get_redis()
+        if r:
+            r.delete("maintenance:active")
+    except Exception:
+        pass
+
+    action = "점검 모드 활성화" if req.is_active else "점검 모드 해제"
+    logger.info(f"admin {admin['sub']}: {action} — {req.title}")
+
+    return MaintenanceResponse(
+        is_active=row.is_active,
+        title=row.title,
+        description=row.description,
+        start_time=row.start_time.isoformat() if row.start_time else None,
+        end_time=row.end_time.isoformat() if row.end_time else None,
+        updated_by=row.updated_by,
+        updated_at=row.updated_at.isoformat() if row.updated_at else None,
+    )
+
+
 # ==================== Audit Logs ====================
 
 @router.get("/audit-logs")

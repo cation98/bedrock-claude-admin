@@ -22,6 +22,7 @@ const NAV_ITEMS = [
   { href: "/surveys", label: "현장 수집", icon: "📝" },
   { href: "/broadcast", label: "공지 발송", icon: "📢" },
   { href: "/announcements", label: "공지 관리", icon: "📌" },
+  { href: "/maintenance", label: "점검 모드", icon: "🔧" },
   { href: "/analytics/ui-split", label: "UI 분석", icon: "🔀" },
 ];
 

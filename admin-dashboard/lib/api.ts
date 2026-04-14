@@ -1445,6 +1445,35 @@ export interface UiSplitSummary {
   buckets: UiSplitBucket[];
 }
 
+// ---------- Maintenance Mode ----------
+
+export interface MaintenanceStatus {
+  is_active: boolean;
+  title: string;
+  description: string;
+  start_time: string | null;
+  end_time: string | null;
+  updated_by: string | null;
+  updated_at: string | null;
+}
+
+export function getMaintenanceStatus(): Promise<MaintenanceStatus> {
+  return request<MaintenanceStatus>("/api/v1/admin/maintenance");
+}
+
+export function setMaintenanceMode(data: {
+  is_active: boolean;
+  title?: string;
+  description?: string;
+  start_time?: string | null;
+  end_time?: string | null;
+}): Promise<MaintenanceStatus> {
+  return request<MaintenanceStatus>("/api/v1/admin/maintenance", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
 export function fetchUiSplitStats(
   period: "weekly" | "monthly",
   window: number

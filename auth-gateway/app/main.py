@@ -30,6 +30,7 @@ from app.models.skill import SharedSkill, SkillInstall  # noqa: F401 — create_
 from app.models.file_governance import GovernedFile  # noqa: F401 — create_all이 governed_files 테이블 생성하도록 import
 from app.models.file_audit import FileAuditLog  # noqa: F401 — create_all이 file_audit_logs 테이블 생성하도록 import
 from app.models.announcement import Announcement  # noqa: F401 — create_all이 테이블 생성하도록 import
+from app.models.maintenance import MaintenanceMode  # noqa: F401 — create_all이 maintenance_mode 테이블 생성하도록 import
 from app.models.guide import Guide  # noqa: F401 — create_all이 guides 테이블 생성하도록 import
 from app.models.moderation import ModerationViolation  # noqa: F401 — create_all이 moderation_violations 테이블 생성하도록 import
 from app.models.edit_session import EditSession  # noqa: F401 — OnlyOffice 편집 세션 테이블 생성용
@@ -393,6 +394,128 @@ app = FastAPI(
     openapi_url=None,   # Phase 1a: OpenAPI spec 공개 차단
 )
 
+# ── 점검 모드 미들웨어 ──────────────────────────────────────────────────
+# 점검 모드 활성화 시 모든 요청에 점검 페이지 반환.
+# 예외: /api/v1/admin/* (관리자 API), /health, /maintenance (공개 상태 조회)
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import HTMLResponse as _HTMLResponse
+
+_MAINTENANCE_BYPASS_PREFIXES = (
+    "/api/v1/admin",          # 관리자 API (로그인 포함)
+    "/api/v1/auth",           # 관리자 로그인 토큰 발급
+    "/api/v1/maintenance",    # 점검 상태 공개 조회
+    "/health",                # 헬스체크
+)
+_MAINTENANCE_CACHE_TTL = 10   # Redis 캐시 TTL (초) — 설정 변경 후 최대 10초 내 반영
+
+
+def _maintenance_page_html(title: str, description: str, end_time) -> str:
+    import html as _h
+    end_str = ""
+    if end_time:
+        try:
+            from datetime import timezone
+            t = end_time.astimezone(timezone.utc)
+            end_str = f"<p class='end'>완료 예정: {t.strftime('%Y-%m-%d %H:%M')} (UTC)</p>"
+        except Exception:
+            pass
+    desc_html = f"<p class='desc'>{_h.escape(description)}</p>" if description else ""
+    return f"""<!DOCTYPE html>
+<html lang="ko"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{_h.escape(title)}</title>
+<style>
+  *{{box-sizing:border-box;margin:0;padding:0}}
+  body{{min-height:100vh;display:flex;align-items:center;justify-content:center;
+       background:#0f172a;color:#e2e8f0;font-family:'Pretendard',sans-serif}}
+  .card{{background:#1e293b;border:1px solid #334155;border-radius:16px;
+         padding:48px 40px;max-width:520px;width:90%;text-align:center}}
+  .icon{{font-size:48px;margin-bottom:20px}}
+  h1{{font-size:22px;font-weight:700;color:#f1f5f9;margin-bottom:12px}}
+  .desc{{color:#94a3b8;font-size:14px;line-height:1.7;margin-bottom:16px}}
+  .end{{color:#64748b;font-size:13px}}
+  .badge{{display:inline-block;background:#1d4ed8;color:#bfdbfe;
+          font-size:11px;padding:3px 10px;border-radius:20px;margin-bottom:20px}}
+</style>
+</head><body>
+<div class="card">
+  <div class="icon">🔧</div>
+  <div class="badge">서비스 점검</div>
+  <h1>{_h.escape(title)}</h1>
+  {desc_html}
+  {end_str}
+</div>
+</body></html>"""
+
+
+class MaintenanceMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        path = request.url.path
+
+        # 예외 경로는 점검 모드와 무관하게 통과
+        if any(path.startswith(p) for p in _MAINTENANCE_BYPASS_PREFIXES):
+            return await call_next(request)
+
+        # 점검 모드 여부 확인 (Redis 캐시 → DB 순)
+        is_active = False
+        row = None
+        try:
+            from app.core.redis_client import get_redis
+            r = get_redis()
+            if r:
+                cached = r.get("maintenance:active")
+                if cached is not None:
+                    is_active = cached == b"1"
+                else:
+                    from app.core.database import SessionLocal
+                    from app.models.maintenance import MaintenanceMode
+                    db = SessionLocal()
+                    try:
+                        row = db.query(MaintenanceMode).filter(MaintenanceMode.id == 1).first()
+                        if row:
+                            is_active = row.is_active
+                            r.setex("maintenance:active", _MAINTENANCE_CACHE_TTL, "1" if is_active else "0")
+                    finally:
+                        db.close()
+            else:
+                from app.core.database import SessionLocal
+                from app.models.maintenance import MaintenanceMode
+                db = SessionLocal()
+                try:
+                    row = db.query(MaintenanceMode).filter(MaintenanceMode.id == 1).first()
+                    if row:
+                        is_active = row.is_active
+                finally:
+                    db.close()
+        except Exception:
+            pass  # DB/Redis 오류 시 점검 모드 해제 상태로 처리
+
+        if not is_active:
+            return await call_next(request)
+
+        # 점검 페이지 반환 — row가 없으면 다시 조회
+        if row is None:
+            try:
+                from app.core.database import SessionLocal
+                from app.models.maintenance import MaintenanceMode
+                db = SessionLocal()
+                try:
+                    row = db.query(MaintenanceMode).filter(MaintenanceMode.id == 1).first()
+                finally:
+                    db.close()
+            except Exception:
+                row = None
+
+        title = row.title if row else "서비스 점검 중"
+        description = row.description if row else ""
+        end_time = row.end_time if row else None
+        html = _maintenance_page_html(title, description, end_time)
+        return _HTMLResponse(content=html, status_code=503)
+
+
+app.add_middleware(MaintenanceMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -460,6 +583,27 @@ app.include_router(governance_router)
 app.include_router(secure_files_router)
 app.include_router(viewers_router)
 app.include_router(announcements.router)
+
+
+# 점검 모드 공개 상태 조회 (인증 불필요 — 미들웨어 bypass 경로 /api/v1/maintenance)
+@app.get("/api/v1/maintenance")
+async def public_maintenance_status():
+    """점검 모드 현재 상태 (공개, 인증 불필요)."""
+    from app.core.database import SessionLocal
+    from app.models.maintenance import MaintenanceMode
+    db = SessionLocal()
+    try:
+        row = db.query(MaintenanceMode).filter(MaintenanceMode.id == 1).first()
+        if not row:
+            return {"is_active": False}
+        return {
+            "is_active": row.is_active,
+            "title": row.title,
+            "description": row.description,
+            "end_time": row.end_time.isoformat() if row.end_time else None,
+        }
+    finally:
+        db.close()
 app.include_router(guides_router)
 # jwt_auth: RS256 JWT + JWKS 엔드포인트 (Phase 0 Open WebUI 통합 허브)
 # app_proxy보다 먼저 등록 (catch-all보다 구체적인 경로가 우선)
