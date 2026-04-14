@@ -1,39 +1,28 @@
 """
 title: DB Query
-description: 사내 DB 조회 (TANGO 알람, Safety 관리, DocuLog). 모델이 "데이터베이스", "알람", "통계" 등 DB 조회 의도를 파악하면 자동 호출.
+description: 사내 DB(TANGO 알람·Safety 안전관리·DocuLog 문서활동) 조회. 사용자가 데이터·통계·알람·안전·문서 등을 물으면 반드시 해당 tool을 호출해 실제 데이터를 조회한 후 답변. 추측·기억에 의존하지 말고 반드시 query_* tool을 사용.
 author: SK ONS Bedrock AI Platform
 author_url: https://github.com/cation98/bedrock-ai-agent
-version: 0.1.0
+version: 0.2.0
 requirements: psycopg2-binary
 
-Phase 1 Option A 구현 — 쿼리 로직을 모듈 단위로 격리하여 Phase 2 MCP 서버로 이식 용이하게 설계.
-참조: mindbase/strategy-db-access-openwebui-mcp-migration
-
-Claude Code의 `/db` 스킬(container-image/config/skills/db.md)과 동일 DB·같은 스키마.
-
-환경변수 (open-webui Pod에 주입 — Secret `openwebui-db-readonly` 참조):
-  - SAFETY_DATABASE_URL: postgresql://claude_readonly:.../safety (safety-prod-db-readonly)
-  - TANGO_DATABASE_URL : postgresql://claude_readonly:...@aiagentdb/postgres (TANGO 알람)
-  - DOCULOG_DATABASE_URL: postgresql://doculog_reader:...@aiagentdb/postgres (문서 로그)
+Phase 1 Option A — Open WebUI 에서 Claude Code `/db` 스킬과 동일 기능 제공.
+쿼리 로직은 _run_select 공통 진입점으로 격리하여 Phase 2 MCP 서버 이식 용이.
 """
 
 import os
 from typing import Optional
 
 import psycopg2
-import psycopg2.extras
+import psycopg2.extras  # noqa: F401  # ensure extras loadable (Open WebUI runtime check)
 
 
-_MAX_ROWS = 50          # 결과 행 수 제한 (모델 컨텍스트 과적재 방지)
-_MAX_RESULT_CHARS = 8000  # 결과 문자열 크기 제한
+_MAX_ROWS = 50
+_MAX_RESULT_CHARS = 8000
 
 
 def _require_select_only(sql: str) -> Optional[str]:
-    """readonly 정책 — SELECT/WITH 외 문장 차단.
-    :return: 위반 사유 문자열(차단 시) 또는 None(허용).
-    """
     stripped = sql.strip().lower()
-    # 세미콜론 이후 추가 statement 차단
     if ";" in stripped.rstrip(";"):
         return "다중 statement 금지 — 단일 SELECT/WITH 만 허용"
     if not (stripped.startswith("select") or stripped.startswith("with")):
@@ -49,7 +38,6 @@ def _require_select_only(sql: str) -> Optional[str]:
 
 
 def _format_result(cols, rows) -> str:
-    """마크다운 테이블로 포맷. 행수·문자수 제한."""
     truncated = False
     if len(rows) > _MAX_ROWS:
         rows = rows[:_MAX_ROWS]
@@ -73,9 +61,6 @@ def _format_result(cols, rows) -> str:
 
 
 def _run_select(env_key: str, sql: str, db_name: str) -> str:
-    """쿼리 실행 공통 로직. env 자격증명으로 접속 → 결과 포맷.
-    Phase 2 MCP 이식 시 이 함수 시그니처가 MCP tool entry 로 매핑됨.
-    """
     url = os.environ.get(env_key)
     if not url:
         return f"Error: {env_key} 환경변수 미설정 — 관리자에게 문의"
@@ -103,57 +88,135 @@ def _run_select(env_key: str, sql: str, db_name: str) -> str:
 
 class Tools:
     def __init__(self):
-        # Open WebUI Tools 프레임워크 규격
         pass
 
     def query_tango(self, sql: str) -> str:
-        """
-        TANGO 네트워크 알람 DB 조회. 네트워크 장비 고장·복구·이벤트 로그.
+        """TANGO 네트워크 알람 DB 조회 (PostgreSQL). 네트워크 장비 고장·복구·이벤트.
 
-        주요 테이블:
-          alarm_data (현재 활성 고장, 7일 보존)
-            - OP_TEAM_ORG_NM: 운영팀
-            - OP_HDOFC_ORG_NM: 본부
-          alarm_statistics (뷰 — 팀별 요약 — 빠른 조회)
-          alarm_events (전체 이벤트, 30일)
-            - received_at: 발생시각
-          alarm_history (복구 이력)
+        주요 테이블 (정확한 이름 사용 필수):
+          - alarm_data      : 현재 활성 고장 (실시간, 7일 보존)
+          - alarm_events    : 전체 이벤트 로그 (30일)
+          - alarm_history   : 복구된 고장 이력
+          - alarm_statistics: 팀별 요약 뷰 (team_name, alarm_count, new_alarms, unacked_alarms, locked_alarms, latest_alarm)
+          - facility_info   : 장비 마스터 (JSONB)
+          - alarm_hourly_summary : 시간대별 집계
+
+          Opark 업무일지 (같은 DB에 병존):
+          - opark_daily_report  : 실시간 업무일지 (~183K, 1분 upsert)
+          - opark_daily_archive : 과거 아카이브 (~1.8M)
+          - report_embeddings   : pgvector 768dim (ko-sroberta)
+          - report_ontology     : 5단계 업무 분류 (level/code/parent_code)
+          - report_alarm_matches: 알람-업무 유사도 매칭
+
+        주요 컬럼 (alarm_data):
+          OP_TEAM_ORG_NM(운용팀명), OP_HDOFC_ORG_NM(본부명), EQP_NM(장비명),
+          FALT_OCCR_LOC_CTT(고장위치), EVT_TIME(발생시각), ALM_STAT_VAL(상태),
+          ALM_DESC(알람설명), MCP_NM(시/도), SGG_NM(시/군/구), LDONG_NM(동), EQP_ID
+
+        알람 상태값:
+          활성: O(발생), U(미확인), L(잠금)  /  해제: C,F,A,D
+
+        Opark 기간 선택 원칙:
+          - 최근 데이터 → opark_daily_report (created_at 기준)
+          - 과거 아카이브 → opark_daily_archive (archived_at 기준)
+          - 사용자가 기간 불명확하면 되물어 확인
 
         예시:
           query_tango("SELECT * FROM alarm_statistics ORDER BY alarm_count DESC LIMIT 10")
-          query_tango("SELECT * FROM alarm_data WHERE OP_TEAM_ORG_NM LIKE '%김해%'")
+          query_tango("SELECT OP_TEAM_ORG_NM, COUNT(*) FROM alarm_data WHERE OP_HDOFC_ORG_NM LIKE '%경남%' GROUP BY 1 ORDER BY 2 DESC")
+          query_tango("SELECT date_trunc('hour', received_at) AS hour, COUNT(*) FROM alarm_events WHERE received_at > NOW() - INTERVAL '24 hours' GROUP BY 1 ORDER BY 1")
 
-        제약: SELECT/WITH만 허용, 단일 statement, 최대 50행 반환.
-
+        제약: SELECT/WITH만 허용, 단일 statement, 최대 50행, 8KB.
         :param sql: PostgreSQL SELECT 쿼리
         :return: 마크다운 테이블 결과
         """
         return _run_select("TANGO_DATABASE_URL", sql, "TANGO")
 
     def query_safety(self, sql: str) -> str:
-        """
-        Safety(안전관리) DB 조회 — 산업안전 데이터.
+        """Safety(안전관리) DB 조회 (PostgreSQL, DB명: safety). 산업안전 전반.
 
-        환경변수: SAFETY_DATABASE_URL
+        주요 테이블 (카테고리별, **실제 테이블명** - 축약명 추측 금지):
+
+          TBM(작업전 안전미팅):
+            safety_activity_tbmactivity            ← "tbm" 아님! 이 이름 사용 필수
+            safety_activity_tbmactivity_companion  (동행자)
+            safety_activity_tbmactivityimages      (사진)
+
+          작업정보:
+            safety_activity_workinfo       (region_sko, team 등)
+            safety_activity_workstatus
+            safety_activity_workstatushistory
+            safety_activity_worktype
+
+          작업중지:
+            safety_activity_workstophistory
+            safety_activity_workstophistoryimages
+
+          순찰점검:
+            safety_activity_patrolsafetyinspection
+            safety_activity_patrolsafetyinspectchecklist
+            safety_activity_patrolsafetyinspectiongoodandbad
+            safety_activity_patrolsafetyjointinspection
+
+          주간계획:
+            safety_activity_weeklyworkplanfrombp
+            safety_activity_weeklyworkplanperskoregion
+            safety_activity_weeklyworkplanperskoteam
+
+          SHE 측정:
+            she_measurement_sherecord
+            she_measurement_shecategory
+            she_measurement_sheitemscore
+
+          컴플라이언스:
+            compliance_check_checklistrecord
+            compliance_check_checklistitem
+
+          위험성 평가:
+            committee_workriskassessment
+
+          게시판:
+            board_post / board_comment / board_file
+
+          사용자·조직:
+            auth_user (username=사번)
+            accounts_userprofile (region_name, team_name, job_name)
+            sysmanage_region / sysmanage_teamregion / sysmanage_companymaster
+
+        존재하지 않는 테이블명 추측 금지 — 반드시 위 목록의 정확한 이름 사용.
 
         예시:
-          query_safety("SELECT COUNT(*) FROM incidents WHERE occurred_at > NOW() - INTERVAL '30 days'")
+          query_safety("SELECT w.region_sko, COUNT(*) FROM safety_activity_tbmactivity t JOIN safety_activity_workinfo w ON t.work_id_id = w.id WHERE DATE(t.created_at) = CURRENT_DATE GROUP BY 1 ORDER BY 2 DESC")
+          query_safety("SELECT status, COUNT(*) FROM safety_activity_workstatus GROUP BY 1")
+          query_safety("SELECT * FROM safety_activity_tbmactivity ORDER BY created_at DESC LIMIT 4")
 
-        제약: SELECT/WITH만 허용, 단일 statement, 최대 50행 반환.
-
+        제약: SELECT/WITH만 허용, 단일 statement, 최대 50행.
         :param sql: PostgreSQL SELECT 쿼리
         :return: 마크다운 테이블 결과
         """
         return _run_select("SAFETY_DATABASE_URL", sql, "Safety")
 
     def query_doculog(self, sql: str) -> str:
-        """
-        DocuLog(문서 활동 로그) DB 조회.
+        """DocuLog 문서활동 분석 DB 조회. 267일간 4.6M+건 문서 활동 로그.
 
-        환경변수: DOCULOG_DATABASE_URL
+        주요 테이블:
+          document_logs     : 문서활동 로그 원본 + 분석 컬럼 (4,616,363건)
+          task_embeddings   : 업무명 임베딩 768dim (359,968건)
+          mv_pre_reorg      : 2025년 개편 전 데이터 뷰 (4,037,324건)
 
-        제약: SELECT/WITH만 허용, 단일 statement, 최대 50행 반환.
+        핵심 컬럼(document_logs):
+          fn_task_normalized : 날짜/버전 제거된 업무명 (핵심 분석 단위)
+          fn_doc_type        : 문서 유형 (현황/보고서/점검/계획 등 13종)
+          department         : 소속 부서 (192개)
+          dept_function      : 부서 기능 (품질혁신, Access관제 등)
+          dept_region        : 부서 지역 (서울, 경남 등 18개)
+          log_type           : 활동 유형 (편집, 생성, 읽기 등)
 
+        예시:
+          query_doculog("SELECT fn_task_normalized, COUNT(*) FROM document_logs WHERE dept_function = '품질혁신' GROUP BY 1 ORDER BY 2 DESC LIMIT 10")
+          query_doculog("SELECT dept_function, COUNT(DISTINCT fn_task_normalized) FROM document_logs GROUP BY 1 ORDER BY 2 DESC")
+
+        제약: SELECT/WITH만 허용, 단일 statement, 최대 50행.
         :param sql: PostgreSQL SELECT 쿼리
         :return: 마크다운 테이블 결과
         """
