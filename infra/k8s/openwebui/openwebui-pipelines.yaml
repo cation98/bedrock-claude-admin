@@ -108,9 +108,18 @@ data:
                 "Authorization": f"Bearer {self.valves.OPENAI_API_KEY}",
                 "Content-Type": "application/json",
             }
-            # manifold prefix 제거: "bedrock_ag_pipe.us.anthropic.claude-sonnet-4-6"
-            #                    → "us.anthropic.claude-sonnet-4-6"
-            actual_model = model_id.split(".", 1)[-1] if "." in model_id else model_id
+            # manifold prefix 제거.
+            # 주의: Open WebUI manifold 시스템이 이미 `bedrock_ag_pipe.` prefix를
+            # 제거한 상태로 pipe()를 호출한다. 따라서 model_id는 region prefix만
+            # 남은 상태(예: "global.anthropic.claude-sonnet-4-6")로 들어온다.
+            # 이전 코드의 `split(".", 1)[-1]`은 region prefix를 벗겨버려 BAG에서
+            # "Unsupported model: anthropic.claude-sonnet-4-6" 400 오류를 유발했다.
+            # 방어적 접근: "bedrock_ag_pipe." 접두사가 붙어있을 때만 제거하고,
+            # 그 외에는 inference profile/region prefix 유지하여 BAG에 그대로 전달.
+            if model_id.startswith("bedrock_ag_pipe."):
+                actual_model = model_id[len("bedrock_ag_pipe."):]
+            else:
+                actual_model = model_id
             payload = {**body, "model": actual_model}
             url = f"{self.valves.OPENAI_API_BASE_URL}/chat/completions"
 
