@@ -123,12 +123,22 @@ spec:
               value: "false"
 
             # ── 기본 사용자 역할 ──────────────────────────────────────────────
-            # Phase 1c: admin으로 설정 — 신규 SSO 사용자가 Pipelines manifold 모델을
-            # 즉시 볼 수 있게 함. user role은 manifold access_control admin-only
-            # 기본값 때문에 0 모델로 보임. 대안(모델별 access_control 공개)은
-            # 운영 복잡도 증가 — 워크숍 규모(50명)에서는 admin 기본이 적합.
+            # user role 유지 — Admin 권한을 전 사용자에게 주지 않기 위함.
+            # 이전 검토: admin으로 설정해 모델 노출 우회를 시도했으나 Admin 패널
+            # 노출의 부수효과(설정 변경 가능) 발생. 대신 아래 BYPASS_MODEL_ACCESS_CONTROL
+            # 로 모델 필터만 풀어 권한은 user 그대로.
             - name: DEFAULT_USER_ROLE
-              value: "admin"
+              value: "user"
+
+            # ── 모델 접근 필터 우회 ────────────────────────────────────────────
+            # Open WebUI v0.8.12의 `get_all_models`는 user role + access_control이
+            # 빈 상태의 upstream(Pipelines manifold) 모델을 숨긴다 (source:
+            #   routers/openai.py:630 `if user.role == 'user' and not BYPASS_MODEL_ACCESS_CONTROL`)
+            # 결과: 일반 사용자가 "Select a model" 드롭다운이 비어 있음 → 대화 불가.
+            # 해법: BYPASS_MODEL_ACCESS_CONTROL=true 로 필터 무시 (단일 모델 스택이므로 무해).
+            # 2026-04-14 issue: 프로덕션 회귀 수정.
+            - name: BYPASS_MODEL_ACCESS_CONTROL
+              value: "true"
 
             # ── 데이터 저장 경로 ──────────────────────────────────────────────
             - name: DATA_DIR
