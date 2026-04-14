@@ -128,16 +128,27 @@ data:
             # 호출자가 값을 받지 못한다 → non-streaming 시 응답 유실.
             # 해법: non-streaming도 yield로 바디(raw JSON text)를 전달한다.
             # Open WebUI Pipelines는 제너레이터가 반환한 str/bytes를 그대로 응답으로 사용한다.
+            # DEBUG: 실제 BAG로 보내는 payload 키 및 응답 상세 로깅
+            import json as _json
+            print(f"[bedrock_ag_pipe] DEBUG payload keys={list(payload.keys())}, model={actual_model}")
             try:
                 if body.get("stream"):
                     with requests.post(
                         url, headers=headers, json=payload, stream=True, timeout=300
                     ) as r:
+                        if r.status_code >= 400:
+                            err_body = r.text
+                            print(f"[bedrock_ag_pipe] BAG {r.status_code} body: {err_body[:500]}")
+                            print(f"[bedrock_ag_pipe] Sent payload: {_json.dumps(payload)[:1000]}")
                         r.raise_for_status()
                         for chunk in r.iter_content(chunk_size=None):
                             yield chunk
                 else:
                     r = requests.post(url, headers=headers, json=payload, timeout=120)
+                    if r.status_code >= 400:
+                        err_body = r.text
+                        print(f"[bedrock_ag_pipe] BAG {r.status_code} body: {err_body[:500]}")
+                        print(f"[bedrock_ag_pipe] Sent payload: {_json.dumps(payload)[:1000]}")
                     r.raise_for_status()
                     # Open WebUI Pipelines는 제너레이터가 yield한 str을 assistant
                     # message content로 그대로 사용한다. 따라서 BAG의 OpenAI 호환
