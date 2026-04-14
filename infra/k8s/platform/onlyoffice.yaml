@@ -170,21 +170,14 @@ spec:
                           print(f'retry {i}: {e}')
                           time.sleep(2)
                   " 2>&1
-                  # ── 2. nginx ds.conf 패치 — HTTPS scheme + 외부 호스트명 ────
-                  cat > /etc/nginx/conf.d/ds.conf << 'NGINX_EOF'
-                  include /etc/nginx/includes/http-common.conf;
-                  server {
-                    listen 0.0.0.0:80;
-                    listen [::]:80 default_server;
-                    server_tokens off;
-                    # OO DS는 ingress(TLS종단) 뒤에서 동작 — 항상 HTTPS로 외부 URL 생성
-                    # Mixed Content 방지: 브라우저(HTTPS)가 http:// 캐시 URL을 차단하지 않도록
-                    set $the_scheme https;
-                    set $the_host claude.skons.net;
-                    set $secure_link_secret c94mzQ8fAuGHgkYq0HAf;
-                    include /etc/nginx/includes/ds-*.conf;
-                  }
-                  NGINX_EOF
+                  # ── 2. nginx scheme 오버라이드 — 별도 include 파일로 주입 ────
+                  # ds.conf는 이미 "include /etc/nginx/includes/ds-*.conf;"를 포함.
+                  # ds-scheme.conf를 추가하면 server 블록에서 자동 로드됨.
+                  # 이 방식은 ds.conf 수정 없이 안전하게 변수를 오버라이드한다.
+                  # echo "..." 내부에서 \$var 로 쓰면 bash가 $var로 그대로 전달.
+                  printf 'set $the_scheme https;\nset $the_host claude.skons.net;\n' \
+                    > /etc/nginx/includes/ds-scheme.conf
+                  echo "ds-scheme.conf written: $(cat /etc/nginx/includes/ds-scheme.conf)"
                   nginx -t 2>&1 && nginx -s reload 2>&1
                   # ── 3. docservice 재시작 — 변경사항 즉시 반영 ──────────────
                   supervisorctl restart ds:docservice 2>/dev/null
