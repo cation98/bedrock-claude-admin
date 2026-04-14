@@ -80,6 +80,24 @@ def write_access_cookies(response: Response, access_token: str) -> None:
     response.set_cookie(key=VIS_COOKIE_NAME, value=access_token, httponly=False, **_shared_opts)
 
 
+def write_refresh_cookie(response: Response, refresh_token: str) -> None:
+    """refresh token을 bedrock_refresh 쿠키에 기록.
+
+    /auth/refresh 에서 refresh 회전(rotation) 시 호출. 기존 jti를 blacklist
+    하면서 새 refresh jti를 담은 쿠키로 교체하여 replay 오탐 방지.
+    """
+    response.set_cookie(
+        key=REFRESH_COOKIE_NAME,
+        value=refresh_token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        domain=COOKIE_DOMAIN,
+        path="/",
+        max_age=REFRESH_TTL_SECONDS,
+    )
+
+
 # ─── Request / Response 스키마 ───────────────────────────────────────────────
 
 class PodTokenExchangeRequest(BaseModel):
@@ -311,36 +329,30 @@ async def refresh_token_endpoint(
         blacklist_jti(jti, ttl_seconds=REFRESH_TTL_SECONDS)
 
     # 새 access token 발급 — session_type 상속으로 Pod 세션은 8h 유지
+    extra_claims = {"session_type": "pod"} if session_type == "pod" else None
     if session_type == "pod":
         new_access_token = create_access_token(
             sub, emp_no, email, role, settings,
             expires_delta=timedelta(hours=8),
-            extra_claims={"session_type": "pod"},
+            extra_claims=extra_claims,
         )
     else:
         new_access_token = create_access_token(sub, emp_no, email, role, settings)
 
-    # 새 refresh token 발급 (rotation) — 응답 body에 포함해 클라이언트가 갱신하도록.
-    # rotation 미구현 시 client가 옛 refresh 재사용 → 이미 blacklist된 jti → cascade revoke.
-    # Pod daemon / admin-dashboard 모두 _NEW_REFRESH 처리 코드 있음. 쿠키 기반 client는
-    # 아래 set_cookie 로 동시 갱신.
-    new_refresh_result = create_refresh_token(sub, emp_no, email, role, settings)
-    new_refresh_token = new_refresh_result[0] if isinstance(new_refresh_result, tuple) else new_refresh_result
-
-    # 쿠키 업데이트 — Dual Cookie (bedrock_jwt + bedrock_jwt_vis 동시 갱신)
-    write_access_cookies(response, new_access_token)
-    # refresh cookie 도 rotation 반영
-    response.set_cookie(
-        key=REFRESH_COOKIE_NAME,
-        value=new_refresh_token,
-        httponly=True,
-        secure=True,
-        samesite="lax",
-        domain=COOKIE_DOMAIN,
-        max_age=REFRESH_TTL_SECONDS,
+    # 새 refresh token도 함께 발급 — rotation (기존 jti는 blacklist, 새 jti 쿠키로 교체)
+    # 이 rotation이 없으면 동일 refresh 재사용 시 replay 오탐 → cascade revoke 발생.
+    # Pod daemon / admin-dashboard 는 body의 refresh_token을 직접 사용하고,
+    # 쿠키 기반 브라우저는 write_refresh_cookie(bedrock_refresh) 로 갱신.
+    new_refresh_token, _ = create_refresh_token(
+        sub, emp_no, email, role, settings,
+        extra_claims=extra_claims,
     )
 
-    logger.debug("Access+refresh tokens rotated for sub=%s", sub)
+    # 쿠키 업데이트 — Dual access + 신규 refresh 3쿠키 동시 갱신
+    write_access_cookies(response, new_access_token)
+    write_refresh_cookie(response, new_refresh_token)
+
+    logger.debug("Tokens refreshed (access + refresh rotated) for sub=%s", sub)
 
     return {
         "access_token": new_access_token,
