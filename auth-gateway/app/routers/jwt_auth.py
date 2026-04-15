@@ -222,9 +222,10 @@ async def pod_token_exchange(
     email = f"{user.username.lower()}@skons.net"
 
     # Phase 1 백로그 #27: Pod 터미널 세션은 15분 TTL로 중단 빈번 → access 8h 연장.
+    # 2026-04-15: 재배포/refresh 실패에도 한 근무일 세션이 깨지지 않도록 24h로 연장.
     # session_type="pod" 클레임을 심어 /auth/refresh에서 TTL 상속하도록 분기.
     # SSO/portal 경로(/auth/issue-jwt 등)는 이 분기 밖이므로 기본 15m 유지.
-    POD_ACCESS_TTL = timedelta(hours=8)
+    POD_ACCESS_TTL = timedelta(hours=24)
     access_token = create_access_token(
         sub, emp_no, email, user.role, settings,
         expires_delta=POD_ACCESS_TTL,
@@ -328,12 +329,12 @@ async def refresh_token_endpoint(
     if jti:
         blacklist_jti(jti, ttl_seconds=REFRESH_TTL_SECONDS)
 
-    # 새 access token 발급 — session_type 상속으로 Pod 세션은 8h 유지
+    # 새 access token 발급 — session_type 상속으로 Pod 세션은 24h 유지 (2026-04-15 상향)
     extra_claims = {"session_type": "pod"} if session_type == "pod" else None
     if session_type == "pod":
         new_access_token = create_access_token(
             sub, emp_no, email, role, settings,
-            expires_delta=timedelta(hours=8),
+            expires_delta=timedelta(hours=24),
             extra_claims=extra_claims,
         )
     else:
