@@ -197,6 +197,8 @@ class K8sService:
         env_vars = [
             # 항상 주입: Bedrock, 모델, 사용자 정보
             client.V1EnvVar(name="CLAUDE_CODE_USE_BEDROCK", value="1"),
+            # Claude Code 자동 업데이트 차단 — 이미지 고정 버전 운용, update 루프로 인한 TUI 행업 방지
+            client.V1EnvVar(name="DISABLE_AUTOUPDATER", value="1"),
             client.V1EnvVar(name="AWS_REGION", value=self.settings.bedrock_region),
             client.V1EnvVar(
                 name="ANTHROPIC_DEFAULT_SONNET_MODEL",

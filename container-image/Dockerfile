@@ -71,11 +71,18 @@ RUN ARCH=$(dpkg --print-architecture) && \
     rm -rf /tmp/aws /tmp/awscliv2.zip
 
 # -----------------------------------------------------------------------------
-# Claude Code CLI 설치
+# Claude Code CLI 설치 — 버전 고정 + 자동 업데이트 차단
 # Anthropic의 공식 AI 코딩 어시스턴트 CLI
 # CLAUDE_CODE_USE_BEDROCK=1 환경변수로 AWS Bedrock 백엔드 사용
+#
+# 버전 고정 정책:
+# - 상류에서 npm → native installer 전환이 진행 중이므로 기동 시 자가 업그레이드
+#   루프에 빠질 수 있다 (2026-04-15 장애 참고).
+# - 특정 버전을 박제하고 런타임에서는 DISABLE_AUTOUPDATER=1 로 업데이트 차단.
+# - 새 버전 반영은 이 이미지 재빌드로만 수행한다.
 # -----------------------------------------------------------------------------
-RUN npm install -g @anthropic-ai/claude-code && \
+ARG CLAUDE_CODE_VERSION=2.1.104
+RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" && \
     npm cache clean --force
 
 # 빌드 의존성 정리 (이미지 크기 축소)
@@ -199,7 +206,9 @@ RUN cd /home/node/workspace/sample-project && \
 EXPOSE 7681 8080 3000
 
 # 환경변수 기본값 (런타임에 오버라이드)
+# DISABLE_AUTOUPDATER: 이미지에 박제된 버전 유지 — auto-update 루프로 인한 행업 방지
 ENV CLAUDE_CODE_USE_BEDROCK=1 \
+    DISABLE_AUTOUPDATER=1 \
     AWS_REGION=us-east-1 \
     TERM=xterm-256color \
     LANG=C.UTF-8
