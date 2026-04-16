@@ -26,6 +26,9 @@
   #mode-bar button:hover { border-color: #58a6ff; color: #fff; }
   #mode-bar button.active { background: #1f6feb; border-color: #1f6feb; color: #fff; }
   #mode-bar .hint { margin-left: auto; color: #6e7681; font-size: 11px; }
+  /* 새 터미널 탭 버튼 — mode-bar 우측 */
+  #btn-new-term { margin-left: 8px; border-color: #1f6feb; color: #79c0ff; }
+  #btn-new-term:hover { background: #1f6feb; color: #fff; border-color: #1f6feb; }
 
   /* 모드 변경 확인 모달 */
   #mode-modal {
@@ -77,7 +80,11 @@
   <span class="label">모드:</span>
   <button id="btn-mode-1" onclick="requestModeChange('1')">답변만 받기</button>
   <button id="btn-mode-2" onclick="requestModeChange('2')">진행과정 자세히 보기</button>
-  <span class="hint">클릭 시 터미널이 재시작됩니다.</span>
+  <span class="hint">모드 변경 시 터미널 재시작</span>
+  <button id="btn-new-term" onclick="openNewTerminal()"
+          title="같은 Pod에 새 브라우저 탭으로 터미널 연결 (최대 3개)">
+    + 새 터미널 탭
+  </button>
 </div>
 
 <div id="mode-modal">
@@ -286,6 +293,13 @@ function requestModeChange(mode) {
 
 function closeModeModal() {
   document.getElementById('mode-modal').classList.remove('active');
+}
+
+// ─── 새 터미널 탭 열기 ─────────────────────────────────────────
+// 같은 URL로 새 창을 열어 같은 Pod의 ttyd에 추가 연결을 맺는다.
+// max-clients=3 초과 시 ttyd가 자동으로 거부 (브라우저에 안내 표시).
+function openNewTerminal() {
+  window.open(window.location.href, '_blank', 'noopener,noreferrer');
 }
 
 function applyModeChange(mode) {
