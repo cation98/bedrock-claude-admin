@@ -67,7 +67,7 @@ const POD_KIND_BADGE: Record<string, string> = {
   dummy:    "bg-[var(--surface-hover)] text-[var(--text-muted)]",
 };
 
-function NodeCard({ node, allNodes, onAction }: { node: NodeInfo; allNodes: NodeInfo[]; onAction: () => void }) {
+function NodeCard({ node, onAction }: { node: NodeInfo; onAction: () => void }) {
   const hasPods = node.pods.length > 0;
   const isSystem = node.node_role === "system";
   const role = ROLE_BADGE[node.node_role] ?? ROLE_BADGE.user;
@@ -829,7 +829,7 @@ export default function InfraPage() {
               {/* Node / Pod Status Cards */}
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 {data?.nodes.map((node) => (
-                  <NodeCard key={node.node_name} node={node} allNodes={data.nodes} onAction={fetchData} />
+                  <NodeCard key={node.node_name} node={node} onAction={fetchData} />
                 ))}
               </div>
             </div>
