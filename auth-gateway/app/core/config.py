@@ -85,7 +85,7 @@ class Settings(BaseSettings):
     jwt_rs256_private_key: str = ""
 
     # access token: 15분 (설계 §2 JWT 라이프사이클)
-    jwt_rs256_access_expire_minutes: int = 15
+    jwt_rs256_access_expire_minutes: int = 1440  # 24h — Pod/SSO 모두 24h 기본 (2026-04-16)
     # refresh token: 12시간 (설계 §2 JWT 라이프사이클)
     jwt_refresh_token_expire_hours: int = 12
 

@@ -329,16 +329,17 @@ async def refresh_token_endpoint(
     if jti:
         blacklist_jti(jti, ttl_seconds=REFRESH_TTL_SECONDS)
 
-    # 새 access token 발급 — session_type 상속으로 Pod 세션은 24h 유지 (2026-04-15 상향)
-    extra_claims = {"session_type": "pod"} if session_type == "pod" else None
-    if session_type == "pod":
-        new_access_token = create_access_token(
-            sub, emp_no, email, role, settings,
-            expires_delta=timedelta(hours=24),
-            extra_claims=extra_claims,
-        )
-    else:
-        new_access_token = create_access_token(sub, emp_no, email, role, settings)
+    # 새 access token 발급 — 항상 24h TTL + session_type:pod 주입.
+    # 2026-04-16: session_type 조건 분기 제거 — refresh chain에서 session_type 클레임이
+    # 소실되면 15분 TTL로 전락하는 구조적 버그 수정 (d211c28 무효화 원인).
+    # SSO/portal 토큰도 4분마다 rotation하므로 24h TTL이어도 보안 영향 없음.
+    REFRESH_ACCESS_TTL = timedelta(hours=24)
+    extra_claims = {"session_type": "pod"}
+    new_access_token = create_access_token(
+        sub, emp_no, email, role, settings,
+        expires_delta=REFRESH_ACCESS_TTL,
+        extra_claims=extra_claims,
+    )
 
     # 새 refresh token도 함께 발급 — rotation (기존 jti는 blacklist, 새 jti 쿠키로 교체)
     # 이 rotation이 없으면 동일 refresh 재사용 시 replay 오탐 → cascade revoke 발생.
