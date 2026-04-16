@@ -116,10 +116,14 @@ spec:
           protocol: TCP
 
     # Auth Gateway 호출 허용
-    # 사용자 Pod → Auth Gateway: 토큰 검증, 파일 업로드 등의 내부 API 호출
-    # podSelector: 같은 claude-sessions 네임스페이스 내 auth-gateway Pod
+    # 사용자 Pod → Auth Gateway: 토큰 검증, 파일 업로드, SMS 발송 등 내부 API 호출
+    # auth-gateway는 platform 네임스페이스에 있으므로 namespaceSelector + podSelector AND 조합 필요
+    # (namespaceSelector 누락 시 같은 claude-sessions ns 만 매치 → 실제 auth-gateway 와 매치 안 됨)
     - to:
-        - podSelector:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: platform
+          podSelector:
             matchLabels:
               app: auth-gateway
       ports:
