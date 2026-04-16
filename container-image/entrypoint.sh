@@ -304,6 +304,23 @@ if [ -d /home/node/workspace/.claude-backup/projects ]; then
     cp -r /home/node/workspace/.claude-backup/sessions/ /home/node/.claude/sessions/ 2>/dev/null || true
     echo "  이전 대화 복원 완료"
 fi
+# 사용자 프로젝트 CLAUDE.md(~/CLAUDE.md) 복원 — 자동 생성되는 ~/.claude/CLAUDE.md 와 다름
+if [ -f /home/node/workspace/.claude-backup/user-CLAUDE.md ]; then
+    cp /home/node/workspace/.claude-backup/user-CLAUDE.md /home/node/CLAUDE.md 2>/dev/null
+    echo "  사용자 CLAUDE.md(~/CLAUDE.md) 복원 완료"
+fi
+# 커스텀 slash commands 복원 (~/.claude/commands/)
+if [ -d /home/node/workspace/.claude-backup/commands ]; then
+    mkdir -p /home/node/.claude/commands
+    cp -r /home/node/workspace/.claude-backup/commands/. /home/node/.claude/commands/ 2>/dev/null
+    echo "  커스텀 slash commands 복원 완료"
+fi
+# 커스텀 skills 복원 (~/.claude/skills/)
+if [ -d /home/node/workspace/.claude-backup/skills ]; then
+    mkdir -p /home/node/.claude/skills
+    cp -r /home/node/workspace/.claude-backup/skills/. /home/node/.claude/skills/ 2>/dev/null
+    echo "  커스텀 skills 복원 완료"
+fi
 # .serena 프로젝트 메모리 복원
 if [ -d /home/node/workspace/.serena-backup ]; then
     cp -r /home/node/workspace/.serena-backup/ /home/node/.serena/ 2>/dev/null
@@ -371,6 +388,20 @@ cp -r /home/node/.claude/projects/ /home/node/workspace/.claude-backup/ 2>/dev/n
 cp /home/node/.claude/history.jsonl /home/node/workspace/.claude-backup/ 2>/dev/null
 # 세션 메타데이터 백업 — /resume 목록 복원에 필요
 cp -r /home/node/.claude/sessions/ /home/node/workspace/.claude-backup/ 2>/dev/null
+# 사용자 프로젝트 CLAUDE.md(~/CLAUDE.md) 백업 — Pod 재기동 시 유실 방지
+if [ -f /home/node/CLAUDE.md ]; then
+    cp /home/node/CLAUDE.md /home/node/workspace/.claude-backup/user-CLAUDE.md 2>/dev/null
+fi
+# 커스텀 slash commands 백업 (~/.claude/commands/)
+if [ -d /home/node/.claude/commands ]; then
+    rm -rf /home/node/workspace/.claude-backup/commands 2>/dev/null
+    cp -r /home/node/.claude/commands /home/node/workspace/.claude-backup/commands 2>/dev/null
+fi
+# 커스텀 skills 백업 (~/.claude/skills/)
+if [ -d /home/node/.claude/skills ]; then
+    rm -rf /home/node/workspace/.claude-backup/skills 2>/dev/null
+    cp -r /home/node/.claude/skills /home/node/workspace/.claude-backup/skills 2>/dev/null
+fi
 # Serena 프로젝트 메모리 백업
 if [ -d /home/node/.serena ]; then
     cp -r /home/node/.serena/ /home/node/workspace/.serena-backup/ 2>/dev/null
@@ -389,6 +420,23 @@ if [ -d /home/node/workspace/.claude-backup/projects ]; then
     echo "대화 복원 완료."
 else
     echo "대화 백업이 없습니다."
+fi
+# 사용자 프로젝트 CLAUDE.md(~/CLAUDE.md) 복원
+if [ -f /home/node/workspace/.claude-backup/user-CLAUDE.md ]; then
+    cp /home/node/workspace/.claude-backup/user-CLAUDE.md /home/node/CLAUDE.md 2>/dev/null
+    echo "사용자 CLAUDE.md(~/CLAUDE.md) 복원 완료."
+fi
+# 커스텀 slash commands 복원
+if [ -d /home/node/workspace/.claude-backup/commands ]; then
+    mkdir -p /home/node/.claude/commands
+    cp -r /home/node/workspace/.claude-backup/commands/. /home/node/.claude/commands/ 2>/dev/null
+    echo "커스텀 slash commands 복원 완료."
+fi
+# 커스텀 skills 복원
+if [ -d /home/node/workspace/.claude-backup/skills ]; then
+    mkdir -p /home/node/.claude/skills
+    cp -r /home/node/workspace/.claude-backup/skills/. /home/node/.claude/skills/ 2>/dev/null
+    echo "커스텀 skills 복원 완료."
 fi
 # Serena 복원
 if [ -d /home/node/workspace/.serena-backup ]; then

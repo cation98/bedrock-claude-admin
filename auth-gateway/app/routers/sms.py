@@ -20,7 +20,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.core.database import Base, get_db
-from app.core.security import get_current_user
+from app.core.security import get_current_user_or_pod
+from app.models.user import User
 
 router = APIRouter(prefix="/api/v1/sms", tags=["sms"])
 logger = logging.getLogger(__name__)
@@ -77,6 +78,7 @@ class SmsSendResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # 상수
 # ---------------------------------------------------------------------------
+# 현재는 사용되지 않음 — 향후 권한-한도 분리 정책 도입 시 재사용 예정
 DAILY_LIMIT = 10
 
 
@@ -111,19 +113,19 @@ def _get_today_count(db: Session, username: str) -> int:
 @router.post("/send", response_model=SmsSendResponse)
 async def send_sms(
     request: SmsSendRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_pod),
     settings: Settings = Depends(get_settings),
     db: Session = Depends(get_db),
 ):
     """SMS 발송 (일일 10건 제한, 감사 로그 기록)."""
     username = current_user["sub"]
 
-    # 일일 발송 한도 확인
-    today_count = _get_today_count(db, username)
-    if today_count >= DAILY_LIMIT:
+    # --- 신설: 권한 pre-check ---
+    user = db.query(User).filter(User.username == username).first()
+    if not user or not user.can_send_sms:
         raise HTTPException(
-            status_code=429,
-            detail=f"일일 발송 한도 초과 ({DAILY_LIMIT}건/일)",
+            status_code=403,
+            detail="SMS 발송 권한이 없습니다. 관리자에게 문의하세요.",
         )
 
     # SMS 게이트웨이 설정 확인
@@ -176,18 +178,12 @@ async def send_sms(
         db.add(log_entry)
         db.commit()
 
-        remaining = DAILY_LIMIT - today_count - 1
-        logger.info(
-            "SMS sent by %s to %s (remaining: %d)",
-            username,
-            formatted_phone,
-            remaining,
-        )
+        logger.info("SMS sent by %s to %s", username, formatted_phone)
 
         return SmsSendResponse(
             success=True,
             message=f"{formatted_phone}로 SMS 발송 완료",
-            remaining_today=remaining,
+            remaining_today=0,
         )
 
     except httpx.HTTPError as e:
@@ -203,7 +199,7 @@ async def send_sms(
 
 @router.get("/usage")
 async def get_sms_usage(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_pod),
     db: Session = Depends(get_db),
 ):
     """오늘의 SMS 사용량 조회."""

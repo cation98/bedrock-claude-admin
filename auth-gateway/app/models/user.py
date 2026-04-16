@@ -30,6 +30,8 @@ class User(Base):
     # 자체 로그인(auth_mode="custom") 배포 권한 — 기본 False. admin이 개별 부여.
     # 앱이 자체적으로 로그인+2FA를 구현한 것을 검증받은 소수 사용자에게만 허용.
     can_deploy_custom_auth = Column(Boolean, default=False, nullable=False)
+    # SMS 발송 권한 — admin이 개별 부여. 권한 보유자는 일일 한도 없이 발송 가능.
+    can_send_sms = Column(Boolean, default=False, nullable=False, server_default='false')
     app_slug = Column(String(16), unique=True, nullable=True, index=True)  # URL/K8s용 비식별 slug (8자 hex)
     security_policy = Column(JSON, nullable=True, default=None)
     infra_policy = Column(JSON, nullable=True, default=None)

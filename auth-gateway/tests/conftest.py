@@ -41,6 +41,7 @@ from app.models.file_audit import FileAuditLog  # noqa: F401
 from app.models.file_share import SharedDataset, FileShareACL  # noqa: F401
 from app.models.two_factor_code import TwoFactorCode  # noqa: F401
 from app.routers.telegram import TelegramMapping, TelegramChatLog  # noqa: F401
+from app.routers.sms import SmsLog  # noqa: F401
 from app.services.sqlcipher_service import SQLCipherKey  # noqa: F401
 
 # Import routers under test
@@ -51,6 +52,7 @@ from app.routers import surveys as surveys_router
 from app.routers import file_governance as file_governance_router
 from app.routers import file_share as file_share_router
 from app.routers import skills as skills_router
+from app.routers import sms as sms_router
 
 
 # --------------- SQLite JSONB compatibility ---------------
@@ -122,6 +124,7 @@ def _test_settings() -> Settings:
         jwt_access_token_expire_minutes=60,
         debug=False,
         onlyoffice_jwt_secret="test-onlyoffice-jwt-secret-32-chars-min-xx",
+        sms_gateway_url="http://fake-sms-gateway.test/send",
     )
 
 
@@ -154,6 +157,7 @@ def _build_test_app() -> FastAPI:
     test_app.include_router(file_governance_router.router)
     test_app.include_router(file_share_router.router)
     test_app.include_router(skills_router.router)
+    test_app.include_router(sms_router.router)
     return test_app
 
 
@@ -218,6 +222,7 @@ def create_test_user(db_session):
         role: str = "user",
         is_approved: bool = True,
         can_deploy_apps: bool = True,
+        can_send_sms: bool = True,  # 테스트 기본값 True — 회귀 방지
     ) -> User:
         user = User(
             username=username,
@@ -225,6 +230,7 @@ def create_test_user(db_session):
             role=role,
             is_approved=is_approved,
             can_deploy_apps=can_deploy_apps,
+            can_send_sms=can_send_sms,
         )
         db_session.add(user)
         db_session.commit()
@@ -345,3 +351,43 @@ def create_test_telegram_mapping(db_session):
         return mapping
 
     return _create
+
+
+@pytest.fixture()
+def override_current_user():
+    """테스트 내에서 _mock_current_user가 반환하는 dict를 바꾸는 헬퍼.
+
+    Usage:
+        override_current_user(username="TESTUSER", auth_type="jwt")
+    """
+    from app.core import security as sec_module
+
+    def _set(username: str = "TESTUSER01", auth_type: str = "jwt"):
+        def _mock():
+            return {
+                "sub": username,
+                "username": username,
+                "role": "user",
+                "auth_type": auth_type,
+            }
+        _test_app.dependency_overrides[sec_module.get_current_user] = _mock
+        _test_app.dependency_overrides[sec_module.get_current_user_or_pod] = _mock
+
+    return _set
+
+
+@pytest.fixture()
+def mock_sms_gateway(monkeypatch):
+    """외부 SMS 게이트웨이 호출을 차단하고 고정 응답 반환."""
+    class _Resp:
+        status_code = 200
+        def raise_for_status(self):
+            pass  # 200 → no-op
+        def json(self):
+            return {"d": {"Result": {"ResultCode": "1", "ResultMsg": "OK"}}}
+
+    async def _fake_post(self, *args, **kwargs):
+        return _Resp()
+
+    monkeypatch.setattr("httpx.AsyncClient.post", _fake_post)
+    yield
