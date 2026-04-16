@@ -31,8 +31,8 @@ eks_node_desired_size   = 6
 eks_node_min_size       = 0
 eks_node_max_size       = 12
 
-# ----- 1:1 전용 노드그룹 (t3.medium) -----
-eks_dedicated_node_instance_types = ["t3.medium"]
+# ----- 1:1 전용 노드그룹 (t3.large) — 2026-04-17 medium→large 상향 -----
+eks_dedicated_node_instance_types = ["t3.large"]
 eks_dedicated_node_desired_size   = 2
 eks_dedicated_node_min_size       = 0
 eks_dedicated_node_max_size       = 55

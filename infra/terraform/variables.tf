@@ -91,12 +91,12 @@ variable "eks_node_max_size" {
   default     = 15
 }
 
-# ----- 1:1 전용 노드그룹 (t3.medium, 사용자별 1 node) -----
+# ----- 1:1 전용 노드그룹 (t3.large, 사용자별 1 node) -----
 
 variable "eks_dedicated_node_instance_types" {
-  description = "1:1 전용 노드 인스턴스 타입"
+  description = "1:1 전용 노드 인스턴스 타입 (2026-04-17 t3.medium→t3.large 상향)"
   type        = list(string)
-  default     = ["t3.medium"]
+  default     = ["t3.large"]
 }
 
 variable "eks_dedicated_node_desired_size" {

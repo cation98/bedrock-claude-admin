@@ -72,14 +72,16 @@ spec:
         #   value: "http://auth-gateway.platform.svc.cluster.local/v1"
         # AUTH_GATEWAY_URL은 이미 k8s_service.py에서 주입 (heartbeat용으로 기존 사용 중)
 
-      # 리소스 제한: 사용자당 최대 CPU 1코어, 메모리 1GB
+      # 리소스: t3.large (2 vCPU / 8 GiB) 기준 최대 활용
+      # 1-node-1-pod 정책 — 실측 allocatable: 1930m CPU / 7083Mi memory
+      # 2026-04-17: t3.medium(1700m/2900Mi) → t3.large(1800m/6500Mi) 상향
       resources:
         requests:
-          cpu: "250m"       # 0.25 코어 (보장)
-          memory: "256Mi"   # 256MB (보장)
+          cpu: "1800m"      # 1.8 코어 (보장, allocatable 1930m의 93%)
+          memory: "6500Mi"  # 6.5 GiB (보장, allocatable 7083Mi의 91%)
         limits:
-          cpu: "1000m"      # 1 코어 (최대)
-          memory: "1Gi"     # 1GB (최대)
+          cpu: "1900m"      # 1.9 코어 (최대, 노드 시스템 프로세스 ~130m 여유)
+          memory: "7000Mi"  # 7 GiB (최대, 노드 OS/kubelet 여유 ~83Mi 유지)
 
       # 헬스체크: ttyd가 살아있는지 확인
       readinessProbe:

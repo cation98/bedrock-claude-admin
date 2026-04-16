@@ -17,14 +17,17 @@ class InfraTemplate(Base):
 
 
 INFRA_TEMPLATES = {
+    # 2026-04-17: t3.medium → t3.large 상향
+    # t3.large (2 vCPU / 8 GiB) 실측 allocatable: 1930m CPU / 7083Mi memory
+    # 1-node-1-pod 정책 유지, 노드 자원 최대 활용
     "standard": {
         "nodegroup": "bedrock-claude-dedicated-nodes",
         "node_selector": {"role": "claude-dedicated"},
         "max_pods_per_node": 1,
-        "cpu_request": "1700m",
-        "cpu_limit": "1700m",
-        "memory_request": "2900Mi",
-        "memory_limit": "2900Mi",
+        "cpu_request": "1800m",
+        "cpu_limit": "1900m",
+        "memory_request": "6500Mi",
+        "memory_limit": "7000Mi",
         "shared_dir_writable": False,
     },
     "premium": {
@@ -50,7 +53,7 @@ INFRA_TEMPLATES = {
 }
 
 INFRA_TEMPLATE_DESCRIPTIONS = {
-    "standard": "기본 (t3.medium, 노드당 1명, 1:1 격리)",
+    "standard": "기본 (t3.large, 노드당 1명, 1:1 격리, CPU 1.8코어/메모리 6.5GiB)",
     "premium": "고사양 (m5.large, 노드당 1명, CPU 1코어+)",
     "enterprise": "최고사양 (m5.xlarge, 노드당 1명, CPU 3코어+)",
 }
