@@ -448,9 +448,13 @@ if [ -n "${AUTH_GATEWAY_URL:-}" ] && [ -d "/home/node/.efs-users" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 4c) 유휴 감지 heartbeat (5분마다) — 브라우저 접속 중일 때만 전송
-#     ttyd 포트(7681=0x1E01)에 ESTABLISHED 연결이 있을 때만 heartbeat 전송.
-#     브라우저가 닫히면 heartbeat 중단 → 60분 후 idle cleanup이 Pod 종료.
+# 4c) 유휴 감지 heartbeat (5분마다) — 브라우저 접속 + 탭 표시 중일 때만 전송
+#     조건 2가지 AND로 판정:
+#       1. ttyd 포트(7681=0x1E01)에 ESTABLISHED 연결 있음 (브라우저 열림)
+#       2. /tmp/.tab-hidden 플래그 파일 없음 (탭이 화면에 보임)
+#     둘 중 하나라도 깨지면 heartbeat 중단 → 30분 후 idle cleanup이 Pod 종료.
+#     플래그는 fileserver.py /api/visibility 엔드포인트가 브라우저의
+#     document.visibilitychange 이벤트 신호를 받아 생성/삭제한다.
 # ---------------------------------------------------------------------------
 if [ -n "${AUTH_GATEWAY_URL:-}" ]; then
     POD_NAME="claude-terminal-$(echo ${USER_ID} | tr '[:upper:]' '[:lower:]')"
@@ -458,7 +462,8 @@ if [ -n "${AUTH_GATEWAY_URL:-}" ]; then
         sleep 300
         # 포트 7681(0x1E01)에 ESTABLISHED(01) 연결 확인
         ACTIVE=$(awk '$2 ~ /:1E01$/ && $4 == "01"' /proc/net/tcp 2>/dev/null | wc -l)
-        if [ "$ACTIVE" -gt 0 ]; then
+        # 탭 가림 플래그 확인 — 있으면 유휴 간주
+        if [ "$ACTIVE" -gt 0 ] && [ ! -f /tmp/.tab-hidden ]; then
             curl -sf -X POST "${AUTH_GATEWAY_URL}/api/v1/sessions/internal-heartbeat" \
                 -H "X-Pod-Name: ${POD_NAME}" \
                 --max-time 5 2>/dev/null || true

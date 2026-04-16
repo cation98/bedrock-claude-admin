@@ -302,6 +302,36 @@ function openNewTerminal() {
   window.open(window.location.href, '_blank', 'noopener,noreferrer');
 }
 
+// ─── 탭 가시성 신호 → Pod 유휴 판정 정밀화 ─────────────────────
+// 브라우저 탭이 가려지면 fileserver.py에 상태 전송 → Pod 내부에 플래그 파일 생성.
+// entrypoint.sh heartbeat 루프가 플래그 존재 시 heartbeat skip → idle_timeout(30분)
+// 경과 시 Pod 자동 종료. 다시 탭이 보이면 heartbeat 재개.
+(function() {
+  function sendVisibility(state) {
+    try {
+      var base = getFileserverBase();
+      fetch(base + 'api/visibility', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ state: state }),
+        keepalive: true  // 탭 전환/종료 시에도 전송 보장
+      }).catch(function() { /* 네트워크 오류 무시 */ });
+    } catch (e) { /* ignore */ }
+  }
+
+  document.addEventListener('visibilitychange', function() {
+    sendVisibility(document.visibilityState === 'hidden' ? 'hidden' : 'visible');
+  });
+
+  // 초기 상태 1회 동기화 (페이지 로드 시 보이는 상태가 기본)
+  if (document.visibilityState === 'visible') {
+    sendVisibility('visible');
+  }
+
+  // 언로드 시 hidden 전송 — 브라우저 닫기에도 대응 (keepalive)
+  window.addEventListener('pagehide', function() { sendVisibility('hidden'); });
+})();
+
 function applyModeChange(mode) {
   var base = getFileserverBase();
   fetch(base + 'api/set-mode', {

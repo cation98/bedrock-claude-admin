@@ -107,6 +107,9 @@ class FileServerHandler(SimpleHTTPRequestHandler):
         if parsed.path == '/api/set-mode':
             self._handle_set_mode()
             return
+        if parsed.path == '/api/visibility':
+            self._handle_visibility()
+            return
         # --- End webapp management API ---
 
         if parsed.path != "/upload":
@@ -443,6 +446,39 @@ class FileServerHandler(SimpleHTTPRequestHandler):
             self._send_json(200, {"success": True, "mode": mode})
         except OSError as e:
             self._send_json(500, {"error": str(e)})
+
+    def _handle_visibility(self):
+        """브라우저 탭 가시성 신호 — POST /api/visibility  body: {"state": "hidden"|"visible"}
+
+        hidden  → /tmp/.tab-hidden 플래그 파일 생성 → entrypoint.sh heartbeat loop skip
+        visible → 플래그 파일 삭제 → heartbeat 재개
+
+        결과: 사용자가 다른 탭/창을 보고 있으면 Pod가 유휴로 간주되어
+        idle_timeout_minutes(30분) 경과 후 자동 종료됨.
+        """
+        try:
+            body = self._read_body()
+            data = json.loads(body)
+        except (json.JSONDecodeError, ValueError):
+            self._send_json(400, {"error": "invalid JSON body"})
+            return
+        state = str(data.get("state", "")).strip().lower()
+        flag = "/tmp/.tab-hidden"
+        if state == "hidden":
+            try:
+                open(flag, "w").close()
+                self._send_json(200, {"success": True, "state": "hidden"})
+            except OSError as e:
+                self._send_json(500, {"error": str(e)})
+        elif state == "visible":
+            try:
+                if os.path.exists(flag):
+                    os.remove(flag)
+                self._send_json(200, {"success": True, "state": "visible"})
+            except OSError as e:
+                self._send_json(500, {"error": str(e)})
+        else:
+            self._send_json(400, {"error": "state must be 'hidden' or 'visible'"})
 
     STATIC_DIR = "/opt/static"
 
