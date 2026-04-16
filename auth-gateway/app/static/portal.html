@@ -1068,6 +1068,29 @@
             } catch (e) { /* ignore */ }
         }
 
+        // ── Hub Keep-Alive: Pod 활성 시 4분마다 JWT 자동 갱신 ──
+        // 쿠키 Max-Age=15분이지만 Pod가 살아있는 한 Hub도 계속 유지.
+        // document.visibilityState 체크 — 탭이 완전히 가려지면 skip (리소스 절약).
+        var _hubKeepAliveTimer = null;
+        function startHubKeepAlive() {
+            if (_hubKeepAliveTimer) return;  // 중복 시작 방지
+            _hubKeepAliveTimer = setInterval(function() {
+                // 탭이 숨겨져 있으면 refresh skip (Pod idle 판정과 일관성)
+                if (document.visibilityState === 'hidden') return;
+                apiFetch(API_BASE + '/auth/refresh', { method: 'POST' })
+                    .then(function(res) {
+                        if (!res.ok) {
+                            // refresh 실패 → 타이머 중단 (다음 initHubSection 호출 시 재시작)
+                            clearInterval(_hubKeepAliveTimer);
+                            _hubKeepAliveTimer = null;
+                        }
+                    })
+                    .catch(function() {
+                        // 네트워크 오류 — 무시하고 다음 주기 재시도
+                    });
+            }, 4 * 60 * 1000);  // 4분 (쿠키 Max-Age 15분 대비 충분한 마진)
+        }
+
         // ── Hub Section (T3) ──
         function initHubSection() {
             // 개발자 콘솔 타일: 현재 세션 URL 조회
@@ -1087,6 +1110,9 @@
                     dot.className  = 'hub-tile-status-dot hub-tile-status-dot--running';
                     txt.textContent = '실행 중';
                     txt.style.color = '#059669';
+                    // Pod 활성 상태일 때 JWT 쿠키 자동 갱신 (4분마다)
+                    // Pod가 살아있는 한 Hub도 로그인 유지 — 15분 쿠키 만료 방지
+                    startHubKeepAlive();
                 } else {
                     // 세션 없음 — 로그인 후 세션 생성 플로우로 이동
                     tile.href = '/';
