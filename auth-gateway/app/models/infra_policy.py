@@ -17,17 +17,17 @@ class InfraTemplate(Base):
 
 
 INFRA_TEMPLATES = {
-    # 2026-04-17: t3.medium → t3.large 상향
-    # t3.large (2 vCPU / 8 GiB) 실측 allocatable: 1930m CPU / 7083Mi memory
-    # 1-node-1-pod 정책 유지, 노드 자원 최대 활용
+    # 2026-04-17: t3.large → t3.xlarge 상향 (실측 EFS race + DaemonSet 마진 부족 해소)
+    # t3.xlarge (4 vCPU / 16 GiB) allocatable: 3920m CPU / 14000Mi memory
+    # DaemonSet 200m + Pod 2500m = 2700m / 3920m (69%). Burst 가능 limit 3500m.
     "standard": {
-        "nodegroup": "bedrock-claude-dedicated-nodes",
+        "nodegroup": "bedrock-claude-dedicated-xlarge-nodes",
         "node_selector": {"role": "claude-dedicated"},
         "max_pods_per_node": 1,
-        "cpu_request": "1800m",
-        "cpu_limit": "1900m",
-        "memory_request": "6500Mi",
-        "memory_limit": "7000Mi",
+        "cpu_request": "2500m",
+        "cpu_limit": "3500m",
+        "memory_request": "6Gi",
+        "memory_limit": "12Gi",
         "shared_dir_writable": False,
     },
     "premium": {
@@ -53,7 +53,7 @@ INFRA_TEMPLATES = {
 }
 
 INFRA_TEMPLATE_DESCRIPTIONS = {
-    "standard": "기본 (t3.large, 노드당 1명, 1:1 격리, CPU 1.8코어/메모리 6.5GiB)",
+    "standard": "기본 (t3.xlarge, 노드당 1명, 1:1 격리, CPU 2.5코어/메모리 6GiB, burst 3.5코어/12GiB)",
     "premium": "고사양 (m5.large, 노드당 1명, CPU 1코어+)",
     "enterprise": "최고사양 (m5.xlarge, 노드당 1명, CPU 3코어+)",
 }

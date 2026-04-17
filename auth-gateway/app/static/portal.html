@@ -1091,8 +1091,64 @@
             }, 4 * 60 * 1000);  // 4분 (쿠키 Max-Age 15분 대비 충분한 마진)
         }
 
+        // ── t3.xlarge 마이그레이션 공지 (1회만 표시) ──
+        function showXlargeMigrationNotice() {
+            if (localStorage.getItem('xlarge_migration_notice_seen')) return;
+
+            function dismissBanner() {
+                localStorage.setItem('xlarge_migration_notice_seen', 'true');
+                var el = document.getElementById('xlarge-migration-banner');
+                if (el) el.remove();
+            }
+
+            var banner = document.createElement('div');
+            banner.id = 'xlarge-migration-banner';
+            banner.style.cssText = [
+                'position:fixed', 'top:16px', 'right:16px', 'z-index:9999',
+                'background:#1e40af', 'color:#fff', 'border-radius:10px',
+                'padding:16px 20px', 'max-width:340px', 'box-shadow:0 4px 16px rgba(0,0,0,0.25)',
+                'font-size:14px', 'line-height:1.5'
+            ].join(';');
+
+            var title = document.createElement('div');
+            title.style.cssText = 'font-weight:700;margin-bottom:6px';
+            title.textContent = '🚀 환경 업그레이드 안내';
+
+            var body = document.createElement('div');
+            body.textContent = '새 t3.xlarge 환경(성능 ~1.5배)으로 업그레이드되었습니다. 다음 재로그인 시 자동 적용됩니다.';
+
+            var hint = document.createElement('div');
+            hint.style.cssText = 'margin-top:8px;font-size:13px;opacity:0.85';
+            hint.textContent = '지금 적용하려면 [환경 새로고침] 클릭 → 작업 저장 후 재로그인 필요.';
+
+            var btnRow = document.createElement('div');
+            btnRow.style.cssText = 'margin-top:12px;display:flex;gap:8px';
+
+            var btnClose = document.createElement('button');
+            btnClose.style.cssText = 'background:rgba(255,255,255,0.2);border:none;color:#fff;border-radius:6px;padding:5px 12px;cursor:pointer;font-size:13px';
+            btnClose.textContent = '닫기';
+            btnClose.addEventListener('click', dismissBanner);
+
+            var btnRefresh = document.createElement('button');
+            btnRefresh.style.cssText = 'background:rgba(255,255,255,0.9);border:none;color:#1e40af;border-radius:6px;padding:5px 12px;cursor:pointer;font-weight:600;font-size:13px';
+            btnRefresh.textContent = '환경 새로고침';
+            btnRefresh.addEventListener('click', function() {
+                dismissBanner();
+                alert('작업을 저장한 후 재로그인하시면 t3.xlarge 환경이 적용됩니다.');
+            });
+
+            btnRow.appendChild(btnClose);
+            btnRow.appendChild(btnRefresh);
+            banner.appendChild(title);
+            banner.appendChild(body);
+            banner.appendChild(hint);
+            banner.appendChild(btnRow);
+            document.body.appendChild(banner);
+        }
+
         // ── Hub Section (T3) ──
         function initHubSection() {
+            showXlargeMigrationNotice();
             // 개발자 콘솔 타일: 현재 세션 URL 조회
             apiFetch(API_BASE + '/api/v1/sessions/').then(function(res) {
                 if (!res.ok) throw new Error('no session');
