@@ -315,18 +315,36 @@ async def create_session(
     )
     if existing:
         # K8s 실제 상태와 동기화 후 반환
-        if existing.pod_status == "creating" and existing.pod_name:
+        if existing.pod_name:
             pod_info = k8s.get_pod_status(existing.pod_name)
             if pod_info and pod_info["phase"] == "Running":
                 existing.pod_status = "running"
                 db.commit()
-            elif pod_info is None:
-                # Pod이 사라진 경우 — terminated 처리 후 새로 생성
+            elif pod_info and pod_info["phase"] in ("Failed", "Succeeded"):
+                # Pod 종료됨 (TTL 만료, crash, FailedMount 등) — terminated 처리 후 새로 생성
+                logger.warning(
+                    "session reconcile: user=%s pod=%s k8s_phase=%s -> terminated (create_session)",
+                    username, existing.pod_name, pod_info["phase"],
+                )
                 existing.pod_status = "terminated"
                 existing.terminated_at = datetime.now(timezone.utc)
                 db.commit()
-                # 아래 코드에서 새 Pod 생성으로 진행
+                try:
+                    k8s.delete_pod(existing.pod_name)
+                except Exception:
+                    pass
                 existing = None
+            elif pod_info is None:
+                # Pod이 사라진 경우 — terminated 처리 후 새로 생성
+                logger.warning(
+                    "session reconcile: user=%s pod=%s k8s=disappeared -> terminated (create_session)",
+                    username, existing.pod_name,
+                )
+                existing.pod_status = "terminated"
+                existing.terminated_at = datetime.now(timezone.utc)
+                db.commit()
+                existing = None
+            # Pending 상태: 스케줄링 대기 중 — 기존 세션 유지
         if existing:
             return _to_response(existing, settings)
 
@@ -445,19 +463,31 @@ async def list_my_sessions(
         .all()
     )
 
-    # creating 상태인 세션의 Pod 상태를 K8s에서 동기화
+    # 활성(creating/running) 세션의 Pod 상태를 K8s에서 동기화
     for session in sessions:
-        if session.pod_status == "creating" and session.pod_name:
+        if session.pod_status in ("creating", "running") and session.pod_name:
             pod_status = k8s.get_pod_status(session.pod_name)
             if pod_status and pod_status["phase"] == "Running":
                 session.pod_status = "running"
             elif pod_status and pod_status["phase"] in ("Failed", "Succeeded"):
+                logger.warning(
+                    "session reconcile: user=%s pod=%s k8s_phase=%s -> terminated (list)",
+                    session.username, session.pod_name, pod_status["phase"],
+                )
                 session.pod_status = "terminated"
-                # TTL 만료 등으로 Pod 종료 → Service/Ingress 정리
+                session.terminated_at = datetime.now(timezone.utc)
                 try:
                     k8s.delete_pod(session.pod_name)
                 except Exception:
                     pass
+            elif pod_status is None:
+                # Pod이 K8s에서 사라진 경우 — terminated 처리
+                logger.warning(
+                    "session reconcile: user=%s pod=%s k8s=disappeared -> terminated (list)",
+                    session.username, session.pod_name,
+                )
+                session.pod_status = "terminated"
+                session.terminated_at = datetime.now(timezone.utc)
     db.commit()
 
     # 사용자 TTL 조회
