@@ -546,14 +546,19 @@
 
         async function waitForTerminal(token, podName) {
             const maxWait = 600;  // 10분 (노드 스케일링 포함)
+            const maxRetries = 3;  // Pod creating 즉시 실패 (FailedMount 등) 시 자동 재생성 횟수
             const statusEl = document.getElementById('status');
-            for (let i = 0; i < maxWait; i += 5) {
+            let currentPodName = podName;
+            let retryCount = 0;
+            let elapsed = 0;
+            while (elapsed < maxWait) {
                 await new Promise(r => setTimeout(r, 5000));
+                elapsed += 5;
 
-                const elapsed = i + 5;
-
-                // Staged progress messages with spinner
-                if (elapsed <= 15) {
+                // Staged progress messages with spinner (재시도 중이면 우선)
+                if (retryCount > 0) {
+                    setStatusWithSpinner(statusEl, `환경 준비 실패 감지 — 자동 재시도 중 (${retryCount}/${maxRetries})...`);
+                } else if (elapsed <= 15) {
                     setStatusWithSpinner(statusEl, '환경을 준비하고 있습니다...');
                 } else if (elapsed <= 60) {
                     setStatusWithSpinner(statusEl, '노드를 설정하고 있습니다... (약 2분 소요)');
@@ -568,13 +573,38 @@
                         headers: { 'Authorization': `Bearer ${token}` }
                     });
                     const data = await res.json();
-                    const session = data.sessions.find(s => s.pod_name === podName);
+                    const session = data.sessions.find(s => s.pod_name === currentPodName);
                     if (session && session.pod_status === 'running') {
                         setStatusWithSpinner(statusEl, '터미널에 접속합니다...');
                         return session;
                     }
+
+                    // 자동 재생성: 세션 사라짐 또는 terminated 감지 시 새 Pod 생성
+                    // (auth-gateway list_my_sessions reconcile이 Failed Pod을 정리한 직후 발동)
+                    const isLost = !session || session.pod_status === 'terminated';
+                    if (isLost && retryCount < maxRetries) {
+                        retryCount++;
+                        setStatusWithSpinner(statusEl, `Pod 생성 실패 감지 — 새로 생성 중 (${retryCount}/${maxRetries})...`);
+                        const newRes = await fetch(`${API_BASE}/api/v1/sessions/`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${token}`
+                            },
+                            body: JSON.stringify({ session_type: 'workshop' })
+                        });
+                        if (newRes.ok) {
+                            const newData = await newRes.json();
+                            currentPodName = newData.pod_name;
+                        }
+                    } else if (isLost && retryCount >= maxRetries) {
+                        throw new Error(`Pod 생성이 ${maxRetries}회 연속 실패했습니다. 관리자에게 문의해주세요.`);
+                    }
                 } catch (e) {
-                    // retry
+                    if (e instanceof Error && e.message && e.message.indexOf('연속 실패') !== -1) {
+                        throw e;
+                    }
+                    // 네트워크 오류 등 — 다음 폴링으로 재시도
                 }
             }
             throw new Error('자원 설정 시간이 초과되었습니다. 관리자에게 문의해주세요. (10분 초과)');
