@@ -1,0 +1,17 @@
+#!/bin/bash
+# Block push to anywhere except Gitea internal server
+set -euo pipefail
+
+remote_name="$1"
+remote_url="$2"
+
+ALLOWED_PREFIX="https://gitea.internal.skons.net/"
+
+if [[ "$remote_url" != "$ALLOWED_PREFIX"* ]]; then
+  echo "❌ Push blocked: remote URL ($remote_url) is not Gitea (gitea.internal.skons.net)."
+  echo "   External git push is prohibited by platform policy."
+  echo "   Configure remote to use Gitea: git remote set-url origin https://gitea.internal.skons.net/users/<your-id>/<repo>.git"
+  exit 1
+fi
+
+exit 0

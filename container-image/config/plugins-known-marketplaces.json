@@ -1,58 +1,10 @@
 {
   "claude-plugins-official": {
     "source": {
-      "source": "github",
-      "repo": "anthropics/claude-plugins-official"
+      "source": "git",
+      "url": "https://gitea.internal.skons.net/mirrors/claude-plugins-official.git"
     },
     "installLocation": "/home/node/.claude/plugins/marketplaces/claude-plugins-official",
-    "lastUpdated": "2026-03-27T05:02:13.290Z"
-  },
-  "anthropic-agent-skills": {
-    "source": {
-      "source": "github",
-      "repo": "anthropics/skills"
-    },
-    "installLocation": "/home/node/.claude/plugins/marketplaces/anthropic-agent-skills",
-    "lastUpdated": "2025-12-28T15:21:21.575Z"
-  },
-  "ring": {
-    "source": {
-      "source": "github",
-      "repo": "lerianstudio/ring"
-    },
-    "installLocation": "/home/node/.claude/plugins/marketplaces/ring",
-    "lastUpdated": "2025-12-28T15:24:11.989Z"
-  },
-  "claude-code-workflows": {
-    "source": {
-      "source": "git",
-      "url": "https://github.com/wshobson/agents.git"
-    },
-    "installLocation": "/home/node/.claude/plugins/marketplaces/claude-code-workflows",
-    "lastUpdated": "2025-12-28T15:32:18.884Z"
-  },
-  "playwright-skill": {
-    "source": {
-      "source": "github",
-      "repo": "lackeyjb/playwright-skill"
-    },
-    "installLocation": "/home/node/.claude/plugins/marketplaces/playwright-skill",
-    "lastUpdated": "2025-12-28T15:45:21.774Z"
-  },
-  "superpowers-marketplace": {
-    "source": {
-      "source": "github",
-      "repo": "obra/superpowers-marketplace"
-    },
-    "installLocation": "/home/node/.claude/plugins/marketplaces/superpowers-marketplace",
-    "lastUpdated": "2025-12-28T15:47:40.496Z"
-  },
-  "claude-context-mode": {
-    "source": {
-      "source": "github",
-      "repo": "mksglu/claude-context-mode"
-    },
-    "installLocation": "/home/node/.claude/plugins/marketplaces/claude-context-mode",
-    "lastUpdated": "2026-03-02T07:15:48.364Z"
+    "lastUpdated": "2026-04-15T00:00:00.000Z"
   }
 }

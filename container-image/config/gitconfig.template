@@ -1,0 +1,15 @@
+[user]
+    name = ${USER_DISPLAY_NAME}
+    email = ${GITEA_USER}@skons.net
+
+[url "https://gitea.internal.skons.net/mirrors/"]
+    insteadOf = https://github.com/
+
+[credential "https://gitea.internal.skons.net"]
+    helper = store
+
+[core]
+    hooksPath = /usr/local/share/git-hooks
+
+[init]
+    defaultBranch = main

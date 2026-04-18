@@ -8,6 +8,9 @@ FROM node:22-bookworm-slim AS base
 # 빌드 인자
 ARG TTYD_VERSION=1.7.7
 ARG AWSCLI_VERSION=2.22.35
+ARG SUPERPOWERS_VERSION=5.0.7
+ARG FRONTEND_DESIGN_VERSION=3ffb4b4ca81f
+ARG FEATURE_DEV_VERSION=3ffb4b4ca81f
 
 # 시스템 패키지 설치
 # - ttyd 빌드 의존성 + 런타임 도구
@@ -34,6 +37,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libwebsockets-dev \
     # 프로세스 관리
     tini \
+    # envsubst (entrypoint.sh: gitconfig.template 렌더링용)
+    gettext-base \
     && rm -rf /var/lib/apt/lists/*
 
 # SQLCipher support
@@ -113,9 +118,6 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     httpx requests markdown duckdb \
     uv
 
-# Serena MCP 서버 사전 설치 (uvx로 실행)
-RUN pip3 install --no-cache-dir --break-system-packages serena || true
-
 # -----------------------------------------------------------------------------
 # Claude Code 설정 + Skills
 # -----------------------------------------------------------------------------
@@ -139,15 +141,16 @@ RUN chmod 555 /home/node/.claude/hooks/security-hook.sh
 COPY --chown=node:node config/skills/ /home/node/.claude/commands/
 COPY --chown=node:node config/claude.json /home/node/.claude.json
 
-# Superpowers 플러그인 (스킬 + 에이전트)
-COPY --chown=node:node config/plugins/superpowers/ /home/node/.claude/plugins/cache/superpowers-marketplace/superpowers/4.0.3/
-COPY --chown=node:node config/plugins/serena/ /home/node/.claude/plugins/cache/claude-plugins-official/serena/unknown/
-COPY --chown=node:node config/installed_plugins.json /home/node/.claude/plugins/installed_plugins.json
-COPY --chown=node:node config/plugins-config.json /home/node/.claude/plugins/config.json
-COPY --chown=node:node config/plugins-blocklist.json /home/node/.claude/plugins/blocklist.json
+# Claude Code 플러그인 (superpowers, frontend-design, feature-dev)
+COPY --chown=node:node config/plugins/superpowers/     /home/node/.claude/plugins/cache/claude-plugins-official/superpowers/${SUPERPOWERS_VERSION}/
+COPY --chown=node:node config/plugins/frontend-design/ /home/node/.claude/plugins/cache/claude-plugins-official/frontend-design/${FRONTEND_DESIGN_VERSION}/
+COPY --chown=node:node config/plugins/feature-dev/     /home/node/.claude/plugins/cache/claude-plugins-official/feature-dev/${FEATURE_DEV_VERSION}/
+COPY --chown=node:node config/installed_plugins.json   /home/node/.claude/plugins/installed_plugins.json
+COPY --chown=node:node config/plugins-config.json      /home/node/.claude/plugins/config.json
+COPY --chown=node:node config/plugins-blocklist.json   /home/node/.claude/plugins/blocklist.json
 COPY --chown=node:node config/plugins-known-marketplaces.json /home/node/.claude/plugins/known_marketplaces.json
-COPY --chown=node:node config/plugins-marketplaces/ /home/node/.claude/plugins/marketplaces/
-COPY --chown=node:node config/plugins-data/ /home/node/.claude/plugins/data/
+COPY --chown=node:node config/plugins-data/            /home/node/.claude/plugins/data/
+# Note: plugins-marketplaces/ removed — Gitea serves as source (Phase 1-2)
 
 # Tabulator.js (파일 탐색기 UI) — CDN 불가 환경 대비 로컬 번들
 RUN mkdir -p /opt/static && \
@@ -185,6 +188,13 @@ RUN chmod +x /usr/local/bin/ask /usr/local/bin/ask-loop /usr/local/bin/switch-mo
 # ttyd 커스텀 index.html — Ctrl+C/V 클립보드 + 이미지 붙여넣기
 RUN mkdir -p /usr/local/share/ttyd
 COPY ttyd-custom-index.html /usr/local/share/ttyd/index.html
+
+# Git hooks installed globally (used by core.hooksPath in gitconfig)
+COPY --chown=root:root config/git-hooks/ /usr/local/share/git-hooks/
+RUN find /usr/local/share/git-hooks -type f -exec chmod +x {} \; && chmod 755 /usr/local/share/git-hooks
+
+# gitconfig template (rendered by entrypoint.sh with envsubst)
+COPY --chown=node:node config/gitconfig.template /home/node/.gitconfig.template
 
 # 엔트리포인트 스크립트
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh

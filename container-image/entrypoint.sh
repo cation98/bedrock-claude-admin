@@ -271,16 +271,30 @@ git config --global user.name "${USER_DISPLAY_NAME}"
 git config --global user.email "${USER_ID}@skons.net"
 
 # Git HTTP 프록시 — HTTPS_PROXY가 주입되어 있으면 git config에도 복제.
-# 이유: `claude plugin install`이 내부적으로 git clone subprocess를 실행할 때
-#       curl 백엔드가 CONNECT 요청에 Proxy-Authorization 헤더를 실지 않아
-#       egress proxy가 user=- 로 인식하고 차단하는 케이스가 있음.
-#       git config http.proxy 에 명시적으로 auth 포함 URL을 박으면
-#       git이 직접 해당 프록시를 통해 인증된 요청을 보냄.
 if [ -n "${HTTPS_PROXY:-}" ]; then
     git config --global http.proxy "${HTTPS_PROXY}"
     git config --global https.proxy "${HTTPS_PROXY}"
     echo "  Git proxy 설정 완료 (egress authenticated)"
 fi
+
+# --- Gitea git setup ---
+# GITEA_USER/GITEA_TOKEN가 주입된 경우, gitconfig.template을 렌더링하여
+# 내부 Gitea 서버용 자격증명 + 전역 hooks 경로(core.hooksPath)를 설정한다.
+if [[ -n "${GITEA_USER:-}" && -n "${GITEA_TOKEN:-}" ]]; then
+  # USER_DISPLAY_NAME 미주입 시 SSO ID로 폴백 (기존 동작 유지)
+  export USER_DISPLAY_NAME="${USER_DISPLAY_NAME:-$GITEA_USER}"
+  # envsubst에 변수 화이트리스트를 명시 — 템플릿의 의도치 않은 $var 치환 방지
+  envsubst '${GITEA_USER} ${USER_DISPLAY_NAME}' < /home/node/.gitconfig.template > /home/node/.gitconfig
+  chmod 600 /home/node/.gitconfig
+
+  echo "https://${GITEA_USER}:${GITEA_TOKEN}@gitea.internal.skons.net" > /home/node/.git-credentials
+  chmod 600 /home/node/.git-credentials
+
+  echo "[entrypoint] Gitea git configured for user: $GITEA_USER"
+else
+  echo "[entrypoint] WARNING: GITEA_USER/GITEA_TOKEN not set — git operations will fail"
+fi
+# --- end ---
 
 # ---------------------------------------------------------------------------
 # 4) 작업 디렉토리 준비

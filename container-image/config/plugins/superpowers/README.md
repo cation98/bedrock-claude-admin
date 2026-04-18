@@ -26,7 +26,17 @@ Thanks!
 
 ## Installation
 
-**Note:** Installation differs by platform. Claude Code has a built-in plugin system. Codex and OpenCode require manual setup.
+**Note:** Installation differs by platform. Claude Code or Cursor have built-in plugin marketplaces. Codex and OpenCode require manual setup.
+
+### Claude Code Official Marketplace
+
+Superpowers is available via the [official Claude plugin marketplace](https://claude.com/plugins/superpowers)
+
+Install the plugin from Claude marketplace:
+
+```bash
+/plugin install superpowers@claude-plugins-official
+```
 
 ### Claude Code (via Plugin Marketplace)
 
@@ -42,20 +52,15 @@ Then install the plugin from this marketplace:
 /plugin install superpowers@superpowers-marketplace
 ```
 
-### Verify Installation
+### Cursor (via Plugin Marketplace)
 
-Check that commands appear:
+In Cursor Agent chat, install from marketplace:
 
-```bash
-/help
+```text
+/add-plugin superpowers
 ```
 
-```
-# Should see:
-# /superpowers:brainstorm - Interactive design refinement
-# /superpowers:write-plan - Create implementation plan
-# /superpowers:execute-plan - Execute plan in batches
-```
+or search for "superpowers" in the plugin marketplace.
 
 ### Codex
 
@@ -76,6 +81,29 @@ Fetch and follow instructions from https://raw.githubusercontent.com/obra/superp
 ```
 
 **Detailed docs:** [docs/README.opencode.md](docs/README.opencode.md)
+
+### GitHub Copilot CLI
+
+```bash
+copilot plugin marketplace add obra/superpowers-marketplace
+copilot plugin install superpowers@superpowers-marketplace
+```
+
+### Gemini CLI
+
+```bash
+gemini extensions install https://github.com/obra/superpowers
+```
+
+To update:
+
+```bash
+gemini extensions update superpowers
+```
+
+### Verify Installation
+
+Start a new session in your chosen platform and ask for something that should trigger a skill (for example, "help me plan this feature" or "let's debug this issue"). The agent should automatically invoke the relevant superpowers skill.
 
 ## The Basic Workflow
 
@@ -153,7 +181,10 @@ Skills update automatically when you update the plugin:
 
 MIT License - see LICENSE file for details
 
-## Support
+## Community
 
+Superpowers is built by [Jesse Vincent](https://blog.fsck.com) and the rest of the folks at [Prime Radiant](https://primeradiant.com).
+
+- **Discord**: [Join us](https://discord.gg/Jd8Vphy9jq) for community support, questions, and sharing what you're building with Superpowers
 - **Issues**: https://github.com/obra/superpowers/issues
-- **Marketplace**: https://github.com/obra/superpowers-marketplace
+- **Release announcements**: [Sign up](https://primeradiant.com/superpowers/) to get notified about new versions

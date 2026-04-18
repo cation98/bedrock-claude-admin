@@ -1,3 +1,12 @@
 {
-  "repositories": {}
+  "repositories": {
+    "claude-plugins-official": {
+      "enabled": true,
+      "plugins": {
+        "superpowers": { "enabled": true },
+        "frontend-design": { "enabled": true },
+        "feature-dev": { "enabled": true }
+      }
+    }
+  }
 }
