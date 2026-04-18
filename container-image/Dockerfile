@@ -8,9 +8,7 @@ FROM node:22-bookworm-slim AS base
 # 빌드 인자
 ARG TTYD_VERSION=1.7.7
 ARG AWSCLI_VERSION=2.22.35
-ARG SUPERPOWERS_VERSION=5.0.7
-ARG FRONTEND_DESIGN_VERSION=3ffb4b4ca81f
-ARG FEATURE_DEV_VERSION=3ffb4b4ca81f
+# Note: plugin version ARGs removed — marketplace.json 내 version으로 관리
 
 # 시스템 패키지 설치
 # - ttyd 빌드 의존성 + 런타임 도구
@@ -141,16 +139,16 @@ RUN chmod 555 /home/node/.claude/hooks/security-hook.sh
 COPY --chown=node:node config/skills/ /home/node/.claude/commands/
 COPY --chown=node:node config/claude.json /home/node/.claude.json
 
-# Claude Code 플러그인 (superpowers, frontend-design, feature-dev)
-COPY --chown=node:node config/plugins/superpowers/     /home/node/.claude/plugins/cache/claude-plugins-official/superpowers/${SUPERPOWERS_VERSION}/
-COPY --chown=node:node config/plugins/frontend-design/ /home/node/.claude/plugins/cache/claude-plugins-official/frontend-design/${FRONTEND_DESIGN_VERSION}/
-COPY --chown=node:node config/plugins/feature-dev/     /home/node/.claude/plugins/cache/claude-plugins-official/feature-dev/${FEATURE_DEV_VERSION}/
+# Claude Code 플러그인 — slim local marketplace (GitHub 의존 완전 제거)
+# marketplace.json + plugins/{superpowers,frontend-design,feature-dev} 모두 이미지 내장.
+# known_marketplaces.json의 lastUpdated=2099로 자동 refresh 차단. entrypoint.sh가
+# 첫 Pod 시작 시 claude plugin install로 3개를 로컬 marketplace에서 설치.
+COPY --chown=node:node config/plugins-marketplaces/   /home/node/.claude/plugins/marketplaces/
 COPY --chown=node:node config/installed_plugins.json   /home/node/.claude/plugins/installed_plugins.json
 COPY --chown=node:node config/plugins-config.json      /home/node/.claude/plugins/config.json
 COPY --chown=node:node config/plugins-blocklist.json   /home/node/.claude/plugins/blocklist.json
 COPY --chown=node:node config/plugins-known-marketplaces.json /home/node/.claude/plugins/known_marketplaces.json
 COPY --chown=node:node config/plugins-data/            /home/node/.claude/plugins/data/
-# Note: plugins-marketplaces/ removed — Gitea serves as source (Phase 1-2)
 
 # Tabulator.js (파일 탐색기 UI) — CDN 불가 환경 대비 로컬 번들
 RUN mkdir -p /opt/static && \

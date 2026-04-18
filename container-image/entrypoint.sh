@@ -604,11 +604,16 @@ done) &
 export PATH="/home/node/.local/bin:$PATH"
 
 # ---------------------------------------------------------------------------
-# 5b) Superpowers 플러그인 설치 (CLI 등록, 1회만)
+# 5b) Claude Code 플러그인 설치 (로컬 marketplace 기반, 1회만)
+# 이미지에 slim marketplace가 pre-bake 되어 있고 known_marketplaces.json이
+# lastUpdated=2099로 자동 refresh를 차단하므로, 여기서는 3개 플러그인을
+# marketplace의 로컬 소스에서 install만 하면 된다. GitHub/git clone 의존 없음.
 # ---------------------------------------------------------------------------
 if [ ! -f /home/node/workspace/.plugins-installed ]; then
     echo "  플러그인 설치 중..."
-    claude plugin install superpowers 2>/dev/null || true
+    for p in superpowers feature-dev frontend-design; do
+        claude plugin install "${p}@claude-plugins-official" >/dev/null 2>&1 || true
+    done
     touch /home/node/workspace/.plugins-installed
     echo "  플러그인 설치 완료"
 fi

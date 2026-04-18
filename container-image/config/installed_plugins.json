@@ -1,32 +1,4 @@
 {
-  "version": "1.0",
-  "plugins": {
-    "superpowers@claude-plugins-official": [
-      {
-        "scope": "user",
-        "installPath": "/home/node/.claude/plugins/cache/claude-plugins-official/superpowers/5.0.7",
-        "version": "5.0.7",
-        "installedAt": "2026-04-15T00:00:00.000Z",
-        "lastUpdated": "2026-04-15T00:00:00.000Z"
-      }
-    ],
-    "frontend-design@claude-plugins-official": [
-      {
-        "scope": "user",
-        "installPath": "/home/node/.claude/plugins/cache/claude-plugins-official/frontend-design/3ffb4b4ca81f",
-        "version": "3ffb4b4ca81f",
-        "installedAt": "2026-04-15T00:00:00.000Z",
-        "lastUpdated": "2026-04-15T00:00:00.000Z"
-      }
-    ],
-    "feature-dev@claude-plugins-official": [
-      {
-        "scope": "user",
-        "installPath": "/home/node/.claude/plugins/cache/claude-plugins-official/feature-dev/3ffb4b4ca81f",
-        "version": "3ffb4b4ca81f",
-        "installedAt": "2026-04-15T00:00:00.000Z",
-        "lastUpdated": "2026-04-15T00:00:00.000Z"
-      }
-    ]
-  }
+  "version": 2,
+  "plugins": {}
 }
