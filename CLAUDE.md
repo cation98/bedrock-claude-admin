@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-AWS Bedrock 기반 사내 Claude Code 활용 플랫폼. 임원/팀장 실습 세션과 실무자 일상 개발 지원을 위한 Internal Developer Platform.
+AWS Bedrock 기반 사내 AI 에이전트 플랫폼. 전 직원이 Claude Code를 일상 업무에 활용할 수 있도록 SSO 인증, 격리된 실행 환경, 사용량 관리를 제공하는 Internal AI Platform.
 
 **핵심 목적**: 사내 SSO(sso.skons.net) 인증 → AWS Bedrock Claude API → 사용자별 격리된 웹 터미널(K8s Pod) 제공
 
@@ -16,7 +16,7 @@ Users (CLI / Web Terminal)
     → EKS Cluster — 사용자별 Pod (Claude Code + ttyd + psql)
     → Admin Dashboard (Next.js) — 세션/사용량 모니터링
     → AWS Bedrock — Claude Sonnet 4.6 / Haiku 4.5
-    → RDS ReadOnly Replica (safety-prod) — 실습/실무 데이터 접근
+    → RDS ReadOnly Replica (safety-prod) — 실무 데이터 접근
 ```
 
 ### Components
@@ -99,7 +99,7 @@ DATABASE_URL=         # Platform PostgreSQL
 
 - 개발자가 Kubernetes를 이 프로젝트를 통해 학습 중 — K8s 관련 코드/설정에는 상세한 주석과 설명을 포함할 것
 - O-Guard 프로젝트의 FastAPI 패턴(config loading, auth dependencies, error handling)을 참고할 것
-- Phase 1 MVP (임원 15명 실습, 1주 내) → Phase 2 (팀장 50명) → 상시 운영 (실무자 10명) 순서로 확장
+- 사내 전 직원 대상 상시 운영 AI 에이전트 플랫폼 — 단계적 확장(사용자 수, 기능) 진행 중
 
 ## Infrastructure Design Constraints
 
