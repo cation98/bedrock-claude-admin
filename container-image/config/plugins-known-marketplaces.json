@@ -1,10 +1,1 @@
-{
-  "claude-plugins-official": {
-    "source": {
-      "source": "git",
-      "url": "https://gitea.internal.skons.net/mirrors/claude-plugins-official.git"
-    },
-    "installLocation": "/home/node/.claude/plugins/marketplaces/claude-plugins-official",
-    "lastUpdated": "2026-04-15T00:00:00.000Z"
-  }
-}
+{}
