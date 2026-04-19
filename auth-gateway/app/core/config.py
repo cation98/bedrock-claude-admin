@@ -112,6 +112,11 @@ class Settings(BaseSettings):
     s3_vault_kms_key_id: str = ""    # KMS 키 ID (ARN 또는 별칭)
     s3_vault_region: str = "ap-northeast-2"
 
+    # ----- Gitea (사용자 git gateway) -----
+    gitea_enabled: bool = False       # feature flag — 프로덕션 활성화 전 False 유지
+    gitea_url: str = "https://gitea.internal.skons.net"
+    gitea_admin_token: str = ""       # K8s Secret에서 주입 (GITEA_ADMIN_TOKEN)
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

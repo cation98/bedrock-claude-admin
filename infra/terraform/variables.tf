@@ -205,6 +205,14 @@ variable "bedrock_region" {
   default     = "us-east-1"
 }
 
+# ----- Gitea -----
+
+variable "gitea_db_password" {
+  description = "Gitea Postgres password (sensitive — 1Password에서 주입, terraform.tfvars에 평문 저장 금지)"
+  type        = string
+  sensitive   = true
+}
+
 # ----- User Apps Workers Nodegroup -----
 
 variable "eks_user_apps_instance_types" {

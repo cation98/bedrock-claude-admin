@@ -17,6 +17,7 @@ import os
 import re
 import secrets
 import tempfile
+import uuid
 from datetime import datetime, timezone
 
 import io
@@ -172,6 +173,38 @@ class K8sService:
 
         return mounts
 
+    def _gitea_env_for(self, sso_id: str, email: str) -> list:
+        """Gitea 사용자 계정 확보 후 Pod 주입용 env 목록 반환.
+
+        3회 재시도 후 모두 실패하면 GiteaProvisioningError를 올려 Pod 생성 중단.
+        token_name에 UUID 접미사를 붙여 동일 사용자의 중복 토큰 이름 충돌 방지.
+        """
+        from app.services.gitea_client import GiteaClient, GiteaProvisioningError
+
+        gitea = GiteaClient(
+            base_url=self.settings.gitea_url,
+            admin_token=self.settings.gitea_admin_token,
+        )
+        token_name = f"claude-pod-{sso_id.lower()}-{uuid.uuid4().hex[:8]}"
+        last_exc: Exception | None = None
+        for attempt in range(1, 4):
+            try:
+                user_info = gitea.ensure_user(sso_id, email)
+                token = gitea.issue_user_token(user_info.login, token_name)
+                return [
+                    client.V1EnvVar(name="GITEA_URL", value=self.settings.gitea_url),
+                    client.V1EnvVar(name="GITEA_USER", value=user_info.login),
+                    client.V1EnvVar(name="GITEA_TOKEN", value=token),
+                ]
+            except GiteaProvisioningError as exc:
+                last_exc = exc
+                logger.warning(
+                    f"Gitea provisioning attempt {attempt}/3 failed for {sso_id}: {exc}"
+                )
+        raise GiteaProvisioningError(
+            f"Gitea provisioning failed after 3 attempts for {sso_id}: {last_exc}"
+        )
+
     def _build_env_vars(
         self,
         username: str,
@@ -179,6 +212,7 @@ class K8sService:
         security_policy: dict | None,
         proxy_secret: str | None = None,
         pod_token: str | None = None,
+        gitea_env: list | None = None,
     ) -> list:
         """Pod 환경변수 목록 생성. security_policy에 따라 DB 자격증명을 조건부 주입.
 
@@ -307,9 +341,13 @@ class K8sService:
                 ),
             ])
 
+        if gitea_env:
+            env_vars.extend(gitea_env)
+
         logger.info(
             f"Pod env for {username}: security_level={security_level}, "
-            f"safety={safety_allowed}, tango={tango_allowed}, doculog={doculog_allowed}"
+            f"safety={safety_allowed}, tango={tango_allowed}, doculog={doculog_allowed}, "
+            f"gitea={'injected' if gitea_env else 'disabled'}"
         )
         return env_vars
 
@@ -367,6 +405,12 @@ class K8sService:
         # 로컬 개발 환경 감지: 이미지 태그에 ":local"이 포함되면 Docker Desktop
         # EFS PVC → hostPath, nodeSelector/tolerations/anti-affinity 제거, imagePullPolicy=Never
         is_local = ":local" in self.settings.k8s_pod_image
+
+        # Gitea 사용자 계정 + 토큰 프로비저닝 (feature flag + 상용 환경 한정)
+        # 실패 시 GiteaProvisioningError를 올려 Pod 생성 중단 (hard fail — 설계 §5.2)
+        gitea_env = None
+        if self.settings.gitea_enabled and not is_local:
+            gitea_env = self._gitea_env_for(username, f"{username}@skons.net")
 
         if is_local:
             # 로컬: hostPath 볼륨, init container 불필요, nodeSelector/tolerations 없음
@@ -492,6 +536,7 @@ class K8sService:
                             username, user_display_name, security_policy,
                             proxy_secret=proxy_secret,
                             pod_token=pod_token,
+                            gitea_env=gitea_env,
                         ),
                         security_context=client.V1SecurityContext(
                             allow_privilege_escalation=False,

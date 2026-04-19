@@ -263,6 +263,19 @@ spec:
             - name: ALLOW_TEST_USERS
               value: "true"
 
+            # ── Gitea (사용자 git gateway) ────────────────────────────────────
+            # Secret: kubectl create secret generic gitea-admin-token \
+            #   --from-literal=GITEA_ADMIN_TOKEN=<token> -n platform
+            - name: GITEA_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: gitea-admin-token
+                  key: GITEA_ADMIN_TOKEN
+            - name: GITEA_URL
+              value: "https://gitea.internal.skons.net"
+            - name: GITEA_ENABLED
+              value: "false"  # feature flag — true로 변경 후 rollout restart
+
           readinessProbe:
             httpGet:
               path: /health
