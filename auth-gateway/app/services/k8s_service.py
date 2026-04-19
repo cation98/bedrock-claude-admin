@@ -182,7 +182,7 @@ class K8sService:
         from app.services.gitea_client import GiteaClient, GiteaProvisioningError
 
         gitea = GiteaClient(
-            base_url=self.settings.gitea_url,
+            base_url=self.settings.gitea_internal_url,
             admin_token=self.settings.gitea_admin_token,
         )
         token_name = f"claude-pod-{sso_id.lower()}-{uuid.uuid4().hex[:8]}"

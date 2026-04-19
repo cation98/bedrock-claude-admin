@@ -273,8 +273,10 @@ spec:
                   key: GITEA_ADMIN_TOKEN
             - name: GITEA_URL
               value: "https://gitea.internal.skons.net"
+            - name: GITEA_INTERNAL_URL
+              value: "http://gitea-http.gitea.svc.cluster.local:3000"
             - name: GITEA_ENABLED
-              value: "false"  # feature flag — true로 변경 후 rollout restart
+              value: "true"
 
           readinessProbe:
             httpGet:

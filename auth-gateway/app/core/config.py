@@ -114,7 +114,8 @@ class Settings(BaseSettings):
 
     # ----- Gitea (사용자 git gateway) -----
     gitea_enabled: bool = False       # feature flag — 프로덕션 활성화 전 False 유지
-    gitea_url: str = "https://gitea.internal.skons.net"
+    gitea_url: str = "https://gitea.internal.skons.net"              # Pod env 주입용 (사용자 git remote)
+    gitea_internal_url: str = "http://gitea-http.gitea.svc.cluster.local:3000"  # 서버간 Admin API 호출용
     gitea_admin_token: str = ""       # K8s Secret에서 주입 (GITEA_ADMIN_TOKEN)
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
