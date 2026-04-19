@@ -1,0 +1,78 @@
+# Gitea 네임스페이스 NetworkPolicy
+#
+# 허용:
+#   Ingress  — platform(auth-gateway Admin API) + ingress-nginx(FQDN 경유) + claude-sessions(User Pod git)
+#   Egress   — DNS + Valkey(6379/16379, 동일 namespace) + RDS(5432) + HTTPS(asset 다운로드)
+# 차단:
+#   그 외 모든 Pod-to-Pod 트래픽
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gitea-default
+  namespace: gitea
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: gitea
+
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # auth-gateway(platform), ingress-nginx(FQDN 경유), User Pod(claude-sessions) 허용
+    # claude-sessions: 내부 DNS가 ClusterIP로 resolve되는 경우 직접 접근 가능 — allowlist 포함
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: platform
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: claude-sessions
+      ports:
+        - port: 3000
+          protocol: TCP
+
+  egress:
+    # DNS
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+    # Valkey (cache/session/queue) — Helm chart 기본 내장, 동일 gitea namespace
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gitea
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: valkey-cluster
+      ports:
+        - port: 6379
+          protocol: TCP
+        - port: 16379  # valkey-cluster gossip port
+          protocol: TCP
+
+    # RDS PostgreSQL (EKS private subnet CIDR 내부 엔드포인트)
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/16
+      ports:
+        - port: 5432
+          protocol: TCP
+
+    # HTTPS (Gitea 초기화 시 asset 다운로드 등)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/16
+      ports:
+        - port: 443
+          protocol: TCP

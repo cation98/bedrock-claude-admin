@@ -1,0 +1,144 @@
+# Gitea CE Helm values
+#
+# 차트: gitea-charts/gitea (https://dl.gitea.com/charts/)
+# 배포 명령 (초기):
+#   helm repo add gitea-charts https://dl.gitea.com/charts/
+#   helm upgrade --install gitea gitea-charts/gitea \
+#     --namespace gitea \
+#     --values infra/k8s/gitea/values.yaml \
+#     --set gitea.admin.password="<1Password에서 조회>" \
+#     --timeout 10m
+#
+# Task 1.4 (SSO OAuth2) SKIP — sso.skons.net은 OIDC 미지원 custom JSON API.
+# Gitea 웹 UI는 admin 계정으로만 접근. 사용자 계정은 auth-gateway가 Admin API로 자동 생성.
+
+replicaCount: 1
+
+image:
+  # registry: docker.gitea.com (차트 기본값)
+  # repository: gitea (차트 기본값)
+  # tag: 1.25.5 (차트 appVersion 기본값)
+  rootless: false  # EFS CSI는 access point 없이 fsGroup 무시 → rootless 이미지 Permission denied
+  pullPolicy: IfNotPresent
+
+# system-node-large nodegroup 배치 (CLAUDE.md 설계 제약: auth-gateway와 동일 nodegroup)
+nodeSelector:
+  role: system
+
+tolerations:
+  - key: dedicated
+    operator: Equal
+    value: system
+    effect: NoSchedule
+
+affinity:
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: gitea
+        topologyKey: kubernetes.io/hostname
+
+service:
+  http:
+    type: ClusterIP
+    port: 3000
+  ssh:
+    type: ClusterIP
+    port: 22
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+  hosts:
+    - host: gitea.internal.skons.net
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: gitea-tls
+      hosts:
+        - gitea.internal.skons.net
+
+resources:
+  requests:
+    cpu: "500m"
+    memory: "512Mi"
+  limits:
+    cpu: "1000m"
+    memory: "1Gi"
+
+persistence:
+  enabled: true
+  size: 20Gi
+  storageClass: efs-sc  # 정적 PV efs-gitea-data 사용 (EBS CSI 미설치 — 동적 프로비저닝 불가)
+  accessModes:
+    - ReadWriteMany
+
+gitea:
+  admin:
+    username: gitea-admin
+    # password: helm install --set gitea.admin.password=<secret> 으로 주입
+    email: gitea-admin@skons.net
+
+  config:
+    APP_NAME: "SKO Claude Plugin Marketplace"
+    server:
+      DOMAIN: gitea.internal.skons.net
+      SSH_DOMAIN: gitea.internal.skons.net
+      ROOT_URL: "https://gitea.internal.skons.net"
+      SSH_PORT: 22
+      LFS_START_SERVER: "true"
+
+    database:
+      DB_TYPE: postgres
+      # HOST: helm install --set gitea.config.database.HOST=<rds-endpoint> 으로 주입
+      NAME: gitea
+      USER: gitea
+      # PASSWD: K8s Secret gitea-db-credentials 에서 주입 (아래 extraEnvFromSecret 참고)
+      SSL_MODE: require
+
+    service:
+      DISABLE_REGISTRATION: "true"  # 사용자 자가 회원가입 차단 — auth-gateway Admin API로만 생성
+      REQUIRE_SIGNIN_VIEW: "true"
+
+    security:
+      INSTALL_LOCK: "true"
+      # SECRET_KEY는 GITEA__SECURITY__SECRET_KEY env(아래 additionalConfigFromEnvs)로만 주입
+      # 여기에 빈 문자열을 두면 app.ini에 먼저 렌더되어 env 주입 전 위험 — 라인 제거
+
+    repository:
+      DEFAULT_BRANCH: main
+      ENABLE_PUSH_CREATE_USER: "true"
+
+  # RDS 패스워드를 Secret으로 주입 (평문 values.yaml 금지)
+  # kubectl create secret generic gitea-db-credentials \
+  #   --namespace gitea \
+  #   --from-literal=password=<DB_PASSWORD> \
+  #   --from-literal=secret_key=<random-64-char>
+  additionalConfigFromEnvs:
+    - name: GITEA__DATABASE__PASSWD
+      valueFrom:
+        secretKeyRef:
+          name: gitea-db-credentials
+          key: password
+    - name: GITEA__SECURITY__SECRET_KEY
+      valueFrom:
+        secretKeyRef:
+          name: gitea-db-credentials
+          key: secret_key
+
+# 내장 PostgreSQL 비활성화 — 전용 RDS 인스턴스 사용
+postgresql:
+  enabled: false
+
+postgresql-ha:
+  enabled: false
+
+# Valkey(Redis fork) 영속성 비활성화 — Phase 1 MVP (EBS CSI 미설치, 재시작 시 캐시 휘발 허용)
+valkey-cluster:
+  persistence:
+    enabled: false
