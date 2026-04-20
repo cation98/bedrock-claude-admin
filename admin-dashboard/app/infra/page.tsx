@@ -53,7 +53,8 @@ function StatusBadge({ status }: { status: string }) {
 
 const ROLE_BADGE: Record<string, { bg: string; label: string }> = {
   system:      { bg: "bg-[var(--danger-light)] text-[var(--danger)]",    label: "시스템 (삭제 금지)" },
-  gitea:       { bg: "bg-purple-100 text-purple-700",                    label: "Gitea / OnlyOffice" },
+  ingress:     { bg: "bg-orange-100 text-orange-700",                     label: "Ingress (삭제 금지)" },
+  gitea:       { bg: "bg-purple-100 text-purple-700",                    label: "Gitea / OnlyOffice (삭제 금지)" },
   presenter:   { bg: "bg-[var(--info-light)] text-[var(--info)]",        label: "전용 노드" },
   workload:    { bg: "bg-[var(--warning-light)] text-[var(--warning)]",  label: "OpenWebUI 워크로드 전용" },
   "user-apps": { bg: "bg-[var(--success-light)] text-[var(--success)]",  label: "사용자 배포 앱 전용" },
@@ -70,11 +71,13 @@ const POD_KIND_BADGE: Record<string, string> = {
 
 function NodeCard({ node, onAction }: { node: NodeInfo; onAction: () => void }) {
   const hasPods = node.pods.length > 0;
-  const isSystem = node.node_role === "system";
-  const isGitea  = node.node_role === "gitea";
+  const isSystem  = node.node_role === "system";
+  const isIngress = node.node_role === "ingress";
+  const isGitea   = node.node_role === "gitea";
+  const isProtected = isSystem || isIngress || isGitea;
   const role = ROLE_BADGE[node.node_role] ?? ROLE_BADGE.user;
   return (
-    <div className={`rounded-lg border ${isSystem ? "border-[var(--danger-light)] bg-[var(--danger-light)]/30" : isGitea ? "border-purple-200 bg-purple-50" : hasPods ? "border-[var(--border)] bg-[var(--surface)]" : "border-[var(--border)] bg-[var(--bg)]"} shadow-sm`}>
+    <div className={`rounded-lg border ${isSystem ? "border-[var(--danger-light)] bg-[var(--danger-light)]/30" : isIngress ? "border-orange-200 bg-orange-50" : isGitea ? "border-purple-200 bg-purple-50" : hasPods ? "border-[var(--border)] bg-[var(--surface)]" : "border-[var(--border)] bg-[var(--bg)]"} shadow-sm`}>
       <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
         <div>
           <span className="text-sm font-semibold text-[var(--text-primary)]">{shortNode(node.node_name)}</span>
@@ -90,7 +93,7 @@ function NodeCard({ node, onAction }: { node: NodeInfo; onAction: () => void }) 
           <span className="text-xs text-[var(--text-muted)]">
             CPU {node.cpu_capacity} / Mem {node.memory_capacity}
           </span>
-          {!isSystem && (
+          {!isProtected && (
             <button
               disabled={node.pods.filter((p) => p.username !== "SYSTEM").length > 0}
               onClick={async () => {

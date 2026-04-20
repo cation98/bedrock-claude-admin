@@ -800,19 +800,27 @@ async def drain_node(
     except client.rest.ApiException:
         raise HTTPException(status_code=404, detail="노드를 찾을 수 없습니다")
 
-    # 시스템 Pod 확인
-    labels = node.metadata.labels or {}
-    if labels.get("role") == "system":
-        raise HTTPException(status_code=400, detail="시스템 노드는 제거할 수 없습니다")
+    # 보호 대상 역할/네임스페이스 정의
+    _PROTECTED_ROLES = {"system", "ingress", "gitea"}
+    _PROTECTED_NAMESPACES = {"platform", "ingress-nginx", "gitea"}
+    _SYSTEM_POD_PREFIXES = ("aws-node", "kube-proxy", "efs-csi", "coredns")
 
-    # 사용자/플랫폼 Pod 확인
+    labels = node.metadata.labels or {}
+    node_role = labels.get("role", "")
+    if node_role in _PROTECTED_ROLES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"이 노드({node_role} 역할)는 보호 대상으로 제거할 수 없습니다",
+        )
+
+    # 사용자/플랫폼 Pod 확인 — 보호 네임스페이스 Pod이 있으면 차단
     all_pods = v1.list_pod_for_all_namespaces(field_selector=f"spec.nodeName={req.node_name}")
-    user_pods = [p for p in all_pods.items if p.metadata.namespace not in ("kube-system",)]
-    non_system_pods = [p for p in user_pods if p.metadata.namespace not in ("kube-system",)
-                       and not p.metadata.name.startswith("aws-node")
-                       and not p.metadata.name.startswith("kube-proxy")
-                       and not p.metadata.name.startswith("efs-csi")
-                       and not p.metadata.name.startswith("coredns")]
+    non_system_pods = [
+        p for p in all_pods.items
+        if p.metadata.namespace not in ("kube-system",)
+        and p.metadata.namespace not in _PROTECTED_NAMESPACES
+        and not any(p.metadata.name.startswith(prefix) for prefix in _SYSTEM_POD_PREFIXES)
+    ]
 
     if non_system_pods:
         pod_names = [f"{p.metadata.namespace}/{p.metadata.name}" for p in non_system_pods]
