@@ -257,6 +257,9 @@ async def get_infrastructure(
             node_role = "terminal"
         elif node_label_role == "ingress" or nodegroup in ("ingress-workers",):
             node_role = "system"
+        elif node_label_role == "gitea" or nodegroup.endswith("gitea-workers"):
+            # gitea-workers: valkey-cluster + onlyoffice 전용 — 사용자 터미널 배치 대상 제외
+            node_role = "gitea"
         else:
             node_role = "user"
 
@@ -962,7 +965,7 @@ class UnhealthyPodsResponse(BaseModel):
     collected_at: str
 
 
-_UNHEALTHY_NAMESPACES = ("claude-apps", "claude-sessions", "platform", "openwebui")
+_UNHEALTHY_NAMESPACES = ("claude-apps", "claude-sessions", "openwebui")
 _RESTART_THRESHOLD = 5
 
 
