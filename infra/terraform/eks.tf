@@ -374,6 +374,14 @@ resource "aws_eks_node_group" "dedicated" {
     role = "claude-dedicated"
   }
 
+  # Phase A: gitea-workers 노드그룹 분리 후 추가
+  # 사용자 Pod은 k8s_service.py에서 이미 dedicated=user:NoSchedule toleration을 포함하므로 코드 변경 불필요
+  taint {
+    key    = "dedicated"
+    value  = "user"
+    effect = "NO_SCHEDULE"
+  }
+
   disk_size = 30
 
   tags = {
@@ -382,6 +390,11 @@ resource "aws_eks_node_group" "dedicated" {
     Owner                                               = "N1102359"
     Env                                                 = var.environment
     Service                                             = "sko-claude-ai-agent"
+  }
+
+  # CA가 사용자 세션에 따라 desired_size를 0~max로 동적 조정하므로 tf drift 방지
+  lifecycle {
+    ignore_changes = [scaling_config[0].desired_size]
   }
 
   depends_on = [
@@ -530,4 +543,64 @@ resource "aws_eks_node_group" "user_apps" {
 output "user_apps_workers_nodegroup_arn" {
   description = "user-apps-workers nodegroup ARN (사용자 배포 앱 전용)"
   value       = aws_eks_node_group.user_apps.arn
+}
+
+# ----- Gitea Workers Nodegroup (t3.large) — gitea-valkey-cluster + onlyoffice 전용 -----
+# 목적: dedicated nodegroup에서 시스템 워크로드를 분리
+#   - gitea-valkey-cluster (3 pods × ~384Mi) + onlyoffice (2Gi request) → t3.large 1~2대로 수용
+#   - dedicated 노드는 사용자 세션이 없으면 Cluster Autoscaler가 0으로 scale-down 가능
+#
+# taint: dedicated=gitea:NoSchedule
+#   → gitea/values.yaml valkey-cluster 섹션과 onlyoffice.yaml에 대응 toleration 추가됨
+#
+# min=1: valkey StatefulSet이 PVC 없이 인메모리만 사용하더라도 상시 1노드 유지
+#        (사용자 세션과 무관하게 gitea/onlyoffice 기능 보장)
+
+resource "aws_eks_node_group" "gitea_workers" {
+  cluster_name    = aws_eks_cluster.main.name
+  node_group_name = "${var.project_name}-gitea-workers"
+  node_role_arn   = aws_iam_role.eks_nodes.arn
+  subnet_ids      = aws_subnet.eks_private[*].id
+
+  instance_types = var.eks_gitea_node_instance_types
+
+  scaling_config {
+    desired_size = var.eks_gitea_node_desired_size
+    min_size     = var.eks_gitea_node_min_size
+    max_size     = var.eks_gitea_node_max_size
+  }
+
+  update_config {
+    max_unavailable = 1
+  }
+
+  labels = {
+    role = "gitea"
+  }
+
+  taint {
+    key    = "dedicated"
+    value  = "gitea"
+    effect = "NO_SCHEDULE"
+  }
+
+  tags = {
+    "k8s.io/cluster-autoscaler/enabled"                 = "true"
+    "k8s.io/cluster-autoscaler/${var.project_name}-eks" = "owned"
+    Name                                                = "${var.project_name}-gitea-workers"
+    Owner                                               = "N1102359"
+    Env                                                 = var.environment
+    Service                                             = "sko-claude-ai-agent"
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.eks_worker_node_policy,
+    aws_iam_role_policy_attachment.eks_cni_policy,
+    aws_iam_role_policy_attachment.eks_container_registry,
+  ]
+}
+
+output "gitea_workers_nodegroup_arn" {
+  description = "gitea-workers nodegroup ARN (valkey-cluster + onlyoffice 전용)"
+  value       = aws_eks_node_group.gitea_workers.arn
 }

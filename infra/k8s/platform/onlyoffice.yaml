@@ -22,6 +22,14 @@ spec:
       labels:
         app: onlyoffice
     spec:
+      # gitea-workers 노드그룹 전용 배치 (dedicated nodegroup taint 회피)
+      nodeSelector:
+        role: gitea
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: gitea
+          effect: NoSchedule
       # ── SK AI Plugin 주입 (Lane C2 merge, 2026-04-13) ─────────────────────
       # 목적: OnlyOffice 자체 AI 플러그인(SK AI)을 sdkjs-plugins 디렉토리에 주입.
       # 소스: container-image/onlyoffice-plugins/sk-ai/ (git)

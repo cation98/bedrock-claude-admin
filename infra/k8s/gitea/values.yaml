@@ -138,7 +138,17 @@ postgresql:
 postgresql-ha:
   enabled: false
 
-# Valkey(Redis fork) 영속성 비활성화 — Phase 1 MVP (EBS CSI 미설치, 재시작 시 캐시 휘발 허용)
+# Valkey(Redis fork) — gitea-workers 노드그룹 전용 배치
+# Bitnami valkey-cluster subchart: nodeSelector/tolerations는 valkey.* 하위에 위치
+# (최상위 nodeSelector는 StatefulSet에 미반영 — subchart 구조)
 valkey-cluster:
+  valkey:
+    nodeSelector:
+      role: gitea
+    tolerations:
+      - key: dedicated
+        operator: Equal
+        value: gitea
+        effect: NoSchedule
   persistence:
     enabled: false

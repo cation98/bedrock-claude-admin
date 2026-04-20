@@ -238,3 +238,31 @@ variable "eks_user_apps_max_size" {
   type        = number
   default     = 5
 }
+
+# ----- Gitea Workers Nodegroup (t3.large) — gitea-valkey + onlyoffice 전용 -----
+# dedicated nodegroup에서 시스템 워크로드(valkey, onlyoffice)를 분리하여
+# dedicated 노드가 사용자 세션이 없을 때 Cluster Autoscaler로 0까지 scale-down 가능하도록 함
+
+variable "eks_gitea_node_instance_types" {
+  description = "gitea-workers: valkey-cluster + onlyoffice 전용 (t3.large, allocatable ~1.9vCPU/5GiB)"
+  type        = list(string)
+  default     = ["t3.large"]
+}
+
+variable "eks_gitea_node_desired_size" {
+  description = "gitea-workers 초기 노드 수"
+  type        = number
+  default     = 1
+}
+
+variable "eks_gitea_node_min_size" {
+  description = "gitea-workers 최소 노드 수 (1 = valkey/onlyoffice 상시 운용)"
+  type        = number
+  default     = 1
+}
+
+variable "eks_gitea_node_max_size" {
+  description = "gitea-workers 최대 노드 수 (valkey 3-node + onlyoffice, 2노드면 충분)"
+  type        = number
+  default     = 2
+}
