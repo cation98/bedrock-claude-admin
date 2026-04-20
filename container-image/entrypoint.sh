@@ -327,9 +327,11 @@ mkdir -p /home/node/workspace/team
 # 4a) 이전 대화 자동 복원 (EFS 백업 → ~/.claude/)
 # ---------------------------------------------------------------------------
 if [ -d /home/node/workspace/.claude-backup/projects ]; then
-    cp -r /home/node/workspace/.claude-backup/projects/ /home/node/.claude/projects/ 2>/dev/null
-    cp /home/node/workspace/.claude-backup/history.jsonl /home/node/.claude/history.jsonl 2>/dev/null
-    # 세션 메타데이터 복원 — /resume 목록에 이전 세션 표시
+    # 모든 cp에 `|| true` — 과거 Pod에서 Claude Code를 실행하지 않은 사용자는
+    # history.jsonl 등 일부 파일이 백업에 없을 수 있음. set -e 환경에서
+    # 개별 cp 실패가 entrypoint 전체를 exit 1로 종료시키는 것을 방지.
+    cp -r /home/node/workspace/.claude-backup/projects/ /home/node/.claude/projects/ 2>/dev/null || true
+    cp /home/node/workspace/.claude-backup/history.jsonl /home/node/.claude/history.jsonl 2>/dev/null || true
     cp -r /home/node/workspace/.claude-backup/sessions/ /home/node/.claude/sessions/ 2>/dev/null || true
     echo "  이전 대화 복원 완료"
 fi
