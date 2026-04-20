@@ -287,8 +287,23 @@ if [[ -n "${GITEA_USER:-}" && -n "${GITEA_TOKEN:-}" ]]; then
   envsubst '${GITEA_USER} ${USER_DISPLAY_NAME}' < /home/node/.gitconfig.template > /home/node/.gitconfig
   chmod 600 /home/node/.gitconfig
 
-  echo "https://${GITEA_USER}:${GITEA_TOKEN}@gitea.internal.skons.net" > /home/node/.git-credentials
+  # 크리덴셜은 내부 클러스터 DNS로 저장 — 외부 URL은 Pod 안에서 resolv 불가
+  echo "http://${GITEA_USER}:${GITEA_TOKEN}@gitea-http.gitea.svc.cluster.local:3000" > /home/node/.git-credentials
   chmod 600 /home/node/.git-credentials
+
+  # template 렌더 후 프록시 재적용 (template 덮어쓰기로 이전 git config --global 소실)
+  if [ -n "${HTTPS_PROXY:-}" ]; then
+      git config --global http.proxy "${HTTPS_PROXY}"
+      git config --global https.proxy "${HTTPS_PROXY}"
+  fi
+  # Gitea 내부 URL은 프록시 우회 — 클러스터 내부 직접 연결
+  git config --global http."http://gitea-http.gitea.svc.cluster.local:3000/".proxy ""
+  # GitHub SSH → HTTPS 리다이렉트 (Pod에 ssh binary 없음)
+  git config --global url."https://github.com/".insteadOf "git@github.com:"
+  git config --global --add url."https://github.com/".insteadOf "ssh://git@github.com/"
+  # GitHub + raw.githubusercontent.com 프록시 우회
+  git config --global http."https://github.com".proxy ""
+  git config --global http."https://raw.githubusercontent.com".proxy ""
 
   echo "[entrypoint] Gitea git configured for user: $GITEA_USER"
 else

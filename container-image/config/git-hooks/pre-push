@@ -5,12 +5,15 @@ set -euo pipefail
 remote_name="$1"
 remote_url="$2"
 
-ALLOWED_PREFIX="https://gitea.internal.skons.net/"
+# git insteadOf rewrites external URL to internal cluster DNS before hook is called.
+# Both forms must be allowed.
+ALLOWED_EXTERNAL="https://gitea.internal.skons.net/"
+ALLOWED_INTERNAL="http://gitea-http.gitea.svc.cluster.local:3000/"
 
-if [[ "$remote_url" != "$ALLOWED_PREFIX"* ]]; then
+if [[ "$remote_url" != "$ALLOWED_EXTERNAL"* && "$remote_url" != "$ALLOWED_INTERNAL"* ]]; then
   echo "❌ Push blocked: remote URL ($remote_url) is not Gitea (gitea.internal.skons.net)."
   echo "   External git push is prohibited by platform policy."
-  echo "   Configure remote to use Gitea: git remote set-url origin https://gitea.internal.skons.net/users/<your-id>/<repo>.git"
+  echo "   Configure remote to use Gitea: git remote set-url origin https://gitea.internal.skons.net/<your-id>/<repo>.git"
   exit 1
 fi
 

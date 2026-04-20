@@ -108,7 +108,7 @@ class GiteaClient:
                 f"{self._base_url}/api/v1/users/{user_login}/tokens",
                 auth=(user_login, one_time_pw),
                 headers={"Content-Type": "application/json"},
-                json={"name": token_name, "scopes": ["write:repository", "read:user"]},
+                json={"name": token_name, "scopes": ["write:repository", "read:user", "write:user"]},
             )
             if token_resp.status_code != 201:
                 raise GiteaProvisioningError(

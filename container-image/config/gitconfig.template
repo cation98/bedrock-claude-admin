@@ -2,11 +2,11 @@
     name = ${USER_DISPLAY_NAME}
     email = ${GITEA_USER}@skons.net
 
-[url "https://gitea.internal.skons.net/mirrors/"]
-    insteadOf = https://github.com/
-
-[credential "https://gitea.internal.skons.net"]
+[credential]
     helper = store
+
+[url "http://gitea-http.gitea.svc.cluster.local:3000/"]
+    insteadOf = https://gitea.internal.skons.net/
 
 [core]
     hooksPath = /usr/local/share/git-hooks
