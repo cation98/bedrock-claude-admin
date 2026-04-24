@@ -23,9 +23,12 @@ const NAV_ITEMS = [
   { href: "/broadcast", label: "공지 발송", icon: "📢" },
   { href: "/announcements", label: "공지 관리", icon: "📌" },
   { href: "/maintenance", label: "점검 모드", icon: "🔧" },
+  { href: "/workflows", label: "워크플로우", icon: "⚙️" },
   { href: "/analytics/ui-split", label: "UI 분석", icon: "🔀" },
   { href: "/analytics/knowledge-graph", label: "지식 그래프", icon: "🧠" },
   { href: "/analytics/knowledge-trends", label: "지식 추이", icon: "📡" },
+  { href: "/analytics/knowledge-gap", label: "갭 분석", icon: "🔍" },
+  { href: "/analytics/departments", label: "부서 분포", icon: "🏢" },
 ];
 
 export default function Sidebar() {
