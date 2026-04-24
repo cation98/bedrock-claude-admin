@@ -413,3 +413,27 @@ async def knowledge_extraction_loop(settings: Settings) -> None:
                 db.close()
                 release_scheduler_lock("knowledge_extraction")
         await asyncio.sleep(6 * 3600)
+
+
+async def knowledge_snapshot_loop(settings: Settings) -> None:
+    """백그라운드 루프: 매일 스냅샷 집계."""
+    from app.core.database import SessionLocal
+    from app.services.knowledge_snapshot import run_snapshot
+
+    logger.info("knowledge snapshot scheduler started — interval=24h")
+    await asyncio.sleep(60)  # 앱 기동 안정화 대기
+
+    while True:
+        if acquire_scheduler_lock("knowledge_snapshot", ttl_seconds=3600 * 23):
+            db = SessionLocal()
+            try:
+                result = await asyncio.get_event_loop().run_in_executor(
+                    None, run_snapshot, db
+                )
+                logger.info(f"knowledge snapshot done: {result}")
+            except Exception as exc:
+                logger.error(f"knowledge snapshot loop error: {exc}")
+            finally:
+                db.close()
+                release_scheduler_lock("knowledge_snapshot")
+        await asyncio.sleep(24 * 3600)
