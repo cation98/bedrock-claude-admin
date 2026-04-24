@@ -5,13 +5,20 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import get_current_user
-from app.models.knowledge import KnowledgeEdge, KnowledgeMention, KnowledgeNode, KnowledgeSnapshot
+from app.models.knowledge import KnowledgeEdge, KnowledgeMention, KnowledgeNode, KnowledgeSnapshot, WorkflowTemplate, KnowledgeTaxonomy
 from app.schemas.knowledge import (
     KnowledgeEdgeOut,
     KnowledgeGraphResponse,
     KnowledgeNodeOut,
     KnowledgeTrendNode,
     KnowledgeTrendsResponse,
+    AssociationsResponse,
+    AssociationRule,
+    DepartmentAnalysisResponse,
+    DepartmentNodeData,
+    GapReportResponse,
+    ShadowProcess,
+    UndocumentedKnowledge,
 )
 
 router = APIRouter(prefix="/api/v1/knowledge", tags=["knowledge"])
@@ -148,3 +155,54 @@ def get_knowledge_trends(
     trend_nodes.sort(key=lambda n: (n.growth_rate or 0), reverse=True)
 
     return KnowledgeTrendsResponse(nodes=trend_nodes, period_weeks=weeks)
+
+
+@router.get("/associations", response_model=AssociationsResponse)
+def get_knowledge_associations(
+    min_support: float = 0.05,
+    min_lift: float = 1.5,
+    db: Session = Depends(get_db),
+    _admin: dict = Depends(_require_admin),
+) -> AssociationsResponse:
+    """연관 분석 — MBA Support/Confidence/Lift 규칙 반환."""
+    from app.services.knowledge_analyzer import compute_associations
+    rules_raw = compute_associations(db, min_support=min_support, min_lift=min_lift)
+    rules = [AssociationRule(**r) for r in rules_raw]
+    return AssociationsResponse(rules=rules, total=len(rules))
+
+
+@router.get("/departments", response_model=DepartmentAnalysisResponse)
+def get_department_analysis(
+    period: str = "monthly",
+    db: Session = Depends(get_db),
+    _admin: dict = Depends(_require_admin),
+) -> DepartmentAnalysisResponse:
+    """부서 편차 분석 — 부서별 지식 분포 반환."""
+    from app.services.knowledge_analyzer import compute_department_stats
+    result = compute_department_stats(db, period=period)
+    nodes = [DepartmentNodeData(**n) for n in result["nodes"]]
+    return DepartmentAnalysisResponse(
+        departments=result["departments"],
+        nodes=nodes,
+        period=result["period"],
+    )
+
+
+@router.get("/gap", response_model=GapReportResponse)
+def get_gap_analysis(
+    template_id: int,
+    db: Session = Depends(get_db),
+    _admin: dict = Depends(_require_admin),
+) -> GapReportResponse:
+    """갭 분석 — 워크플로우 템플릿 대비 지식 커버리지 반환."""
+    from app.services.knowledge_analyzer import compute_gap_analysis
+    result = compute_gap_analysis(db, template_id=template_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return GapReportResponse(
+        template_id=result["template_id"],
+        template_name=result["template_name"],
+        coverage_rate=result["coverage_rate"],
+        shadow_processes=[ShadowProcess(**s) for s in result["shadow_processes"]],
+        undocumented_knowledge=[UndocumentedKnowledge(**u) for u in result["undocumented_knowledge"]],
+    )
