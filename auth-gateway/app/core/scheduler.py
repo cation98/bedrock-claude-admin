@@ -389,3 +389,27 @@ async def _run_file_ttl_cleanup() -> None:
         db.close()
         # Issue #10: Lua 스크립트로 소유자 확인 후 해제 — 다른 레플리카의 락을 삭제하지 않음
         release_scheduler_lock_redis("file_ttl_cleanup", owner_id)
+
+
+async def knowledge_extraction_loop(settings: Settings) -> None:
+    """백그라운드 루프: 6시간마다 미처리 대화를 지식 그래프로 추출한다."""
+    from app.core.database import SessionLocal
+    from app.services.knowledge_extractor import run_extraction
+
+    logger.info("knowledge extraction scheduler started — interval=6h")
+    await asyncio.sleep(30)  # 앱 기동 안정화 대기
+
+    while True:
+        if acquire_scheduler_lock("knowledge_extraction", ttl_seconds=3600 * 6):
+            db = SessionLocal()
+            try:
+                count = await asyncio.get_event_loop().run_in_executor(
+                    None, run_extraction, db, "us-east-1"
+                )
+                logger.info(f"knowledge extraction done: {count} conversations processed")
+            except Exception as exc:
+                logger.error(f"knowledge extraction loop error: {exc}")
+            finally:
+                db.close()
+                release_scheduler_lock("knowledge_extraction")
+        await asyncio.sleep(6 * 3600)

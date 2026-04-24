@@ -17,7 +17,7 @@ from sqlalchemy import text
 
 from app.core.config import get_settings
 from app.core.database import Base, engine
-from app.core.scheduler import idle_checker_loop, token_snapshot_loop, prompt_audit_loop, storage_cleanup_loop
+from app.core.scheduler import idle_checker_loop, token_snapshot_loop, prompt_audit_loop, storage_cleanup_loop, knowledge_extraction_loop
 from app.models.app import DeployedApp, AppACL, AppView, AppLike  # noqa: F401 — create_all이 테이블 생성하도록 import
 from app.models.survey import SurveyTemplate, SurveyAssignment, SurveyResponse  # noqa: F401
 from app.models.file_share import SharedDataset, FileShareACL  # noqa: F401 — create_all이 테이블 생성하도록 import
@@ -35,6 +35,10 @@ from app.models.guide import Guide  # noqa: F401 — create_all이 guides 테이
 from app.models.moderation import ModerationViolation  # noqa: F401 — create_all이 moderation_violations 테이블 생성하도록 import
 from app.models.edit_session import EditSession  # noqa: F401 — OnlyOffice 편집 세션 테이블 생성용
 from app.models.ui_source_event import UiSourceEvent  # noqa: F401 — create_all이 ui_source_events 테이블 생성하도록 import
+from app.models.knowledge import (  # noqa: F401 — create_all이 knowledge 테이블 생성하도록 import
+    KnowledgeNode, KnowledgeEdge, KnowledgeMention,
+    KnowledgeSnapshot, WorkflowTemplate, KnowledgeTaxonomy, WorkflowInstance,
+)
 from app.routers import admin, apps, auth, bots, file_share, sessions, users, sms, skills, telegram, security, scheduling, infra_policy, surveys, app_proxy, portal
 from app.routers import announcements
 from app.routers.guides import router as guides_router
@@ -44,6 +48,7 @@ from app.routers.viewers import router as viewers_router
 from app.routers.jwt_auth import router as jwt_auth_router
 from app.routers.bedrock_proxy import router as bedrock_proxy_router
 from app.routers.ai import router as ai_router
+from app.routers.knowledge import router as knowledge_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -360,12 +365,14 @@ async def lifespan(app: FastAPI):
     snapshot_task = asyncio.create_task(token_snapshot_loop(settings))
     audit_task = asyncio.create_task(prompt_audit_loop(settings))
     storage_task = asyncio.create_task(storage_cleanup_loop(settings))
+    knowledge_task = asyncio.create_task(knowledge_extraction_loop(settings))
     logger.info(f"{settings.app_name} started")
     yield
     idle_task.cancel()
     snapshot_task.cancel()
     audit_task.cancel()
     storage_task.cancel()
+    knowledge_task.cancel()
     try:
         await idle_task
     except asyncio.CancelledError:
@@ -380,6 +387,10 @@ async def lifespan(app: FastAPI):
         pass
     try:
         await storage_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await knowledge_task
     except asyncio.CancelledError:
         pass
     logger.info(f"{settings.app_name} shutdown")
@@ -581,6 +592,7 @@ app.include_router(file_share.router)
 app.include_router(surveys.router)
 app.include_router(portal.router)
 app.include_router(governance_router)
+app.include_router(knowledge_router)
 app.include_router(secure_files_router)
 app.include_router(viewers_router)
 app.include_router(announcements.router)
