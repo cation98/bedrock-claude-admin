@@ -41,7 +41,7 @@ class KnowledgeEdge(Base):
     created_at = Column(DateTime(timezone=True), default=_now)
 
     __table_args__ = (
-        UniqueConstraint("source_node_id", "target_node_id", "edge_type"),
+        UniqueConstraint("source_node_id", "target_node_id", "edge_type", name="uq_edge_nodes_type"),
     )
 
 
@@ -50,8 +50,8 @@ class KnowledgeMention(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     conversation_id = Column(Integer, nullable=False)
-    node_id = Column(Integer, nullable=False)
-    username = Column(String(100), nullable=False)
+    node_id = Column(Integer, nullable=False, index=True)
+    username = Column(String(100), nullable=False, index=True)
     session_id = Column(String(200), nullable=True)
     context_snippet = Column(String(200), nullable=True)
     confidence_score = Column(Float, nullable=True)
@@ -75,7 +75,7 @@ class KnowledgeSnapshot(Base):
     created_at = Column(DateTime(timezone=True), default=_now)
 
     __table_args__ = (
-        UniqueConstraint("snapshot_date", "granularity", "node_id"),
+        UniqueConstraint("snapshot_date", "granularity", "node_id", name="uq_snapshot_date_gran_node"),
     )
 
 
@@ -106,7 +106,7 @@ class KnowledgeTaxonomy(Base):
     created_at = Column(DateTime(timezone=True), default=_now)
 
     __table_args__ = (
-        UniqueConstraint("knowledge_node_id", "workflow_template_id", "workflow_step_id"),
+        UniqueConstraint("knowledge_node_id", "workflow_template_id", "workflow_step_id", name="uq_taxonomy_mapping"),
     )
 
 
