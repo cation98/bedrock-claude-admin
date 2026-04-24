@@ -108,8 +108,6 @@ function buildSankeyLayout(data: KnowledgeTrendsData): {
       if (!srcNode || !tgtNode) continue;
 
       const linkH = Math.max(2, (count / totalValue) * (srcNode.height - 4));
-      const _srcY = srcNode.y + (leftOffsets[`type_${ct}`] || 2);
-      const _tgtY = tgtNode.y + (rightOffsets[`trend_${ts}`] || 2);
 
       links.push({
         sourceId: `type_${ct}`,
