@@ -1,5 +1,5 @@
 """지식 그래프 API — /api/v1/knowledge/*"""
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -19,6 +19,10 @@ from app.schemas.knowledge import (
     GapReportResponse,
     ShadowProcess,
     UndocumentedKnowledge,
+    WorkflowTemplateIn,
+    WorkflowTemplateOut,
+    TaxonomyIn,
+    TaxonomyOut,
 )
 
 router = APIRouter(prefix="/api/v1/knowledge", tags=["knowledge"])
@@ -206,3 +210,129 @@ def get_gap_analysis(
         shadow_processes=[ShadowProcess(**s) for s in result["shadow_processes"]],
         undocumented_knowledge=[UndocumentedKnowledge(**u) for u in result["undocumented_knowledge"]],
     )
+
+
+# ── Workflow Template CRUD ─────────────────────────────────────────
+
+@router.get("/workflows", response_model=list[WorkflowTemplateOut])
+def list_workflow_templates(
+    db: Session = Depends(get_db),
+    _admin: dict = Depends(_require_admin),
+) -> list[WorkflowTemplateOut]:
+    return db.query(WorkflowTemplate).order_by(WorkflowTemplate.created_at.desc()).all()
+
+
+@router.post("/workflows", response_model=WorkflowTemplateOut, status_code=status.HTTP_201_CREATED)
+def create_workflow_template(
+    body: WorkflowTemplateIn,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+    _admin: dict = Depends(_require_admin),
+) -> WorkflowTemplateOut:
+    tmpl = WorkflowTemplate(
+        name=body.name,
+        description=body.description,
+        created_by=current_user.get("sub"),
+        is_public=body.is_public,
+        target_department=body.target_department,
+        steps=body.steps,
+        connections=body.connections,
+    )
+    db.add(tmpl)
+    db.commit()
+    db.refresh(tmpl)
+    return tmpl
+
+
+@router.get("/workflows/{template_id}", response_model=WorkflowTemplateOut)
+def get_workflow_template(
+    template_id: int,
+    db: Session = Depends(get_db),
+    _admin: dict = Depends(_require_admin),
+) -> WorkflowTemplateOut:
+    tmpl = db.query(WorkflowTemplate).filter_by(id=template_id).first()
+    if not tmpl:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return tmpl
+
+
+@router.put("/workflows/{template_id}", response_model=WorkflowTemplateOut)
+def update_workflow_template(
+    template_id: int,
+    body: WorkflowTemplateIn,
+    db: Session = Depends(get_db),
+    _admin: dict = Depends(_require_admin),
+) -> WorkflowTemplateOut:
+    tmpl = db.query(WorkflowTemplate).filter_by(id=template_id).first()
+    if not tmpl:
+        raise HTTPException(status_code=404, detail="Template not found")
+    tmpl.name = body.name
+    tmpl.description = body.description
+    tmpl.is_public = body.is_public
+    tmpl.target_department = body.target_department
+    tmpl.steps = body.steps
+    tmpl.connections = body.connections
+    db.commit()
+    db.refresh(tmpl)
+    return tmpl
+
+
+@router.delete("/workflows/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_workflow_template(
+    template_id: int,
+    db: Session = Depends(get_db),
+    _admin: dict = Depends(_require_admin),
+) -> None:
+    tmpl = db.query(WorkflowTemplate).filter_by(id=template_id).first()
+    if not tmpl:
+        raise HTTPException(status_code=404, detail="Template not found")
+    db.delete(tmpl)
+    db.commit()
+
+
+# ── Taxonomy Mapping ───────────────────────────────────────────────
+
+@router.get("/taxonomy", response_model=list[TaxonomyOut])
+def list_taxonomy(
+    template_id: int,
+    db: Session = Depends(get_db),
+    _admin: dict = Depends(_require_admin),
+) -> list[TaxonomyOut]:
+    return (
+        db.query(KnowledgeTaxonomy)
+        .filter_by(workflow_template_id=template_id)
+        .all()
+    )
+
+
+@router.post("/taxonomy", response_model=TaxonomyOut, status_code=status.HTTP_201_CREATED)
+def create_taxonomy_mapping(
+    body: TaxonomyIn,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+    _admin: dict = Depends(_require_admin),
+) -> TaxonomyOut:
+    mapping = KnowledgeTaxonomy(
+        knowledge_node_id=body.knowledge_node_id,
+        workflow_template_id=body.workflow_template_id,
+        workflow_step_id=body.workflow_step_id,
+        mapped_by=current_user.get("sub"),
+        confidence_score=body.confidence_score,
+    )
+    db.add(mapping)
+    db.commit()
+    db.refresh(mapping)
+    return mapping
+
+
+@router.delete("/taxonomy/{mapping_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_taxonomy_mapping(
+    mapping_id: int,
+    db: Session = Depends(get_db),
+    _admin: dict = Depends(_require_admin),
+) -> None:
+    mapping = db.query(KnowledgeTaxonomy).filter_by(id=mapping_id).first()
+    if not mapping:
+        raise HTTPException(status_code=404, detail="Mapping not found")
+    db.delete(mapping)
+    db.commit()
