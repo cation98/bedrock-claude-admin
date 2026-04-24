@@ -134,6 +134,7 @@ _RETENTION_MAP = {
     "7d": timedelta(days=7),
     "30d": timedelta(days=30),
     "90d": timedelta(days=90),
+    "180d": timedelta(days=180),
 }
 
 
