@@ -1,0 +1,81 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: conversation-archiver-sa
+  namespace: platform
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::680877507363:role/bedrock-claude-conversation-archiver
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: conversation-archiver
+  namespace: platform
+spec:
+  schedule: "0 17 * * *"   # 매일 02:00 KST (UTC 17:00)
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: conversation-archiver-sa
+          restartPolicy: OnFailure
+          containers:
+            - name: archiver
+              image: amazon/aws-cli:latest
+              resources:
+                requests:
+                  cpu: "100m"
+                  memory: "128Mi"
+                limits:
+                  cpu: "500m"
+                  memory: "512Mi"
+              env:
+                - name: AWS_REGION
+                  value: ap-northeast-2
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  BUCKET="bedrock-conversation-archives-680877507363"
+                  EFS_USERS="/efs/users"
+
+                  echo "[$(date -u)] Archive start"
+
+                  for user_dir in "$EFS_USERS"/*/; do
+                    [ -d "$user_dir" ] || continue
+                    username=$(basename "$user_dir")
+                    backup_dir="$user_dir/.claude-backup"
+
+                    if [ -d "$backup_dir/projects" ]; then
+                      aws s3 sync \
+                        "$backup_dir/projects/" \
+                        "s3://$BUCKET/conversations/$username/projects/" \
+                        --storage-class INTELLIGENT_TIERING \
+                        --no-progress \
+                        --region ap-northeast-2
+                    fi
+
+                    if [ -f "$backup_dir/history.jsonl" ]; then
+                      aws s3 cp \
+                        "$backup_dir/history.jsonl" \
+                        "s3://$BUCKET/conversations/$username/history.jsonl" \
+                        --storage-class INTELLIGENT_TIERING \
+                        --no-progress \
+                        --region ap-northeast-2 2>/dev/null || true
+                    fi
+                  done
+
+                  echo "[$(date -u)] Archive complete"
+              volumeMounts:
+                - name: efs-users
+                  mountPath: /efs
+                  readOnly: true
+          volumes:
+            - name: efs-users
+              persistentVolumeClaim:
+                claimName: efs-audit-reader-pvc
