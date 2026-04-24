@@ -24,6 +24,8 @@ const NAV_ITEMS = [
   { href: "/announcements", label: "공지 관리", icon: "📌" },
   { href: "/maintenance", label: "점검 모드", icon: "🔧" },
   { href: "/analytics/ui-split", label: "UI 분석", icon: "🔀" },
+  { href: "/analytics/knowledge-graph", label: "지식 그래프", icon: "🧠" },
+  { href: "/analytics/knowledge-trends", label: "지식 추이", icon: "📡" },
 ];
 
 export default function Sidebar() {
