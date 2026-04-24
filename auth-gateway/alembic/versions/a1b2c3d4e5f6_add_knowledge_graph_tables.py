@@ -124,21 +124,21 @@ def upgrade() -> None:
         sa.Column("knowledge_extracted_at", sa.DateTime(timezone=True), nullable=True),
     )
     op.create_index(
-        "ix_pac_knowledge_extracted_at",
+        "ix_prompt_audit_conversations_knowledge_extracted_at",
         "prompt_audit_conversations",
         ["knowledge_extracted_at"],
     )
 
 
 def downgrade() -> None:
-    op.drop_index("ix_pac_knowledge_extracted_at", "prompt_audit_conversations")
+    op.drop_index("ix_prompt_audit_conversations_knowledge_extracted_at", table_name="prompt_audit_conversations")
     op.drop_column("prompt_audit_conversations", "knowledge_extracted_at")
     op.drop_table("workflow_instances")
     op.drop_table("knowledge_taxonomy")
     op.drop_table("workflow_templates")
     op.drop_table("knowledge_snapshots")
-    op.drop_index("ix_knowledge_mentions_username", "knowledge_mentions")
-    op.drop_index("ix_knowledge_mentions_node_id", "knowledge_mentions")
+    op.drop_index("ix_knowledge_mentions_username", table_name="knowledge_mentions")
+    op.drop_index("ix_knowledge_mentions_node_id", table_name="knowledge_mentions")
     op.drop_table("knowledge_mentions")
     op.drop_table("knowledge_edges")
     op.drop_table("knowledge_nodes")
