@@ -1482,3 +1482,57 @@ export function fetchUiSplitStats(
     `/api/v1/sessions/ui-source/stats?period=${period}&window=${window}`
   );
 }
+
+// ==================== Knowledge Graph API ====================
+
+export interface KnowledgeNodeData {
+  id: number;
+  concept_name: string;
+  concept_type: string;
+  normalized_name: string;
+  mention_count: number;
+}
+
+export interface KnowledgeEdgeData {
+  id: number;
+  source_node_id: number;
+  target_node_id: number;
+  edge_type: string;
+  weight: number;
+  co_occurrence_count: number;
+}
+
+export interface KnowledgeGraphData {
+  nodes: KnowledgeNodeData[];
+  edges: KnowledgeEdgeData[];
+  total_nodes: number;
+  total_edges: number;
+}
+
+export interface KnowledgeTrendNodeData {
+  id: number;
+  concept_name: string;
+  concept_type: string;
+  trend: "emerging" | "rising" | "stable" | "declining";
+  growth_rate: number | null;
+  weekly_counts: number[];
+}
+
+export interface KnowledgeTrendsData {
+  nodes: KnowledgeTrendNodeData[];
+  period_weeks: number;
+}
+
+export function fetchKnowledgeGraph(
+  conceptType?: string,
+  minMentions: number = 1
+): Promise<KnowledgeGraphData> {
+  const params = new URLSearchParams();
+  if (conceptType) params.set("concept_type", conceptType);
+  params.set("min_mentions", String(minMentions));
+  return request<KnowledgeGraphData>(`/api/v1/knowledge/graph?${params}`);
+}
+
+export function fetchKnowledgeTrends(weeks: number = 12): Promise<KnowledgeTrendsData> {
+  return request<KnowledgeTrendsData>(`/api/v1/knowledge/trends?weeks=${weeks}`);
+}
