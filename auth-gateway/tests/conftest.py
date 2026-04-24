@@ -40,6 +40,10 @@ from app.models.file_governance import GovernedFile  # noqa: F401
 from app.models.file_audit import FileAuditLog  # noqa: F401
 from app.models.file_share import SharedDataset, FileShareACL  # noqa: F401
 from app.models.two_factor_code import TwoFactorCode  # noqa: F401
+from app.models.knowledge import (  # noqa: F401
+    KnowledgeNode, KnowledgeEdge, KnowledgeMention,
+    KnowledgeSnapshot, WorkflowTemplate, KnowledgeTaxonomy, WorkflowInstance,
+)
 from app.routers.telegram import TelegramMapping, TelegramChatLog  # noqa: F401
 from app.routers.sms import SmsLog  # noqa: F401
 from app.services.sqlcipher_service import SQLCipherKey  # noqa: F401
