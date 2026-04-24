@@ -1536,3 +1536,156 @@ export function fetchKnowledgeGraph(
 export function fetchKnowledgeTrends(weeks: number = 12): Promise<KnowledgeTrendsData> {
   return request<KnowledgeTrendsData>(`/api/v1/knowledge/trends?weeks=${weeks}`);
 }
+
+// ==================== Phase 2: 분석 API ====================
+
+export interface AssociationRuleData {
+  source_node_id: number;
+  target_node_id: number;
+  edge_type: string;
+  support: number;
+  confidence: number;
+  lift: number;
+  co_occurrence_count: number;
+}
+
+export interface AssociationsData {
+  rules: AssociationRuleData[];
+  total: number;
+}
+
+export interface DepartmentNodeData {
+  node_id: number;
+  concept_name: string;
+  concept_type: string;
+  by_department: Record<string, number>;
+}
+
+export interface DepartmentAnalysisData {
+  departments: string[];
+  nodes: DepartmentNodeData[];
+  period: string;
+}
+
+export interface ShadowProcessData {
+  step_id: string;
+  step_name: string;
+  mapped_nodes: number;
+  total_mentions: number;
+}
+
+export interface UndocumentedKnowledgeData {
+  node_id: number;
+  concept_name: string;
+  concept_type: string;
+  mention_count: number;
+}
+
+export interface GapReportData {
+  template_id: number;
+  template_name: string;
+  coverage_rate: number;
+  shadow_processes: ShadowProcessData[];
+  undocumented_knowledge: UndocumentedKnowledgeData[];
+}
+
+// ==================== Phase 2: 워크플로우 API ====================
+
+export interface WorkflowTemplateData {
+  id: number;
+  name: string;
+  description: string | null;
+  created_by: string | null;
+  is_public: boolean;
+  target_department: string | null;
+  steps: Array<{ id: string; name: string; desc?: string }> | null;
+  connections: Array<{ from: string; to: string; label?: string }> | null;
+}
+
+export interface WorkflowTemplateIn {
+  name: string;
+  description?: string;
+  target_department?: string;
+  is_public?: boolean;
+  steps?: Array<{ id: string; name: string; desc?: string }>;
+  connections?: Array<{ from: string; to: string; label?: string }>;
+}
+
+export interface TaxonomyData {
+  id: number;
+  knowledge_node_id: number;
+  workflow_template_id: number;
+  workflow_step_id: string;
+  mapped_by: string | null;
+  confidence_score: number | null;
+}
+
+// ── fetch 함수 ──────────────────────────────────────────────────
+
+export function fetchKnowledgeAssociations(
+  minSupport = 0.05,
+  minLift = 1.5
+): Promise<AssociationsData> {
+  return request<AssociationsData>(
+    `/api/v1/knowledge/associations?min_support=${minSupport}&min_lift=${minLift}`
+  );
+}
+
+export function fetchDepartmentAnalysis(period = "monthly"): Promise<DepartmentAnalysisData> {
+  return request<DepartmentAnalysisData>(
+    `/api/v1/knowledge/departments?period=${period}`
+  );
+}
+
+export function fetchGapReport(templateId: number): Promise<GapReportData> {
+  return request<GapReportData>(`/api/v1/knowledge/gap?template_id=${templateId}`);
+}
+
+export function fetchWorkflowTemplates(): Promise<WorkflowTemplateData[]> {
+  return request<WorkflowTemplateData[]>("/api/v1/knowledge/workflows");
+}
+
+export function fetchWorkflowTemplate(id: number): Promise<WorkflowTemplateData> {
+  return request<WorkflowTemplateData>(`/api/v1/knowledge/workflows/${id}`);
+}
+
+export function createWorkflowTemplate(body: WorkflowTemplateIn): Promise<WorkflowTemplateData> {
+  return request<WorkflowTemplateData>("/api/v1/knowledge/workflows", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function updateWorkflowTemplate(
+  id: number,
+  body: WorkflowTemplateIn
+): Promise<WorkflowTemplateData> {
+  return request<WorkflowTemplateData>(`/api/v1/knowledge/workflows/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+}
+
+export function deleteWorkflowTemplate(id: number): Promise<void> {
+  return request<void>(`/api/v1/knowledge/workflows/${id}`, { method: "DELETE" });
+}
+
+export function fetchTaxonomy(templateId: number): Promise<TaxonomyData[]> {
+  return request<TaxonomyData[]>(`/api/v1/knowledge/taxonomy?template_id=${templateId}`);
+}
+
+export function createTaxonomyMapping(body: {
+  knowledge_node_id: number;
+  workflow_template_id: number;
+  workflow_step_id: string;
+  confidence_score?: number;
+}): Promise<TaxonomyData> {
+  return request<TaxonomyData>("/api/v1/knowledge/taxonomy", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function deleteTaxonomyMapping(id: number): Promise<void> {
+  return request<void>(`/api/v1/knowledge/taxonomy/${id}`, { method: "DELETE" });
+}
