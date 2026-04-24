@@ -79,7 +79,11 @@ def _run_for_granularity(db: Session, granularity: str, now: datetime) -> int:
     for row in rows:
         prev = (
             db.query(KnowledgeSnapshot)
-            .filter_by(node_id=row.node_id, granularity=granularity)
+            .filter(
+                KnowledgeSnapshot.node_id == row.node_id,
+                KnowledgeSnapshot.granularity == granularity,
+                KnowledgeSnapshot.snapshot_date < snapshot_date,
+            )
             .order_by(KnowledgeSnapshot.snapshot_date.desc())
             .first()
         )

@@ -137,3 +137,33 @@ def test_run_snapshot_monthly_only_on_first(db):
     db.commit()
     result = run_snapshot(db, now=now)
     assert result["monthly"] == 0
+
+
+def test_run_snapshot_weekly_runs_on_monday(db):
+    from app.services.knowledge_snapshot import run_snapshot
+    node = KnowledgeNode(concept_name="Weekly", concept_type="tool", normalized_name="weekly")
+    db.add(node)
+    db.flush()
+    now = datetime(2026, 4, 27, 12, 0, 0, tzinfo=timezone.utc)  # Monday
+    db.add(KnowledgeMention(conversation_id=1, node_id=node.id, username="U1",
+                            mentioned_at=now - timedelta(days=3)))
+    db.commit()
+    result = run_snapshot(db, now=now)
+    assert result["weekly"] == 1
+    snap = db.query(KnowledgeSnapshot).filter_by(granularity="weekly", node_id=node.id).first()
+    assert snap is not None
+
+
+def test_run_snapshot_monthly_runs_on_first(db):
+    from app.services.knowledge_snapshot import run_snapshot
+    node = KnowledgeNode(concept_name="Monthly", concept_type="tool", normalized_name="monthly")
+    db.add(node)
+    db.flush()
+    now = datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc)  # 1st of month
+    db.add(KnowledgeMention(conversation_id=1, node_id=node.id, username="U1",
+                            mentioned_at=now - timedelta(days=15)))
+    db.commit()
+    result = run_snapshot(db, now=now)
+    assert result["monthly"] == 1
+    snap = db.query(KnowledgeSnapshot).filter_by(granularity="monthly", node_id=node.id).first()
+    assert snap is not None
