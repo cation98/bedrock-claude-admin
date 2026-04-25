@@ -66,9 +66,8 @@ def _build_prompt(sessions: dict[str, list]) -> str:
     return "\n".join(lines)
 
 
-def _call_haiku(prompt_text: str, region: str = "us-east-1") -> str:
+def _call_haiku(prompt_text: str, client) -> str:
     """AWS Bedrock converse API로 Claude Haiku 호출."""
-    client = boto3.client("bedrock-runtime", region_name=region)
     response = client.converse(
         modelId=HAIKU_MODEL_ID,
         system=[{"text": _SYSTEM_PROMPT}],
@@ -147,6 +146,7 @@ def run_extraction(db: Session, region: str = "us-east-1") -> int:
     session_keys = list(session_groups.keys())
     now = datetime.now(timezone.utc)
     processed_conv_ids: list[int] = []
+    client = boto3.client("bedrock-runtime", region_name=region)
 
     for batch_start in range(0, len(session_keys), BATCH_SIZE):
         batch_keys = session_keys[batch_start: batch_start + BATCH_SIZE]
@@ -156,7 +156,7 @@ def run_extraction(db: Session, region: str = "us-east-1") -> int:
         raw = "{}"
         for attempt in range(3):
             try:
-                raw = _call_haiku(prompt_text, region=region)
+                raw = _call_haiku(prompt_text, client)
                 break
             except Exception as exc:
                 if attempt == 2:
