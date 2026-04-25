@@ -1,6 +1,6 @@
 """add knowledge graph tables
 
-Revision ID: a1b2c3d4e5f6
+Revision ID: e6f7a8b9c0d1
 Revises: a7b8c9d0e1f2
 Create Date: 2026-04-24
 
@@ -9,7 +9,7 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-revision = "a1b2c3d4e5f6"
+revision = "e6f7a8b9c0d1"
 down_revision = "a7b8c9d0e1f2"
 branch_labels = None
 depends_on = None
@@ -41,6 +41,8 @@ def upgrade() -> None:
         sa.Column("co_occurrence_count", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("last_seen_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
+        sa.ForeignKeyConstraint(["source_node_id"], ["knowledge_nodes.id"], ondelete="RESTRICT"),
+        sa.ForeignKeyConstraint(["target_node_id"], ["knowledge_nodes.id"], ondelete="RESTRICT"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("source_node_id", "target_node_id", "edge_type", name="uq_edge_nodes_type"),
     )
@@ -56,6 +58,12 @@ def upgrade() -> None:
         sa.Column("confidence_score", sa.Float(), nullable=True),
         sa.Column("mentioned_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("extracted_at", sa.DateTime(timezone=True), nullable=True),
+        sa.ForeignKeyConstraint(["node_id"], ["knowledge_nodes.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["conversation_id"],
+            ["prompt_audit_conversations.id"],
+            ondelete="CASCADE",
+        ),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_knowledge_mentions_node_id", "knowledge_mentions", ["node_id"])
@@ -74,6 +82,7 @@ def upgrade() -> None:
         sa.Column("prev_mention_count", sa.Integer(), nullable=True),
         sa.Column("growth_rate", sa.Float(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
+        sa.ForeignKeyConstraint(["node_id"], ["knowledge_nodes.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("snapshot_date", "granularity", "node_id", name="uq_snapshot_date_gran_node"),
     )
@@ -102,6 +111,8 @@ def upgrade() -> None:
         sa.Column("mapped_by", sa.String(100), nullable=True),
         sa.Column("confidence_score", sa.Float(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
+        sa.ForeignKeyConstraint(["knowledge_node_id"], ["knowledge_nodes.id"], ondelete="RESTRICT"),
+        sa.ForeignKeyConstraint(["workflow_template_id"], ["workflow_templates.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("knowledge_node_id", "workflow_template_id", "workflow_step_id", name="uq_taxonomy_mapping"),
     )
@@ -116,6 +127,7 @@ def upgrade() -> None:
         sa.Column("is_personal", sa.Boolean(), nullable=False, server_default="true"),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
+        sa.ForeignKeyConstraint(["template_id"], ["workflow_templates.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
     )
 
