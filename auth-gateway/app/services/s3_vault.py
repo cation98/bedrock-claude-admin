@@ -183,22 +183,27 @@ class S3VaultService:
         metadata = obj.get("Metadata", {})
         raw_data = obj["Body"].read()
 
-        if encrypted_dek and file_id is not None:
-            from app.core.dek_cache import get_or_decrypt_dek
-            from app.core.dek_utils import decrypt_file, is_drm_encrypted, kms_decrypt_dek
+        from app.core.dek_utils import is_drm_encrypted
 
-            if is_drm_encrypted(raw_data):
-                plaintext_dek = get_or_decrypt_dek(
-                    file_id=file_id,
-                    encrypted_dek_b64=encrypted_dek,
-                    decrypt_fn=lambda edek: kms_decrypt_dek(
-                        kms_client=self.kms,
-                        encrypted_dek_b64=edek,
-                        vault_id=vault_id,
-                        s3_key=s3_key,
-                    ),
+        if is_drm_encrypted(raw_data):
+            if not encrypted_dek or file_id is None:
+                raise RuntimeError(
+                    f"DRM-encrypted vault file {vault_id} found but key metadata is missing"
                 )
-                raw_data = decrypt_file(raw_data, plaintext_dek, vault_id, s3_key)
+            from app.core.dek_cache import get_or_decrypt_dek
+            from app.core.dek_utils import decrypt_file, kms_decrypt_dek
+
+            plaintext_dek = get_or_decrypt_dek(
+                file_id=file_id,
+                encrypted_dek_b64=encrypted_dek,
+                decrypt_fn=lambda edek: kms_decrypt_dek(
+                    kms_client=self.kms,
+                    encrypted_dek_b64=edek,
+                    vault_id=vault_id,
+                    s3_key=s3_key,
+                ),
+            )
+            raw_data = decrypt_file(raw_data, plaintext_dek, vault_id, s3_key)
 
         return raw_data, metadata
 
