@@ -39,6 +39,7 @@ from app.models.moderation import ModerationViolation  # noqa: F401 — create_a
 from app.models.edit_session import EditSession  # noqa: F401 — OnlyOffice 편집 세션 테이블 생성용
 from app.models.ui_source_event import UiSourceEvent  # noqa: F401 — create_all이 ui_source_events 테이블 생성하도록 import
 from app.routers import admin, apps, auth, bots, file_share, sessions, users, sms, skills, telegram, security, scheduling, infra_policy, surveys, app_proxy, portal
+from app.routers.mms import router as mms_router
 from app.routers import announcements
 from app.routers.guides import router as guides_router
 from app.routers.file_governance import router as governance_router
@@ -347,6 +348,25 @@ def _run_app_approval_migration() -> None:
             logger.info("Migration: users.can_deploy_custom_auth 추가 완료")
 
 
+def _run_can_send_mms_migration() -> None:
+    """users 테이블에 can_send_mms 컬럼이 없으면 추가 (MMS 발송 권한).
+
+    기본값 FALSE — 관리자가 개별 승인해야 발송 가능.
+    """
+    with engine.connect() as conn:
+        result = conn.execute(text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name='users' AND column_name='can_send_mms'"
+        ))
+        if result.fetchone() is None:
+            conn.execute(text(
+                "ALTER TABLE users "
+                "ADD COLUMN can_send_mms BOOLEAN NOT NULL DEFAULT FALSE"
+            ))
+            conn.commit()
+            logger.info("Migration: users.can_send_mms 컬럼 추가 완료")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """앱 시작/종료 라이프사이클 — DB 초기화 + 백그라운드 스케줄러 시작."""
@@ -360,6 +380,7 @@ async def lifespan(app: FastAPI):
     _run_edit_session_first_editor_migration()
     _run_deployed_apps_auth_mode_migration()
     _run_app_approval_migration()
+    _run_can_send_mms_migration()
     idle_task = asyncio.create_task(idle_checker_loop(settings))
     snapshot_task = asyncio.create_task(token_snapshot_loop(settings))
     audit_task = asyncio.create_task(prompt_audit_loop(settings))
@@ -580,6 +601,7 @@ app.include_router(auth.router)
 app.include_router(sessions.router)
 app.include_router(users.router)
 app.include_router(sms.router)
+app.include_router(mms_router)
 app.include_router(skills.router)
 app.include_router(telegram.router)
 app.include_router(security.router)
