@@ -1,262 +1,216 @@
-# 로컬 개발환경 구축 가이드 (macOS)
+# 로컬 개발 환경 구동 가이드
 
-Docker Desktop K8s에서 프로덕션과 동일한 전체 시스템을 로컬에서 구동합니다.
+이 문서는 `auth-gateway`(FastAPI)와 `admin-dashboard`(Next.js)를 로컬에서 구동하는 전체 절차입니다.
 
-## 사전 요구사항
+---
 
-| 항목 | 설치 방법 | 확인 명령 |
-|------|---------|---------|
-| Docker Desktop | https://docker.com/products/docker-desktop | `docker version` |
-| Docker Desktop K8s | Docker Desktop → Settings → Kubernetes → Enable | `kubectl --context=docker-desktop get nodes` |
-| kubectl | Docker Desktop에 포함 | `kubectl version --client` |
-| AWS CLI | `brew install awscli` | `aws --version` |
-| AWS 자격증명 | `aws configure` 또는 SSO | `aws sts get-caller-identity` |
-| Git | macOS 기본 | `git --version` |
+## 사전 준비
 
-## 구조
+| 도구 | 비고 |
+|------|------|
+| Docker Desktop | PostgreSQL + Auth Gateway 컨테이너 |
+| Node.js 22 | Admin Dashboard |
+| aws CLI v2 | kubeconfig 갱신 시 필요 |
 
-```
-Docker Desktop K8s (단일 노드)
-├── platform 네임스페이스
-│   ├── auth-gateway (FastAPI) ← 로컬 빌드 이미지
-│   ├── local-db (PostgreSQL 16)
-│   └── redis (Redis 7)
-├── claude-sessions 네임스페이스
-│   ├── claude-terminal-test001 (사용자 Pod) ← 로컬 빌드 이미지
-│   └── onlyoffice (DocumentServer)
-└── ingress-nginx 네임스페이스
-    └── nginx-ingress-controller
-```
+---
 
-## 빠른 시작 (원클릭)
+## 1단계 — .env 파일 준비
+
+### 기능 브랜치 worktree 작업 시
 
 ```bash
-# 1. 리포지토리 클론
-git clone git@github.com:cation98/bedrock-ai-agent.git
-cd bedrock-ai-agent
-
-# 2. 전체 구동
-./scripts/local-dev-up.sh
-
-# 3. 접속
-open http://localhost/
-# 로그인: TEST001 / test2026
+# worktree .env는 심볼릭 링크가 아닌 실제 파일이어야 함
+cp auth-gateway/.env .worktrees/knowledge-intelligence/auth-gateway/.env
 ```
 
-## 수동 구동 (단계별 학습)
+### .env 필수 항목
 
-### Step 0: K8s 컨텍스트 전환
+```env
+DATABASE_URL=postgresql://postgres:postgres@localhost:5433/bedrock_claude
+JWT_SECRET_KEY=dev-secret-key-do-not-use-in-prod
+
+# SSO
+SSO_AUTH_URL=https://authsvc.networkons.com/OAuthM.WSL/service.svc/RequestToken
+SSO_AUTH_URL2=https://authsvc.networkons.com/OAuthM.WSL/service.svc/AccessProtectedResource
+SSO_CLIENT_ID=SmartworksMobile
+SSO_CLIENT_SECRET=OAuthSKey
+SSO_AUTH_METHOD=4302010
+SSO_SCOPES=NeosOAuth
+SSO_TOKEN_KEY=RequestTokenResult
+PW_ENCODING_SALT=1o1sqhmHcREdoi+137Rnug==
+
+# K8s
+K8S_IN_CLUSTER=false
+K8S_NAMESPACE=claude-sessions
+K8S_POD_IMAGE=680877507363.dkr.ecr.ap-northeast-2.amazonaws.com/bedrock-claude/claude-code-terminal:latest
+K8S_SERVICE_ACCOUNT=claude-terminal-sa
+
+# Bedrock
+BEDROCK_REGION=ap-northeast-2
+BEDROCK_SONNET_MODEL=global.anthropic.claude-sonnet-4-6
+BEDROCK_HAIKU_MODEL=global.anthropic.claude-haiku-4-5-20251001-v1:0
+
+# OnlyOffice — 32자 이상 필수 (없으면 앱 기동 실패)
+ONLYOFFICE_JWT_SECRET=local-dev-only-not-for-production-use
+
+# 로컬 전용: TEST 계정 SSO+2FA 우회
+ALLOW_TEST_USERS=true
+```
+
+---
+
+## 2단계 — Auth Gateway 구동
 
 ```bash
-# 현재 컨텍스트 확인
-kubectl config current-context
+cd auth-gateway   # 또는 .worktrees/<branch>/auth-gateway
 
-# 로컬 Docker Desktop으로 전환
-kubectl config use-context docker-desktop
-
-# 확인
-kubectl get nodes
-# NAME             STATUS   ROLES           AGE   VERSION
-# docker-desktop   Ready    control-plane   ...   v1.34.x
+docker compose up --build -d
 ```
 
-> **주의**: 이 시점부터 `kubectl` 명령은 로컬 클러스터에 적용됩니다.
-> 프로덕션 EKS를 동시에 사용하려면:
-> ```bash
-> kubectl --context=arn:aws:eks:ap-northeast-2:680877507363:cluster/bedrock-claude-eks get pods -n platform
-> ```
-
-### Step 1: 네임스페이스 생성
+### 상태 확인
 
 ```bash
-kubectl apply -f infra/local-dev/00-namespaces.yaml
-# platform, claude-sessions 네임스페이스 생성
+docker ps
+# auth-gateway-api-1   Up   0.0.0.0:8000->8000/tcp
+# auth-gateway-db-1    Up (healthy)   0.0.0.0:5433->5432/tcp
+
+curl http://localhost:8000/health
+# {"status":"ok","service":"auth-gateway"}
 ```
 
-### Step 2: PostgreSQL + Redis
+---
+
+## 3단계 — DB 마이그레이션
+
+앱 기동 시 `create_all()`로 테이블이 자동 생성됩니다.  
+Alembic 이력은 별도로 동기화해야 합니다.
 
 ```bash
-kubectl apply -f infra/local-dev/01-postgresql.yaml
-kubectl apply -f infra/local-dev/02-redis.yaml
+# 첫 실행 또는 DuplicateTable 오류 시
+docker exec auth-gateway-api-1 alembic stamp head
 
-# 상태 확인 (Running이 될 때까지 대기)
-kubectl get pods -n platform -w
+# 이후 새 마이그레이션 적용 시
+docker exec auth-gateway-api-1 alembic upgrade head
 ```
 
-### Step 3: Secrets
+### 테이블 목록 확인
 
 ```bash
-kubectl apply -f infra/local-dev/02-secrets.yaml
-# JWT 키, DB 비밀번호, 테스트 사용자 허용 등
+docker exec auth-gateway-db-1 psql -U postgres -d bedrock_claude -c "\dt"
 ```
 
-### Step 4: RBAC + ServiceAccount
+---
+
+## 4단계 — 테스트 관리자 계정 생성
+
+로컬에서는 SSO 없이 `TESTADMIN` 계정으로 로그인합니다.
 
 ```bash
-kubectl apply -f infra/local-dev/03-service-account.yaml
-# auth-gateway가 Pod을 생성/삭제할 수 있는 권한
+docker exec auth-gateway-api-1 python3 -c "
+import sys; sys.path.insert(0, '/app')
+from app.core.database import SessionLocal
+from app.models.user import User
+db = SessionLocal()
+if not db.query(User).filter(User.username == 'TESTADMIN').first():
+    db.add(User(username='TESTADMIN', name='테스트관리자', role='admin', is_active=True, is_approved=True))
+    db.commit()
+    print('Created TESTADMIN')
+else:
+    print('Already exists')
+db.close()
+" 2>/dev/null
 ```
 
-### Step 5: Auth Gateway
+### 로그인 및 토큰 발급
 
 ```bash
-# 이미지 빌드 (최초 1회, 코드 변경 시마다)
-docker build -t bedrock-claude/auth-gateway:local auth-gateway/
-
-# 배포
-kubectl apply -f infra/local-dev/04-auth-gateway.yaml
-
-# 상태 확인
-kubectl get pods -n platform
+curl -s -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"TESTADMIN","password":"test2026"}' | python3 -m json.tool
 ```
 
-### Step 6: Nginx Ingress Controller
+조건: `.env`에 `ALLOW_TEST_USERS=true` + DB에 TESTADMIN 계정 존재
+
+### API 테스트
 
 ```bash
-# 최초 1회: Ingress Controller 설치
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.0/deploy/static/provider/cloud/deploy.yaml
+TOKEN="<access_token 값>"
 
-# Ingress Controller Ready 대기 (~30초)
-kubectl wait --namespace ingress-nginx \
-  --for=condition=ready pod \
-  --selector=app.kubernetes.io/component=controller \
-  --timeout=120s
-
-# Ingress 규칙 적용
-kubectl apply -f infra/local-dev/06-ingress.yaml
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/knowledge/graph
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/knowledge/trends
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/knowledge/workflows
 ```
 
-### Step 7: OnlyOffice (선택)
+---
+
+## 5단계 — Admin Dashboard 구동
 
 ```bash
-kubectl apply -f infra/local-dev/07-onlyoffice.yaml
-# 이미지 다운로드에 2~3분 소요
+cd admin-dashboard
+
+# 첫 실행 시
+npm install
+
+# 개발 서버
+NEXT_PUBLIC_API_URL=http://localhost:8000 npm run dev
 ```
 
-### Step 8: 사용자 Pod
+브라우저: http://localhost:3000
+
+### Phase 2 신규 페이지
+
+| URL | 기능 |
+|-----|------|
+| `/analytics/knowledge-trends` | 트렌드 그래프 + Sankey 다이어그램 + 연관 규칙 |
+| `/analytics/knowledge-gap` | 워크플로우 커버리지 갭 분석 |
+| `/analytics/departments` | 부서별 Knowledge 히트맵 |
+| `/workflows` | 워크플로우 템플릿 캔버스 편집기 |
+
+---
+
+## 빠른 재시작
 
 ```bash
-# 이미지 빌드 (최초 1회, 코드 변경 시마다)
-docker build -t bedrock-claude/claude-code-terminal:local container-image/
+# Auth Gateway
+cd auth-gateway && docker compose up -d
+curl http://localhost:8000/health
 
-# AWS 자격증명을 K8s Secret으로 등록 (Bedrock 호출용)
-kubectl create secret generic aws-credentials \
-  --from-file=credentials=$HOME/.aws/credentials \
-  --from-file=config=$HOME/.aws/config \
-  -n claude-sessions \
-  --dry-run=client -o yaml | kubectl apply -f -
-
-# 테스트 사용자 Pod 생성
-kubectl apply -f infra/local-dev/08-test-user-pod.yaml
+# Admin Dashboard
+cd admin-dashboard && NEXT_PUBLIC_API_URL=http://localhost:8000 npm run dev
 ```
 
-### Step 9: 접속
-
-```bash
-open http://localhost/
-# 로그인: TEST001 / test2026
-```
-
-## 접속 URL
-
-| 서비스 | URL |
-|--------|-----|
-| 로그인 페이지 | http://localhost/ |
-| Hub | http://localhost/hub/claude-terminal-test001/ |
-| 터미널 | http://localhost/terminal/claude-terminal-test001/ |
-| 파일 관리 | http://localhost/files/claude-terminal-test001/ |
-| Auth Gateway API | http://localhost/api/v1/ |
-| Admin Dashboard | `cd admin-dashboard && npm run dev` → http://localhost:3000 |
-
-## 개발 워크플로
-
-### auth-gateway 코드 수정 시
-
-```bash
-# 1. 코드 수정 (auth-gateway/app/...)
-# 2. 이미지 리빌드
-docker build -t bedrock-claude/auth-gateway:local auth-gateway/
-# 3. Pod 재시작 (새 이미지 반영)
-kubectl rollout restart deployment/auth-gateway -n platform
-# 4. 브라우저에서 확인
-```
-
-### container-image (사용자 Pod) 수정 시
-
-```bash
-# 1. 코드 수정 (container-image/...)
-# 2. 이미지 리빌드
-docker build -t bedrock-claude/claude-code-terminal:local container-image/
-# 3. 기존 Pod 삭제 + 재생성
-kubectl delete pod claude-terminal-test001 -n claude-sessions
-kubectl apply -f infra/local-dev/08-test-user-pod.yaml
-```
-
-### 프로덕션 배포
-
-```bash
-# 검증 완료 후 프로덕션 이미지 빌드 (amd64 필수)
-docker build --platform linux/amd64 -t auth-gateway auth-gateway/
-docker tag auth-gateway:latest ECR_REPO:latest
-docker push ECR_REPO:latest
-kubectl --context=arn:aws:eks:... rollout restart deployment/auth-gateway -n platform
-```
-
-## 전체 종료
-
-```bash
-./scripts/local-dev-down.sh
-# 또는 수동:
-kubectl --context=docker-desktop delete -f infra/local-dev/08-test-user-pod.yaml
-kubectl --context=docker-desktop delete -f infra/local-dev/07-onlyoffice.yaml
-kubectl --context=docker-desktop delete -f infra/local-dev/06-ingress.yaml
-kubectl --context=docker-desktop delete -f infra/local-dev/04-auth-gateway.yaml
-kubectl --context=docker-desktop delete -f infra/local-dev/02-redis.yaml
-kubectl --context=docker-desktop delete -f infra/local-dev/01-postgresql.yaml
-```
-
-## 프로덕션과의 차이
-
-| 항목 | 프로덕션 | 로컬 |
-|------|---------|------|
-| 이미지 | ECR (`imagePullPolicy: Always`) | 로컬 빌드 (`Never`) |
-| 도메인 | claude.skons.net (HTTPS) | localhost (HTTP) |
-| DB | RDS | Docker PostgreSQL |
-| Redis | ElastiCache | Docker Redis |
-| 파일 저장 | AWS EFS | hostPath (`~/.bedrock-local-data/`) |
-| SSO | sso.skons.net | TEST001 계정 우회 |
-| Claude API | Bedrock (STS 자격증명) | Bedrock (`~/.aws/` 마운트) |
-| 노드 | 최대 55대 | 1대 (Docker Desktop) |
+---
 
 ## 트러블슈팅
 
-### Pod이 ErrImageNeverPull 상태
-
+### "onlyoffice_jwt_secret field required"
+→ `.env`에 `ONLYOFFICE_JWT_SECRET` (32자 이상) 추가 후 재생성:
 ```bash
-# 이미지가 로컬에 없음 → 빌드 필요
-docker build -t bedrock-claude/auth-gateway:local auth-gateway/
-kubectl rollout restart deployment/auth-gateway -n platform
+docker compose up -d api
 ```
 
-### DB 연결 실패
-
+### "SSO authentication failed" (TESTADMIN 로그인 실패)
+→ `.env`에 `ALLOW_TEST_USERS=true` 추가 후 재생성:
 ```bash
-# PostgreSQL Pod 상태 확인
-kubectl get pods -n platform -l app=local-db
-kubectl logs -n platform -l app=local-db
+docker compose up -d api   # restart는 env 미반영, up -d 필수
 ```
 
-### Ingress Controller 미설치
-
+### "DuplicateTable" 마이그레이션 오류
+→ 테이블이 이미 존재하므로 이력만 동기화:
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.0/deploy/static/provider/cloud/deploy.yaml
+docker exec auth-gateway-api-1 alembic stamp head
 ```
 
-### localhost 접속 안 됨
+### "ConfigException: No configuration found" (K8s 오류)
+→ `docker-compose.yml`에 kubeconfig 볼륨 마운트 확인:
+```yaml
+volumes:
+  - ./app:/app/app
+  - ~/.kube/config:/root/.kube/config:ro
+```
 
+### .env 변경이 컨테이너에 반영되지 않음
+`docker compose restart`는 `env_file` 변경을 반영하지 않습니다:
 ```bash
-# Ingress Controller가 Running인지 확인
-kubectl get pods -n ingress-nginx
-# LoadBalancer 상태 확인
-kubectl get svc -n ingress-nginx
+docker compose up -d api   # 컨테이너 재생성
 ```

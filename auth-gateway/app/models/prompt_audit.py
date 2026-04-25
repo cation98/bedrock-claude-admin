@@ -45,6 +45,7 @@ class PromptAuditConversation(Base):
     content = Column(Text, nullable=False)
     timestamp = Column(DateTime(timezone=True))
     collected_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    knowledge_extracted_at = Column(DateTime(timezone=True), nullable=True, index=True)
 
     __table_args__ = (
         UniqueConstraint("username", "session_id", "message_type", "timestamp",

@@ -36,9 +36,10 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    # 로컬 개발 시 코드 변경 자동 반영
+    # 로컬 개발 시 코드 변경 자동 반영 + kubeconfig 마운트
     volumes:
       - ./app:/app/app
+      - ~/.kube/config:/root/.kube/config:ro
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 volumes:
