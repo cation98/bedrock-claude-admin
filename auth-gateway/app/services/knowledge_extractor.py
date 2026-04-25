@@ -78,10 +78,15 @@ def _call_haiku(prompt_text: str, region: str = "us-east-1") -> str:
     return response["output"]["message"]["content"][0]["text"]
 
 
+_ALLOWED_CONCEPT_TYPES = {"skill", "tool", "domain", "method", "problem", "topic"}
+
+
 def _upsert_node(db: Session, concept: dict, now: datetime) -> KnowledgeNode | None:
     """개념을 knowledge_nodes에 upsert. normalized_name 기준 중복 병합."""
     name = (concept.get("name") or "").strip()
     ctype = concept.get("type", "topic")
+    if ctype not in _ALLOWED_CONCEPT_TYPES:
+        ctype = "topic"
     if not name:
         return None
     normalized = normalize_name(name)

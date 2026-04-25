@@ -403,7 +403,7 @@ async def knowledge_extraction_loop(settings: Settings) -> None:
         if acquire_scheduler_lock("knowledge_extraction", ttl_seconds=3600 * 6):
             db = SessionLocal()
             try:
-                count = await asyncio.get_event_loop().run_in_executor(
+                count = await asyncio.get_running_loop().run_in_executor(
                     None, run_extraction, db, "us-east-1"
                 )
                 logger.info(f"knowledge extraction done: {count} conversations processed")
@@ -427,7 +427,7 @@ async def knowledge_snapshot_loop(settings: Settings) -> None:
         if acquire_scheduler_lock("knowledge_snapshot", ttl_seconds=3600 * 23):
             db = SessionLocal()
             try:
-                result = await asyncio.get_event_loop().run_in_executor(
+                result = await asyncio.get_running_loop().run_in_executor(
                     None, run_snapshot, db
                 )
                 logger.info(f"knowledge snapshot done: {result}")
