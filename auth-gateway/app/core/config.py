@@ -116,6 +116,16 @@ class Settings(BaseSettings):
     s3_vault_kms_key_id: str = ""    # KMS 키 ID (ARN 또는 별칭)
     s3_vault_region: str = "ap-northeast-2"
 
+    # ----- DRM Phase 2+3 -----
+    # AGPL 라이선스 소프트웨어(OnlyOffice 등)에 대한 법무 검토 완료 여부.
+    # False(기본값)이면 관련 기능 비활성화.
+    agpl_review_complete: bool = False
+    # temp-view 엔드포인트 허용 CIDR 목록 (콤마 구분).
+    # auth-gateway 내부 호출 + 내부망 접근만 허용.
+    onlyoffice_allowed_cidrs: str = "100.64.0.0/10,10.0.0.0/8"
+    # 사용자당 동시 허용 PENDING 수출 요청 상한선.
+    max_pending_exports_per_user: int = 3
+
     # ----- Gitea (사용자 git gateway) -----
     gitea_enabled: bool = False       # feature flag — 프로덕션 활성화 전 False 유지
     gitea_url: str = "https://gitea.internal.skons.net"              # Pod env 주입용 (사용자 git remote)
