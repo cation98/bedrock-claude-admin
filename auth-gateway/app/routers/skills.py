@@ -226,6 +226,71 @@ async def list_pending_progress(
     ]
 
 
+@router.get("/rejected")
+async def list_rejected_skills(
+    _admin: dict = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """반려된 스킬 목록 (관리자)."""
+    skills = (
+        db.query(SharedSkill)
+        .filter(SharedSkill.approval_status == SkillApprovalStatus.REJECTED.value)
+        .order_by(SharedSkill.rejected_at.desc())
+        .all()
+    )
+    return [
+        {
+            "skill_id": s.id,
+            "title": s.title,
+            "author_username": s.author_username,
+            "category": s.category,
+            "rejected_by": s.rejected_by,
+            "rejected_at": s.rejected_at.isoformat() if s.rejected_at else None,
+            "rejection_reason": s.rejection_reason,
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+        }
+        for s in skills
+    ]
+
+
+@router.get("/governance-events")
+async def list_governance_events(
+    limit: int = 100,
+    _admin: dict = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """스킬 거버넌스 감사 이벤트 목록 (관리자)."""
+    events = (
+        db.query(SkillGovernanceEvent)
+        .order_by(SkillGovernanceEvent.created_at.desc())
+        .limit(min(limit, 500))
+        .all()
+    )
+    skill_ids = [e.skill_id for e in events if e.skill_id is not None]
+    skills_map: dict[int, str | None] = {}
+    if skill_ids:
+        rows = (
+            db.query(SharedSkill.id, SharedSkill.title)
+            .filter(SharedSkill.id.in_(skill_ids))
+            .all()
+        )
+        skills_map = {r.id: r.title for r in rows}
+
+    return [
+        {
+            "id": e.id,
+            "skill_id": e.skill_id,
+            "skill_title": skills_map.get(e.skill_id) if e.skill_id else None,
+            "event_type": e.event_type,
+            "actor_username": e.actor_username,
+            "actor_role": e.actor_role,
+            "detail": e.detail,
+            "created_at": e.created_at.isoformat() if e.created_at else None,
+        }
+        for e in events
+    ]
+
+
 @router.get("/store")
 async def list_store_skills(
     q: str = "",

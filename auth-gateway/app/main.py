@@ -17,7 +17,11 @@ from sqlalchemy import text
 
 from app.core.config import get_settings
 from app.core.database import Base, engine
-from app.core.scheduler import idle_checker_loop, token_snapshot_loop, prompt_audit_loop, storage_cleanup_loop, knowledge_extraction_loop, knowledge_snapshot_loop
+from app.core.scheduler import (
+    idle_checker_loop, token_snapshot_loop, prompt_audit_loop,
+    storage_cleanup_loop, event_retention_loop,
+    knowledge_extraction_loop, knowledge_snapshot_loop,
+)
 from app.models.app import DeployedApp, AppACL, AppView, AppLike  # noqa: F401 — create_all이 테이블 생성하도록 import
 from app.models.survey import SurveyTemplate, SurveyAssignment, SurveyResponse  # noqa: F401
 from app.models.file_share import SharedDataset, FileShareACL  # noqa: F401 — create_all이 테이블 생성하도록 import
@@ -40,6 +44,7 @@ from app.models.knowledge import (  # noqa: F401 — create_all이 knowledge 테
     KnowledgeSnapshot, WorkflowTemplate, KnowledgeTaxonomy, WorkflowInstance,
 )
 from app.routers import admin, apps, auth, bots, file_share, sessions, users, sms, skills, telegram, security, scheduling, infra_policy, surveys, app_proxy, portal
+from app.routers.mms import router as mms_router
 from app.routers import announcements
 from app.routers.guides import router as guides_router
 from app.routers.file_governance import router as governance_router
@@ -49,6 +54,7 @@ from app.routers.jwt_auth import router as jwt_auth_router
 from app.routers.bedrock_proxy import router as bedrock_proxy_router
 from app.routers.ai import router as ai_router
 from app.routers.knowledge import router as knowledge_router
+from app.routers.metrics import router as metrics_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -348,6 +354,46 @@ def _run_app_approval_migration() -> None:
             logger.info("Migration: users.can_deploy_custom_auth 추가 완료")
 
 
+def _run_model_tier_migration() -> None:
+    """users 테이블에 model_tier 컬럼이 없으면 추가 (모델 티어 정책).
+
+    'sonnet'(기본): 클라이언트 요청 모델 그대로 사용.
+    'haiku': Haiku로 강제 다운그레이드 (비용 절감 대상 사용자).
+    기존 사용자는 모두 'sonnet' 기본값 적용.
+    """
+    with engine.connect() as conn:
+        result = conn.execute(text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name='users' AND column_name='model_tier'"
+        ))
+        if result.fetchone() is None:
+            conn.execute(text(
+                "ALTER TABLE users "
+                "ADD COLUMN model_tier VARCHAR(20) NOT NULL DEFAULT 'sonnet'"
+            ))
+            conn.commit()
+            logger.info("Migration: users.model_tier 컬럼 추가 완료 (기본값: sonnet)")
+
+
+def _run_can_send_mms_migration() -> None:
+    """users 테이블에 can_send_mms 컬럼이 없으면 추가 (MMS 발송 권한).
+
+    기본값 FALSE — 관리자가 개별 승인해야 발송 가능.
+    """
+    with engine.connect() as conn:
+        result = conn.execute(text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name='users' AND column_name='can_send_mms'"
+        ))
+        if result.fetchone() is None:
+            conn.execute(text(
+                "ALTER TABLE users "
+                "ADD COLUMN can_send_mms BOOLEAN NOT NULL DEFAULT FALSE"
+            ))
+            conn.commit()
+            logger.info("Migration: users.can_send_mms 컬럼 추가 완료")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """앱 시작/종료 라이프사이클 — DB 초기화 + 백그라운드 스케줄러 시작."""
@@ -361,10 +407,13 @@ async def lifespan(app: FastAPI):
     _run_edit_session_first_editor_migration()
     _run_deployed_apps_auth_mode_migration()
     _run_app_approval_migration()
+    _run_model_tier_migration()
+    _run_can_send_mms_migration()
     idle_task = asyncio.create_task(idle_checker_loop(settings))
     snapshot_task = asyncio.create_task(token_snapshot_loop(settings))
     audit_task = asyncio.create_task(prompt_audit_loop(settings))
     storage_task = asyncio.create_task(storage_cleanup_loop(settings))
+    retention_task = asyncio.create_task(event_retention_loop(settings))
     knowledge_task = asyncio.create_task(knowledge_extraction_loop(settings))
     knowledge_snapshot_task = asyncio.create_task(knowledge_snapshot_loop(settings))
     logger.info(f"{settings.app_name} started")
@@ -373,6 +422,7 @@ async def lifespan(app: FastAPI):
     snapshot_task.cancel()
     audit_task.cancel()
     storage_task.cancel()
+    retention_task.cancel()
     knowledge_task.cancel()
     knowledge_snapshot_task.cancel()
     try:
@@ -389,6 +439,10 @@ async def lifespan(app: FastAPI):
         pass
     try:
         await storage_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await retention_task
     except asyncio.CancelledError:
         pass
     try:
@@ -587,6 +641,7 @@ app.include_router(auth.router)
 app.include_router(sessions.router)
 app.include_router(users.router)
 app.include_router(sms.router)
+app.include_router(mms_router)
 app.include_router(skills.router)
 app.include_router(telegram.router)
 app.include_router(security.router)
@@ -630,6 +685,8 @@ app.include_router(jwt_auth_router)
 # bedrock_proxy: T20 — Console Pod ANTHROPIC_BASE_URL=/v1 Anthropic-compatible endpoint
 # app_proxy보다 먼저 등록 (catch-all보다 구체적인 경로가 우선)
 app.include_router(bedrock_proxy_router)
+# metrics: Prometheus pull endpoint — app_proxy catch-all보다 먼저 등록 필수
+app.include_router(metrics_router)
 # ai: OpenAI-compatible endpoint (OnlyOffice AI plugin, 2026-04-12 eng review — Lane A)
 app.include_router(ai_router)
 # app_proxy는 catch-all 경로이므로 반드시 마지막에 등록

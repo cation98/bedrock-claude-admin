@@ -1,0 +1,61 @@
+# 로컬 usage-worker — EKS와 동일 구조, 로컬 DB/Redis 사용
+#
+# 프로덕션과의 차이:
+#   - imagePullPolicy: Never (로컬 Docker 이미지, ECR 불필요)
+#   - REDIS_URL: 로컬 Redis Pod (ElastiCache 대체)
+#   - nodeSelector/tolerations 없음 (Docker Desktop 단일 노드)
+#   - livenessProbe 유지 (redis ping)
+#
+# 이미지 빌드:
+#   docker build -t bedrock-claude/usage-worker:local usage-worker/
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: usage-worker
+  namespace: platform
+  labels:
+    app: usage-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: usage-worker
+  template:
+    metadata:
+      labels:
+        app: usage-worker
+    spec:
+      containers:
+        - name: usage-worker
+          image: bedrock-claude/usage-worker:local
+          imagePullPolicy: Never
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-secrets
+                  key: DATABASE_URL
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-secrets
+                  key: REDIS_URL
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          livenessProbe:
+            exec:
+              command:
+                - python3
+                - -c
+                - |
+                  import redis, os
+                  r = redis.Redis.from_url(os.environ['REDIS_URL'])
+                  r.ping()
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 3

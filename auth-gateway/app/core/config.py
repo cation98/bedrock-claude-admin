@@ -51,9 +51,13 @@ class Settings(BaseSettings):
     external_host: str = "claude.skons.net"
 
     # ----- Bedrock (Pod에 주입할 환경변수) -----
-    bedrock_region: str = "us-east-1"
+    bedrock_region: str = "ap-northeast-2"  # 단일 출처. us-east-1 잘못된 기본값 수정.
     bedrock_sonnet_model: str = "us.anthropic.claude-sonnet-4-6"
     bedrock_haiku_model: str = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+
+    # T20 활성화 후 usage-worker가 SSOT이므로 token snapshot loop는 기본 비활성.
+    # emergency backfill 필요 시에만 ENV로 SNAPSHOT_LOOP_ENABLED=true 설정.
+    snapshot_loop_enabled: bool = False
 
     # ----- SMS Gateway -----
     sms_gateway_url: str = ""

@@ -23,6 +23,20 @@ metadata:
     user-id: test001
 spec:
   serviceAccountName: claude-terminal-sa
+  # Docker Desktop kind K8s: hostPath는 kind 노드 안에서 root:root/755로 매핑됨.
+  # initContainer(root 실행)로 작업 디렉토리 소유권을 node(UID 1000)로 미리 설정.
+  initContainers:
+    - name: init-workspace
+      image: busybox
+      command:
+        - sh
+        - -c
+        - |
+          mkdir -p /ws/exports /ws/reports /ws/uploads /ws/shared-data /ws/team
+          chown -R 1000:1000 /ws
+      volumeMounts:
+        - name: workspace
+          mountPath: /ws
   containers:
     - name: terminal
       image: bedrock-claude/claude-code-terminal:local

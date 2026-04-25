@@ -217,6 +217,7 @@ export interface User {
   is_presenter: boolean;
   approved_at: string | null;
   last_login_at: string | null;
+  model_tier: string;
 }
 
 export interface UserListResponse {
@@ -270,6 +271,16 @@ export function updateUserDeployApps(userId: number, canDeploy: boolean): Promis
     method: "PATCH",
     body: JSON.stringify({ can_deploy_apps: canDeploy }),
   });
+}
+
+export function updateUserModelTier(
+  username: string,
+  tier: string
+): Promise<{ username: string; model_tier: string }> {
+  return request<{ username: string; model_tier: string }>(
+    `/api/v1/admin/users/${encodeURIComponent(username)}/model-tier?tier=${encodeURIComponent(tier)}`,
+    { method: "PATCH" }
+  );
 }
 
 // ---------- Deployed Apps (Admin) ----------
@@ -1302,8 +1313,67 @@ export interface SkillResponse {
   approval_status: SkillApprovalStatus;
 }
 
+export interface SkillAdminItem {
+  id: number;
+  author_username: string;
+  author_name: string | null;
+  title: string;
+  description: string | null;
+  category: string;
+  is_approved: boolean;
+  approved_by: string | null;
+  approved_at: string | null;
+  usage_count: number;
+  created_at: string;
+}
+
+export interface SkillAdminListResponse {
+  total: number;
+  skills: SkillAdminItem[];
+}
+
+export interface SkillRejectedItem {
+  skill_id: number;
+  title: string | null;
+  author_username: string | null;
+  category: string | null;
+  rejected_by: string | null;
+  rejected_at: string | null;
+  rejection_reason: string | null;
+  created_at: string | null;
+}
+
+export interface GovernanceEvent {
+  id: number;
+  skill_id: number | null;
+  skill_title: string | null;
+  event_type: string;
+  actor_username: string;
+  actor_role: string;
+  detail: string | null;
+  created_at: string;
+}
+
 export function fetchPendingSkillsProgress(): Promise<SkillPendingProgressItem[]> {
   return request<SkillPendingProgressItem[]>("/api/v1/skills/pending-progress");
+}
+
+export function fetchApprovedSkillsAdmin(): Promise<SkillAdminListResponse> {
+  return request<SkillAdminListResponse>("/api/v1/skills/");
+}
+
+export function fetchRejectedSkills(): Promise<SkillRejectedItem[]> {
+  return request<SkillRejectedItem[]>("/api/v1/skills/rejected");
+}
+
+export function revokeSkill(skillId: number): Promise<{ deleted: boolean; title: string }> {
+  return request<{ deleted: boolean; title: string }>(`/api/v1/skills/${skillId}`, {
+    method: "DELETE",
+  });
+}
+
+export function fetchGovernanceEvents(limit = 100): Promise<GovernanceEvent[]> {
+  return request<GovernanceEvent[]>(`/api/v1/skills/governance-events?limit=${limit}`);
 }
 
 export function fetchSkillApprovalProgress(skillId: number): Promise<SkillApprovalProgress> {

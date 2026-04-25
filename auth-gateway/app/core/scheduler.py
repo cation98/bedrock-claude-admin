@@ -78,15 +78,25 @@ async def idle_checker_loop(settings: Settings) -> None:
 
 
 async def token_snapshot_loop(settings: Settings) -> None:
-    """매시간 토큰 사용량 스냅샷 → token_usage_daily + token_usage_hourly 저장."""
+    """매 10분 토큰 사용량 스냅샷 → token_usage_daily + token_usage_hourly 저장.
+
+    T20 활성화 후 usage-worker가 stream에서 SSOT로 동작하므로 deprecated.
+    settings.snapshot_loop_enabled=true 설정 시에만 emergency backfill 모드로 동작.
+    """
+    if not settings.snapshot_loop_enabled:
+        logger.info(
+            "token_snapshot_loop disabled — usage-worker is SSOT after T20 activation. "
+            "Set SNAPSHOT_LOOP_ENABLED=true to re-enable for emergency backfill."
+        )
+        return
+
     # 순환 참조 방지를 위해 내부에서 임포트
     from app.core.database import SessionLocal
     from app.routers.admin import do_snapshot
 
     snapshot_interval = 600  # 10분마다
-    logger.info(f"토큰 스냅샷 스케줄러 시작 — 주기={snapshot_interval}s (10분)")
+    logger.info(f"토큰 스냅샷 스케줄러 시작 (emergency mode) — 주기={snapshot_interval}s")
 
-    # 앱 기동 안정화 후 30초 대기
     await asyncio.sleep(30)
 
     while True:
@@ -100,6 +110,40 @@ async def token_snapshot_loop(settings: Settings) -> None:
             db.close()
 
         await asyncio.sleep(snapshot_interval)
+
+
+async def event_retention_loop(settings: Settings) -> None:
+    """token_usage_event 90일 retention purge. 일 1회 실행.
+
+    Bedrock 분기 빌링 cycle(3개월)과 일치 — 분기 단위 reconciliation 사고 복구
+    윈도우 내 dedupe 보호. 실제 데이터 합산은 token_usage_daily/hourly에 누적되어
+    영구 보존되므로 event 삭제는 dedupe 정보만 손실됨.
+
+    Spec §4.3, §5.5
+    """
+    from app.core.database import SessionLocal
+    from sqlalchemy import text
+
+    cleanup_interval = 86400  # 24시간
+    logger.info(f"token_usage_event retention 스케줄러 시작 — 주기={cleanup_interval}s, 보존 90 days")
+
+    # 앱 기동 안정화 후 5분 대기
+    await asyncio.sleep(300)
+
+    while True:
+        db = SessionLocal()
+        try:
+            result = db.execute(text(
+                "DELETE FROM token_usage_event WHERE recorded_at < NOW() - INTERVAL '90 days'"
+            ))
+            db.commit()
+            logger.info(f"token_usage_event purge 완료 — 삭제 row: {result.rowcount}")
+        except Exception as e:
+            logger.error(f"token_usage_event purge 오류: {e}", exc_info=True)
+            db.rollback()
+        finally:
+            db.close()
+        await asyncio.sleep(cleanup_interval)
 
 
 async def prompt_audit_loop(settings: Settings) -> None:

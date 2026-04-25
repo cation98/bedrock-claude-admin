@@ -1,0 +1,77 @@
+# reconcile-cron.yaml — CloudWatch vs DB 일별 토큰 사용량 대사 CronJob
+#
+# 스케줄: 매일 02:00 KST (17:00 UTC)
+# 작업:  reconcile-aws-vs-db.py --alert (불일치 시 Telegram 알림)
+#
+# 필요 권한 (IRSA):
+#   cloudwatch:GetMetricStatistics
+#   cloudwatch:ListMetrics
+#
+# Secrets:
+#   auth-gateway-secrets.DATABASE_URL
+#   reconcile-secrets.TELEGRAM_BOT_TOKEN    (optional)
+#   reconcile-secrets.TELEGRAM_ALERT_CHAT_ID (optional)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: bedrock-reconcile
+  namespace: platform
+  labels:
+    app: bedrock-reconcile
+spec:
+  schedule: "0 17 * * *"   # 02:00 KST
+  timeZone: "UTC"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: bedrock-reconcile
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: usage-worker-sa  # IRSA — CloudWatch read 권한
+          nodeSelector:
+            role: system
+          tolerations:
+            - key: dedicated
+              operator: Equal
+              value: system
+              effect: NoSchedule
+          containers:
+            - name: reconcile
+              image: 680877507363.dkr.ecr.ap-northeast-2.amazonaws.com/bedrock-claude/usage-worker:latest
+              imagePullPolicy: Always
+              command:
+                - python3
+                - /app/scripts/reconcile-aws-vs-db.py
+                - --alert
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: auth-gateway-secrets
+                      key: DATABASE_URL
+                - name: AWS_REGION
+                  value: ap-northeast-2
+                - name: TELEGRAM_BOT_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: reconcile-secrets
+                      key: TELEGRAM_BOT_TOKEN
+                      optional: true
+                - name: TELEGRAM_ALERT_CHAT_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: reconcile-secrets
+                      key: TELEGRAM_ALERT_CHAT_ID
+                      optional: true
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 256Mi

@@ -93,6 +93,11 @@ spec:
                 secretKeyRef:
                   name: auth-gateway-secrets
                   key: TANGO_DATABASE_URL
+            - name: DOCULOG_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: auth-gateway-secrets
+                  key: DOCULOG_DATABASE_URL
             # OnlyOffice JWT — 07-onlyoffice.yaml의 JWT_SECRET과 동일
             - name: ONLYOFFICE_JWT_SECRET
               valueFrom:

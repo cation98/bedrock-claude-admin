@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.core.database import get_db
+from app.core import pricing as _pricing
 from app.core.security import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -54,10 +55,7 @@ class TokenUsageResponse(BaseModel):
     collected_at: str
 
 
-# Bedrock Claude Sonnet pricing
-INPUT_PRICE = 3.0 / 1_000_000
-OUTPUT_PRICE = 15.0 / 1_000_000
-KRW_RATE = 1530
+_LEGACY_PRICE = _pricing.get_price_table("claude-sonnet-4-6")
 
 
 def _collect_tokens_from_pod(v1: client.CoreV1Api, pod_name: str, namespace: str) -> tuple[int, int]:
@@ -113,8 +111,13 @@ async def get_token_usage(
 
         input_tokens, output_tokens = _collect_tokens_from_pod(v1, pod_name, namespace)
         total = input_tokens + output_tokens
-        cost_usd = round(input_tokens * INPUT_PRICE + output_tokens * OUTPUT_PRICE, 4)
-        cost_krw = round(cost_usd * KRW_RATE)
+        # T20 활성화 전 legacy snapshot 경로 — 모델 정보 없어 Sonnet 가격으로 추정
+        cost_usd = round(
+            (input_tokens * _LEGACY_PRICE["input"]
+             + output_tokens * _LEGACY_PRICE["output"]) / 1_000_000,
+            6,
+        )
+        cost_krw = round(cost_usd * _pricing.KRW_RATE)
 
         user_usages.append(UserTokenUsage(
             username=username,
@@ -1558,8 +1561,13 @@ def do_snapshot(db, settings: Settings) -> dict:
         username = pod_name.replace("claude-terminal-", "").upper()
         input_t, output_t = _collect_tokens_from_pod(v1, pod_name, namespace)
         total = input_t + output_t
-        cost_usd = round(input_t * INPUT_PRICE + output_t * OUTPUT_PRICE, 4)
-        cost_krw = round(float(cost_usd) * KRW_RATE)
+        # T20 활성화 전 legacy snapshot 경로 — 모델 정보 없어 Sonnet 가격으로 추정
+        cost_usd = round(
+            (input_t * _LEGACY_PRICE["input"]
+             + output_t * _LEGACY_PRICE["output"]) / 1_000_000,
+            6,
+        )
+        cost_krw = round(float(cost_usd) * _pricing.KRW_RATE)
 
         # 세션 시간 계산
         session = db.query(TerminalSession).filter(
@@ -2975,3 +2983,36 @@ async def revoke_custom_auth_permission(
     db.commit()
     logger.info(f"custom_auth revoked from {username} by {_admin['sub']}")
     return {"username": u.username, "can_deploy_custom_auth": False}
+
+
+_VALID_MODEL_TIERS = {"sonnet", "haiku", "auto"}
+
+
+@router.patch("/users/{username}/model-tier")
+async def set_user_model_tier(
+    username: str,
+    tier: str,
+    _admin: dict = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """사용자 모델 티어 설정 (관리자 전용).
+
+    tier 값:
+      sonnet — 클라이언트 요청 모델 그대로 사용 (기본)
+      haiku  — Haiku로 강제 다운그레이드 (비용 절감)
+      auto   — 향후 확장 예약 (현재는 sonnet과 동일)
+    """
+    from app.models.user import User
+
+    if tier not in _VALID_MODEL_TIERS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"유효하지 않은 tier: '{tier}'. 허용값: {sorted(_VALID_MODEL_TIERS)}",
+        )
+    u = db.query(User).filter(User.username == username.upper()).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
+    u.model_tier = tier
+    db.commit()
+    logger.info(f"model_tier set to '{tier}' for {username} by {_admin['sub']}")
+    return {"username": u.username, "model_tier": u.model_tier}
