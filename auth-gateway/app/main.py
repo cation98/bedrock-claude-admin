@@ -682,3 +682,11 @@ async def webapp_login():
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "auth-gateway"}
+
+
+@app.get("/metrics")
+async def metrics():
+    """Prometheus metrics scrape endpoint (내부 전용)."""
+    from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+    from fastapi.responses import Response
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
