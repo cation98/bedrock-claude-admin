@@ -32,6 +32,8 @@ class User(Base):
     can_deploy_custom_auth = Column(Boolean, default=False, nullable=False)
     # SMS 발송 권한 — admin이 개별 부여. 권한 보유자는 일일 한도 없이 발송 가능.
     can_send_sms = Column(Boolean, default=False, nullable=False, server_default='false')
+    # MMS 발송 권한 — admin이 개별 부여. 이미지/첨부파일 포함 메시지 발송 허용.
+    can_send_mms = Column(Boolean, default=False, nullable=False, server_default='false')
     app_slug = Column(String(16), unique=True, nullable=True, index=True)  # URL/K8s용 비식별 slug (8자 hex)
     security_policy = Column(JSON, nullable=True, default=None)
     infra_policy = Column(JSON, nullable=True, default=None)

@@ -30,6 +30,7 @@ import uuid
 from typing import AsyncGenerator
 
 import boto3
+import botocore.config
 import botocore.exceptions
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
@@ -261,7 +262,14 @@ async def messages(
             bedrock_body["tool_choice"] = body["tool_choice"]
 
         region = settings.bedrock_region or "ap-northeast-2"
-        bedrock = boto3.client("bedrock-runtime", region_name=region)
+        # Sonnet 4.6 streaming: 긴 응답 시 read_timeout=300s (기본 60s → Pod restart 유발)
+        # connect_timeout은 짧게 유지 (네트워크 장애 조기 감지)
+        _boto_cfg = botocore.config.Config(
+            read_timeout=300,
+            connect_timeout=10,
+            retries={"max_attempts": 0},  # FastAPI 레벨에서 재시도 처리
+        )
+        bedrock = boto3.client("bedrock-runtime", region_name=region, config=_boto_cfg)
 
         try:
             if is_streaming:

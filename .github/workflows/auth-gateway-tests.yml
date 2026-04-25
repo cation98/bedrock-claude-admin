@@ -1,0 +1,42 @@
+name: auth-gateway unit tests
+
+on:
+  push:
+    paths:
+      - "auth-gateway/**"
+  pull_request:
+    paths:
+      - "auth-gateway/**"
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: auth-gateway
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: auth-gateway/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run unit tests
+        run: |
+          pytest tests/ \
+            --ignore=tests/integration \
+            --ignore=tests/services \
+            --ignore=tests/test_jwt_ttl_extension.py \
+            --ignore=tests/test_app_lifecycle.py \
+            --ignore=tests/test_app_views.py \
+            --ignore=tests/test_app_visibility.py \
+            --ignore=tests/test_telegram_survey.py \
+            -q --tb=short
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
