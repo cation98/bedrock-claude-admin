@@ -224,85 +224,17 @@ async def secure_get(
     body: SecureGetRequest,
     request: Request,
     current_user: dict = Depends(get_current_user_or_pod),
-    db: Session = Depends(get_db),
 ):
-    """S3 Vault에서 파일 다운로드.
-
-    소유자 확인 후 파일 바이트를 base64로 인코딩하여 반환한다.
-    Pod 에이전트는 응답에서 content_b64를 디코딩해 파일로 저장한다.
-
-    Returns:
-        {"filename": str, "size": int, "expires_in": int, "content_b64": str}
-        with Content-Disposition header set to the original filename
+    """S3 Vault 직접 다운로드는 DRM 정책에 의해 차단됨.
+    원본 파일 열람은 /api/v1/secure/view/{vault_id} 뷰어를 사용하세요.
     """
-    username = current_user["sub"]
-
-    # GovernedFile 조회 — DRM 메타데이터 획득 (소유자 확인 겸용)
-    gf = (
-        db.query(GovernedFile)
-        .filter(
-            GovernedFile.username == username,
-            GovernedFile.vault_id == body.vault_id,
-        )
-        .first()
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            "직접 파일 다운로드는 DRM 정책에 의해 차단됩니다. "
+            f"뷰어 URL: /api/v1/secure/view/{body.vault_id}"
+        ),
     )
-    encrypted_dek = gf.encrypted_dek if gf else None
-    file_id = gf.id if gf else None
-
-    vault_svc = _get_vault_service()
-    try:
-        file_data, metadata = vault_svc.download_file(
-            username=username,
-            vault_id=body.vault_id,
-            encrypted_dek=encrypted_dek,
-            file_id=file_id,
-        )
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Vault item not found")
-    except Exception as exc:
-        logger.error("Vault download error for %s/%s: %s", username, body.vault_id, exc)
-        raise HTTPException(status_code=500, detail=f"Vault download failed: {exc}")
-
-    filename = metadata.get("original-filename", "file")
-
-    # expires_at 파싱 → expires_in (초)
-    expires_in_seconds = body.duration_minutes * 60
-    expires_at_str = metadata.get("expires-at")
-    if expires_at_str:
-        try:
-            expires_at = datetime.fromisoformat(expires_at_str)
-            remaining = (expires_at - datetime.now(timezone.utc)).total_seconds()
-            expires_in_seconds = max(0, int(remaining))
-        except ValueError:
-            pass
-
-    # 4. 감사 로그
-    audit = FileAuditLog(
-        username=username,
-        action="vault_download",
-        filename=filename,
-        file_path=f"vault/{username}/{body.vault_id}/",
-        detail=f"vault_id={body.vault_id}, duration_minutes={body.duration_minutes}",
-        ip_address=_client_ip(request),
-    )
-    db.add(audit)
-    db.commit()
-
-    logger.info(
-        "Secure get: user=%s vault_id=%s filename=%s size=%d",
-        username,
-        body.vault_id,
-        filename,
-        len(file_data),
-    )
-
-    content_b64 = base64.b64encode(file_data).decode("utf-8")
-    return {
-        "filename": filename,
-        "size": len(file_data),
-        "expires_in": expires_in_seconds,
-        "content_b64": content_b64,
-    }
 
 
 @router.get("/list")

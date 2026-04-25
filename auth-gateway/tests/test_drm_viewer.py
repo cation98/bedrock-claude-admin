@@ -258,3 +258,18 @@ def test_vault_content_token_for_different_vault_returns_403(sf_client, db_sessi
     token = _sf_mod._create_vault_token("VAULTUSER01", "vc-A")
     resp = sf_client.get(f"/api/v1/secure/vault-content/vc-B?token={token}")
     assert resp.status_code == 403
+
+
+# ─── Task 5: POST /api/v1/secure/get 직접 다운로드 차단 ────────────────────────
+
+def test_secure_get_blocks_direct_download(sf_client, db_session, monkeypatch):
+    """POST /api/v1/secure/get 는 403을 반환하고 뷰어 URL을 안내해야 한다."""
+    monkeypatch.setattr(_sf_mod, "_get_vault_service", lambda: _FakeVaultService(b"data"))
+    _insert_gf(db_session, "sg001", "report.pdf")
+    resp = sf_client.post(
+        "/api/v1/secure/get",
+        json={"vault_id": "sg001", "duration_minutes": 60},
+    )
+    assert resp.status_code == 403
+    detail = resp.json().get("detail", "")
+    assert "view" in detail.lower()

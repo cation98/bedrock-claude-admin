@@ -5,10 +5,10 @@ Covers:
 2. test_download_from_vault           -- download returns file content
 3. test_vault_list_files              -- list returns user's files
 4. test_secure_put_endpoint           -- API endpoint works
-5. test_secure_get_endpoint           -- API endpoint returns file
+5. test_secure_get_endpoint           -- API endpoint returns 403 (DRM block)
 6. test_secure_put_creates_governed_file -- upload creates GovernedFile record
 7. test_secure_put_creates_audit_log  -- upload creates FileAuditLog record
-8. test_secure_get_not_found          -- 404 on missing vault_id
+8. test_secure_get_not_found          -- 403 regardless of vault_id (DRM block)
 """
 
 import base64
@@ -254,50 +254,27 @@ def test_secure_put_endpoint(db_session):
 
 
 def test_secure_get_endpoint(db_session):
-    """POST /api/v1/secure/get returns file content as base64."""
-    file_content = b"secret file content"
-    metadata = {
-        "owner": "TESTUSER01",
-        "vault-id": "abc123def456abcd",
-        "original-filename": "secret.csv",
-        "expires-at": "2026-04-16T00:00:00+00:00",
-    }
+    """POST /api/v1/secure/get returns 403 — DRM policy blocks direct download."""
+    client = _make_vault_client(db_session)
+    response = client.post(
+        "/api/v1/secure/get",
+        json={"vault_id": "abc123def456abcd", "duration_minutes": 60},
+    )
 
-    with patch(
-        "app.routers.secure_files._get_vault_service",
-        return_value=_mock_vault_svc(download_result=(file_content, metadata)),
-    ):
-        client = _make_vault_client(db_session)
-        response = client.post(
-            "/api/v1/secure/get",
-            json={"vault_id": "abc123def456abcd", "duration_minutes": 60},
-        )
-
-    assert response.status_code == 200, response.text
-    data = response.json()
-    assert data["filename"] == "secret.csv"
-    assert data["size"] == len(file_content)
-    assert "expires_in" in data
-    assert "content_b64" in data
-
-    # Verify content round-trips correctly
-    decoded = base64.b64decode(data["content_b64"])
-    assert decoded == file_content
+    assert response.status_code == 403, response.text
+    detail = response.json().get("detail", "")
+    assert "view" in detail.lower()
 
 
 def test_secure_get_not_found(db_session):
-    """POST /api/v1/secure/get returns 404 when vault_id does not exist."""
-    mock_svc = MagicMock(spec=S3VaultService)
-    mock_svc.download_file.side_effect = FileNotFoundError("not found")
+    """POST /api/v1/secure/get returns 403 regardless of vault_id — DRM block."""
+    client = _make_vault_client(db_session)
+    response = client.post(
+        "/api/v1/secure/get",
+        json={"vault_id": "nonexistent000000"},
+    )
 
-    with patch("app.routers.secure_files._get_vault_service", return_value=mock_svc):
-        client = _make_vault_client(db_session)
-        response = client.post(
-            "/api/v1/secure/get",
-            json={"vault_id": "nonexistent000000"},
-        )
-
-    assert response.status_code == 404, response.text
+    assert response.status_code == 403, response.text
 
 
 def test_secure_put_creates_governed_file(db_session):
