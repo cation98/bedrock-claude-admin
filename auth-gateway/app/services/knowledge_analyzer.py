@@ -87,9 +87,13 @@ def compute_department_stats(db: Session, period: str = "monthly") -> dict:
 
     departments = sorted({d for counts in node_dept.values() for d in counts})
 
+    node_lookup: dict[int, KnowledgeNode] = {
+        n.id: n
+        for n in db.query(KnowledgeNode).filter(KnowledgeNode.id.in_(node_dept.keys())).all()
+    }
     rows = []
     for node_id, by_dept in node_dept.items():
-        node = db.query(KnowledgeNode).filter_by(id=node_id).first()
+        node = node_lookup.get(node_id)
         if not node:
             continue
         rows.append({
