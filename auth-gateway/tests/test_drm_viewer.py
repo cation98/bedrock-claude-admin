@@ -248,3 +248,13 @@ def test_vault_content_drm_headers_present(sf_client, db_session, monkeypatch):
     assert resp.status_code == 200
     assert "no-store" in resp.headers.get("cache-control", "")
     assert resp.headers.get("x-drm-protected") == "1"
+
+
+def test_vault_content_token_for_different_vault_returns_403(sf_client, db_session, monkeypatch):
+    """다른 vault_id로 발급된 토큰은 403을 반환해야 한다 — 권한 우회 방어."""
+    monkeypatch.setattr(_sf_mod, "_get_vault_service", lambda: _FakeVaultService(b"data"))
+    _insert_gf(db_session, "vc-A", "a.pdf")
+    _insert_gf(db_session, "vc-B", "b.pdf")
+    token = _sf_mod._create_vault_token("VAULTUSER01", "vc-A")
+    resp = sf_client.get(f"/api/v1/secure/vault-content/vc-B?token={token}")
+    assert resp.status_code == 403
