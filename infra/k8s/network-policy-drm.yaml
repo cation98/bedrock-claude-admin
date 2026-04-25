@@ -1,0 +1,67 @@
+# infra/k8s/network-policy-drm.yaml
+# DRM Phase 1: 터미널 Pod 파일 반출 경로 차단
+# 허용: 개발 도구(npm/pip/github), 서비스 내부(Bedrock/RDS/Redis), OnlyOffice
+# 차단: 그 외 임의 외부 서버로의 파일 전송
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: drm-terminal-pod-egress
+  namespace: claude-sessions
+  labels:
+    phase: drm-phase1
+spec:
+  podSelector:
+    matchLabels:
+      app: claude-terminal
+  policyTypes:
+    - Egress
+
+  egress:
+    # DNS 허용 (필수)
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+    # auth-gateway 내부 통신 (API + CONNECT 프록시)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: platform
+      ports:
+        - port: 8000   # auth-gateway API
+          protocol: TCP
+        - port: 3128   # CONNECT 프록시 (개발 도구용)
+          protocol: TCP
+
+    # OnlyOffice Document Server (claude-sessions 내)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: claude-sessions
+          podSelector:
+            matchLabels:
+              app: onlyoffice
+      ports:
+        - port: 80
+          protocol: TCP
+
+    # RDS ReadOnly Replica (Safety DB 접근)
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/8   # VPC 내부 CIDR
+      ports:
+        - port: 5432
+          protocol: TCP
+
+    # Redis (ElastiCache)
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/8
+      ports:
+        - port: 6379
+          protocol: TCP
+
+    # HTTPS 외부 접근 — CONNECT 프록시 경유만 허용
+    # (직접 443/80 차단됨 → auth-gateway proxy:3128 통해서만 npm/pip/github 접근 가능)
