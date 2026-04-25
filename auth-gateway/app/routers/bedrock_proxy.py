@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 import uuid
 from typing import AsyncGenerator
@@ -33,7 +34,7 @@ import botocore.exceptions
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
-from prometheus_client import Counter
+from prometheus_client import Counter, Histogram
 
 from app.core.config import Settings, get_settings
 from app.core.database import SessionLocal
@@ -48,6 +49,16 @@ publish_drop_counter = Counter(
     "bedrock_proxy_publish_drop_total",
     "stream:usage_events publish 실패 횟수 (silent drop 방지용)",
     ["reason"],
+)
+proxy_request_duration = Histogram(
+    "bedrock_proxy_request_seconds",
+    "End-to-end latency for /v1/messages (seconds)",
+    buckets=(0.5, 1, 2, 5, 10, 30, 60, 120, 300),
+)
+proxy_requests_total = Counter(
+    "bedrock_proxy_requests_total",
+    "Total /v1/messages requests by status",
+    ["status"],  # "success" | "error" | "quota_exceeded" | "disabled"
 )
 
 # ─── 모델 ID 매핑 (Anthropic model ID → Bedrock cross-region inference profile) ──
@@ -191,73 +202,94 @@ async def messages(
 
     인증: get_current_user() — Bearer 헤더 또는 bedrock_jwt 쿠키.
     """
+    if os.environ.get("T20_PROXY_ENABLED", "true").lower() == "false":
+        proxy_requests_total.labels(status="disabled").inc()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="T20 proxy is temporarily disabled",
+        )
+
+    _start = time.time()
     username = current_user.get("sub", "unknown")
 
-    # CP-20 Budget Gate: quota 초과 시 429 차단.
-    # quota 미배정 사용자는 통과(세션 생성 시 정책 배정이 정식 경로).
-    _db = SessionLocal()
     try:
-        quota_info = _check_user_quota(_db, username)
-        user_model_tier = _get_user_model_tier(_db, username)
-    finally:
-        _db.close()
-    if quota_info and quota_info["is_exceeded"] and not quota_info["is_unlimited"]:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail={
-                "error": "token_quota_exceeded",
-                "cost_limit_usd": quota_info["cost_limit_usd"],
-                "current_usage_usd": quota_info["current_usage_usd"],
-                "refresh_cycle": quota_info["refresh_cycle"],
-                "cycle_start": quota_info["cycle_start"],
-                "cycle_end": quota_info["cycle_end"],
-            },
-        )
-
-    body = await request.json()
-
-    model_input = body.get("model", "claude-sonnet-4-6")
-    bedrock_model = _resolve_model(model_input, settings)
-    bedrock_model = _apply_model_tier(bedrock_model, user_model_tier, settings)
-    is_streaming = body.get("stream", False)
-
-    # Bedrock 호환 요청 페이로드 구성
-    bedrock_body = {
-        "anthropic_version": body.get("anthropic_version", "bedrock-2023-05-31"),
-        "messages": body.get("messages", []),
-        "max_tokens": body.get("max_tokens", 4096),
-    }
-    if "system" in body:
-        bedrock_body["system"] = body["system"]
-    if "temperature" in body:
-        bedrock_body["temperature"] = body["temperature"]
-    if "top_p" in body:
-        bedrock_body["top_p"] = body["top_p"]
-    if "stop_sequences" in body:
-        bedrock_body["stop_sequences"] = body["stop_sequences"]
-    if "tools" in body:
-        bedrock_body["tools"] = body["tools"]
-    if "tool_choice" in body:
-        bedrock_body["tool_choice"] = body["tool_choice"]
-
-    region = settings.bedrock_region or "ap-northeast-2"
-    bedrock = boto3.client("bedrock-runtime", region_name=region)
-
-    try:
-        if is_streaming:
-            return StreamingResponse(
-                _stream_bedrock(bedrock, bedrock_model, bedrock_body, username),
-                media_type="text/event-stream",
+        # CP-20 Budget Gate: quota 초과 시 429 차단.
+        _db = SessionLocal()
+        try:
+            quota_info = _check_user_quota(_db, username)
+            user_model_tier = _get_user_model_tier(_db, username)
+        finally:
+            _db.close()
+        if quota_info and quota_info["is_exceeded"] and not quota_info["is_unlimited"]:
+            proxy_requests_total.labels(status="quota_exceeded").inc()
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={
+                    "error": "token_quota_exceeded",
+                    "cost_limit_usd": quota_info["cost_limit_usd"],
+                    "current_usage_usd": quota_info["current_usage_usd"],
+                    "refresh_cycle": quota_info["refresh_cycle"],
+                    "cycle_start": quota_info["cycle_start"],
+                    "cycle_end": quota_info["cycle_end"],
+                },
             )
-        else:
-            return await _invoke_bedrock(bedrock, bedrock_model, bedrock_body, username)
-    except botocore.exceptions.ClientError as e:
-        code = e.response["Error"]["Code"]
-        logger.error("Bedrock invoke error: user=%s model=%s code=%s", username, bedrock_model, code)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Bedrock error: {code}",
-        )
+
+        body = await request.json()
+
+        model_input = body.get("model", "claude-sonnet-4-6")
+        bedrock_model = _resolve_model(model_input, settings)
+        bedrock_model = _apply_model_tier(bedrock_model, user_model_tier, settings)
+        is_streaming = body.get("stream", False)
+
+        # Bedrock 호환 요청 페이로드 구성
+        bedrock_body = {
+            "anthropic_version": body.get("anthropic_version", "bedrock-2023-05-31"),
+            "messages": body.get("messages", []),
+            "max_tokens": body.get("max_tokens", 4096),
+        }
+        if "system" in body:
+            bedrock_body["system"] = body["system"]
+        if "temperature" in body:
+            bedrock_body["temperature"] = body["temperature"]
+        if "top_p" in body:
+            bedrock_body["top_p"] = body["top_p"]
+        if "stop_sequences" in body:
+            bedrock_body["stop_sequences"] = body["stop_sequences"]
+        if "tools" in body:
+            bedrock_body["tools"] = body["tools"]
+        if "tool_choice" in body:
+            bedrock_body["tool_choice"] = body["tool_choice"]
+
+        region = settings.bedrock_region or "ap-northeast-2"
+        bedrock = boto3.client("bedrock-runtime", region_name=region)
+
+        try:
+            if is_streaming:
+                response = StreamingResponse(
+                    _stream_bedrock(bedrock, bedrock_model, bedrock_body, username),
+                    media_type="text/event-stream",
+                )
+            else:
+                response = await _invoke_bedrock(bedrock, bedrock_model, bedrock_body, username)
+        except botocore.exceptions.ClientError as e:
+            code = e.response["Error"]["Code"]
+            logger.error("Bedrock invoke error: user=%s model=%s code=%s", username, bedrock_model, code)
+            proxy_requests_total.labels(status="error").inc()
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Bedrock error: {code}",
+            )
+
+        proxy_requests_total.labels(status="success").inc()
+        return response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        proxy_requests_total.labels(status="error").inc()
+        raise
+    finally:
+        proxy_request_duration.observe(time.time() - _start)
 
 
 async def _invoke_bedrock(

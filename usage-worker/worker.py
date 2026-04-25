@@ -37,6 +37,7 @@ from decimal import Decimal
 from functools import lru_cache
 
 import redis
+from prometheus_client import Counter, Gauge, start_http_server
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
@@ -67,6 +68,22 @@ MAX_RETRIES = 3
 STALE_IDLE_MS = int(os.environ.get("USAGE_WORKER_STALE_IDLE_MS", 60_000))
 CLAIM_INTERVAL_SEC = int(os.environ.get("USAGE_WORKER_CLAIM_INTERVAL_SEC", 30))
 CLAIM_BATCH = 100
+METRICS_PORT = int(os.environ.get("METRICS_PORT", 9090))
+
+# ─── Prometheus Metrics ───────────────────────────────────────────────────────
+
+stream_lag = Gauge(
+    "usage_worker_stream_lag_seconds",
+    "Oldest unACKed message age in seconds (0 when PEL is empty)",
+)
+dlq_depth = Gauge(
+    "usage_worker_dlq_depth",
+    "Number of messages in stream:usage_events_dlq",
+)
+legacy_events_counter = Counter(
+    "usage_worker_legacy_events_total",
+    "Events parsed from legacy webchat schema (no request_id field)",
+)
 
 
 # ─── DB 연결 ──────────────────────────────────────────────────────────────────
@@ -165,7 +182,7 @@ def _estimate_cost_usd(model_id: str, input_tokens: int, output_tokens: int) -> 
 
 # ─── 이벤트 파싱 ──────────────────────────────────────────────────────────────
 
-def parse_event(fields: dict) -> dict | None:
+def _parse_event(fields: dict) -> dict | None:
     """Redis Stream 필드 딕셔너리 → 정규화된 이벤트 dict.
 
     Pipelines (webchat) 및 bedrock_proxy (console) 두 경로 모두 처리.
@@ -190,6 +207,8 @@ def parse_event(fields: dict) -> dict | None:
         # ── request_id: 직접 제공 우선, 없으면 uuid4 생성 (legacy fallback) ──
         raw_rid = fields.get("request_id", "").strip()
         request_id = raw_rid if raw_rid else str(_uuid_mod.uuid4())
+        if not raw_rid:
+            legacy_events_counter.inc()
 
         # ── source: 직접 제공 우선, 없으면 'legacy' ──
         source = fields.get("source", "").strip() or "legacy"
@@ -377,6 +396,25 @@ def upsert_hourly(session, events: list[dict]) -> None:
         )
 
 
+def _update_metrics(r: redis.Redis) -> None:
+    """스트림 지연·DLQ 깊이 Gauge를 현재 Redis 상태로 갱신."""
+    try:
+        dlq_depth.set(r.xlen(DLQ_STREAM_KEY))
+    except Exception:
+        pass
+    try:
+        pending = r.xpending(STREAM_KEY, CONSUMER_GROUP)
+        if pending and pending.get("min"):
+            min_id = pending["min"]
+            ts_ms = int(min_id.split("-")[0])
+            lag = (time.time() * 1000 - ts_ms) / 1000
+            stream_lag.set(max(0, lag))
+        else:
+            stream_lag.set(0)
+    except Exception:
+        pass
+
+
 def process_batch(r: redis.Redis, message_ids: list[str], events: list[dict]) -> None:
     if not events:
         return
@@ -397,6 +435,8 @@ def process_batch(r: redis.Redis, message_ids: list[str], events: list[dict]) ->
 # ─── 메인 루프 ────────────────────────────────────────────────────────────────
 
 def run() -> None:
+    start_http_server(METRICS_PORT)
+    logger.info("Prometheus metrics on :%d", METRICS_PORT)
     logger.info(
         "Usage worker starting: consumer=%s group=%s stream=%s batch=%d",
         CONSUMER_NAME, CONSUMER_GROUP, STREAM_KEY, BATCH_SIZE,
@@ -429,6 +469,10 @@ def _consume_loop(r: redis.Redis) -> None:
             except Exception as e:
                 # claim 실패는 전체 소비 차단하지 않음 — 다음 주기에 재시도
                 logger.warning("Stale claim failed (will retry): %s", e)
+            try:
+                _update_metrics(r)
+            except Exception:
+                pass
             last_claim_ts = time.monotonic()
 
         results = r.xreadgroup(
@@ -449,7 +493,7 @@ def _consume_loop(r: redis.Redis) -> None:
             for msg_id, fields in messages:
                 _msg_fields_cache[msg_id] = fields
                 raw_fields_map[msg_id] = fields
-                ev = parse_event(fields)
+                ev = _parse_event(fields)
                 if ev:
                     events.append(ev)
                     message_ids.append(msg_id)
@@ -509,7 +553,7 @@ def _recover_pending(r: redis.Redis, max_recover: int = 100) -> None:
             message_ids = []
             events = []
             for msg_id, fields in messages:
-                ev = parse_event(fields)
+                ev = _parse_event(fields)
                 if ev:
                     events.append(ev)
                     message_ids.append(msg_id)
@@ -574,7 +618,7 @@ def _claim_stale_pending(r: redis.Redis) -> int:
                 )
                 continue
 
-            ev = parse_event(fields)
+            ev = _parse_event(fields)
             if ev:
                 events.append(ev)
                 message_ids.append(msg_id)
