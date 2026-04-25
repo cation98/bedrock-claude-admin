@@ -105,16 +105,6 @@ spec:
         - port: 53
           protocol: TCP
 
-    # HTTPS 아웃바운드 허용
-    # - AWS Bedrock Claude API (us-east-1, ap-northeast-2)
-    # - npm registry, PyPI (Claude Code 플러그인 설치)
-    # - AWS S3 (파일 업로드/다운로드)
-    # to: [] → IP 제한 없이 포트 443만 허용 (Bedrock IP가 동적으로 변함)
-    - to: []
-      ports:
-        - port: 443
-          protocol: TCP
-
     # Auth Gateway 호출 허용
     # 사용자 Pod → Auth Gateway: 토큰 검증, 파일 업로드, SMS 발송 등 내부 API 호출
     # auth-gateway는 platform 네임스페이스에 있으므로 namespaceSelector + podSelector AND 조합 필요
