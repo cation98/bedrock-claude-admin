@@ -348,6 +348,27 @@ def _run_app_approval_migration() -> None:
             logger.info("Migration: users.can_deploy_custom_auth 추가 완료")
 
 
+def _run_model_tier_migration() -> None:
+    """users 테이블에 model_tier 컬럼이 없으면 추가 (모델 티어 정책).
+
+    'sonnet'(기본): 클라이언트 요청 모델 그대로 사용.
+    'haiku': Haiku로 강제 다운그레이드 (비용 절감 대상 사용자).
+    기존 사용자는 모두 'sonnet' 기본값 적용.
+    """
+    with engine.connect() as conn:
+        result = conn.execute(text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name='users' AND column_name='model_tier'"
+        ))
+        if result.fetchone() is None:
+            conn.execute(text(
+                "ALTER TABLE users "
+                "ADD COLUMN model_tier VARCHAR(20) NOT NULL DEFAULT 'sonnet'"
+            ))
+            conn.commit()
+            logger.info("Migration: users.model_tier 컬럼 추가 완료 (기본값: sonnet)")
+
+
 def _run_can_send_mms_migration() -> None:
     """users 테이블에 can_send_mms 컬럼이 없으면 추가 (MMS 발송 권한).
 
@@ -380,6 +401,7 @@ async def lifespan(app: FastAPI):
     _run_edit_session_first_editor_migration()
     _run_deployed_apps_auth_mode_migration()
     _run_app_approval_migration()
+    _run_model_tier_migration()
     _run_can_send_mms_migration()
     idle_task = asyncio.create_task(idle_checker_loop(settings))
     snapshot_task = asyncio.create_task(token_snapshot_loop(settings))
