@@ -8,6 +8,7 @@ import {
   approveUser,
   updateUserTtl,
   updateUserDeployApps,
+  updateUserModelTier,
   revokeUser,
   rejectUser,
   searchMembers,
@@ -170,6 +171,17 @@ export default function UsersPage() {
       fetchData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "TTL 변경 실패");
+    }
+  }
+
+  async function handleModelTierChange(username: string, tier: string) {
+    clearMessages();
+    try {
+      await updateUserModelTier(username, tier);
+      setSuccess(`${username} 모델 티어가 '${tier}'로 변경되었습니다.`);
+      fetchData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "모델 티어 변경 실패");
     }
   }
 
@@ -483,6 +495,9 @@ export default function UsersPage() {
                           앱 배포
                         </th>
                         <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
+                          모델 티어
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
                           승인일
                         </th>
                         <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
@@ -555,6 +570,21 @@ export default function UsersPage() {
                             >
                               <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-[var(--surface)] transition-transform ${u.can_deploy_apps ? "translate-x-4" : "translate-x-0.5"}`} />
                             </button>
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3 text-sm">
+                            <select
+                              value={u.model_tier ?? "sonnet"}
+                              onChange={(e) => handleModelTierChange(u.username, e.target.value)}
+                              className={`rounded-md border px-2 py-1 text-xs shadow-sm focus:outline-none focus:ring-1 focus:ring-[var(--primary)] ${
+                                u.model_tier === "haiku"
+                                  ? "border-[var(--warning,#f59e0b)] bg-[var(--warning-light,#fffbeb)] text-[var(--warning,#b45309)]"
+                                  : "border-[var(--border-strong)] text-[var(--text-secondary)]"
+                              }`}
+                            >
+                              <option value="sonnet">Sonnet (기본)</option>
+                              <option value="haiku">Haiku (절감)</option>
+                              <option value="auto">Auto</option>
+                            </select>
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-sm text-[var(--text-secondary)]">
                             {formatDate(u.approved_at)}

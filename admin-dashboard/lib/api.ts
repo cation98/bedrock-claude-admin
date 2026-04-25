@@ -217,6 +217,7 @@ export interface User {
   is_presenter: boolean;
   approved_at: string | null;
   last_login_at: string | null;
+  model_tier: string;
 }
 
 export interface UserListResponse {
@@ -270,6 +271,16 @@ export function updateUserDeployApps(userId: number, canDeploy: boolean): Promis
     method: "PATCH",
     body: JSON.stringify({ can_deploy_apps: canDeploy }),
   });
+}
+
+export function updateUserModelTier(
+  username: string,
+  tier: string
+): Promise<{ username: string; model_tier: string }> {
+  return request<{ username: string; model_tier: string }>(
+    `/api/v1/admin/users/${encodeURIComponent(username)}/model-tier?tier=${encodeURIComponent(tier)}`,
+    { method: "PATCH" }
+  );
 }
 
 // ---------- Deployed Apps (Admin) ----------
