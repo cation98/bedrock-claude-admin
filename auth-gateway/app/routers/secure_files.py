@@ -19,7 +19,7 @@ from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.security import get_current_user_or_pod
 from app.models.file_audit import FileAuditLog
-from app.models.file_governance import GovernedFile
+from app.models.file_governance import EncryptionState, GovernedFile
 from app.services.s3_vault import S3VaultService
 
 router = APIRouter(prefix="/api/v1/secure", tags=["secure-files"])
@@ -91,10 +91,10 @@ async def secure_put(
     file_data = await file.read()
     file_size = len(file_data)
 
-    # 1. S3 업로드
+    # 1. S3 DRM 업로드 (AES-256-GCM envelope encryption)
     vault_svc = _get_vault_service()
     try:
-        result = vault_svc.upload_file(
+        result = vault_svc.upload_file_drm(
             username=username,
             filename=filename,
             file_data=file_data,
@@ -107,6 +107,7 @@ async def secure_put(
     vault_id = result["vault_id"]
     s3_key = result["s3_key"]
     expires_at_str = result["expires_at"]
+    encrypted_dek = result["encrypted_dek"]
 
     # expires_at → datetime 파싱
     try:
@@ -114,7 +115,7 @@ async def secure_put(
     except ValueError:
         expires_at = datetime.now(timezone.utc) + timedelta(days=ttl_days)
 
-    # 2. GovernedFile 레코드 생성
+    # 2. GovernedFile 레코드 생성 (DRM 메타데이터 포함)
     governed = GovernedFile(
         username=username,
         filename=filename,
@@ -127,6 +128,9 @@ async def secure_put(
         ttl_days=ttl_days,
         expires_at=expires_at,
         classified_at=datetime.now(timezone.utc),
+        vault_id=vault_id,
+        encrypted_dek=encrypted_dek,
+        encryption_state=EncryptionState.ENCRYPTED.value,
     )
     db.add(governed)
 
@@ -164,11 +168,25 @@ async def secure_get(
     """
     username = current_user["sub"]
 
+    # GovernedFile 조회 — DRM 메타데이터 획득 (소유자 확인 겸용)
+    gf = (
+        db.query(GovernedFile)
+        .filter(
+            GovernedFile.username == username,
+            GovernedFile.vault_id == body.vault_id,
+        )
+        .first()
+    )
+    encrypted_dek = gf.encrypted_dek if gf else None
+    file_id = gf.id if gf else None
+
     vault_svc = _get_vault_service()
     try:
         file_data, metadata = vault_svc.download_file(
             username=username,
             vault_id=body.vault_id,
+            encrypted_dek=encrypted_dek,
+            file_id=file_id,
         )
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Vault item not found")
