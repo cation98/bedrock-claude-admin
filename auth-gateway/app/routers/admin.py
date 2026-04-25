@@ -2983,3 +2983,36 @@ async def revoke_custom_auth_permission(
     db.commit()
     logger.info(f"custom_auth revoked from {username} by {_admin['sub']}")
     return {"username": u.username, "can_deploy_custom_auth": False}
+
+
+_VALID_MODEL_TIERS = {"sonnet", "haiku", "auto"}
+
+
+@router.patch("/users/{username}/model-tier")
+async def set_user_model_tier(
+    username: str,
+    tier: str,
+    _admin: dict = Depends(_require_admin),
+    db: Session = Depends(get_db),
+):
+    """사용자 모델 티어 설정 (관리자 전용).
+
+    tier 값:
+      sonnet — 클라이언트 요청 모델 그대로 사용 (기본)
+      haiku  — Haiku로 강제 다운그레이드 (비용 절감)
+      auto   — 향후 확장 예약 (현재는 sonnet과 동일)
+    """
+    from app.models.user import User
+
+    if tier not in _VALID_MODEL_TIERS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"유효하지 않은 tier: '{tier}'. 허용값: {sorted(_VALID_MODEL_TIERS)}",
+        )
+    u = db.query(User).filter(User.username == username.upper()).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
+    u.model_tier = tier
+    db.commit()
+    logger.info(f"model_tier set to '{tier}' for {username} by {_admin['sub']}")
+    return {"username": u.username, "model_tier": u.model_tier}

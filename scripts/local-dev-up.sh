@@ -42,6 +42,19 @@ echo "  ✅ bedrock-claude/claude-code-terminal:local"
 echo "  usage-worker..."
 docker build -q -t bedrock-claude/usage-worker:local "${PROJECT_DIR}/usage-worker/" > /dev/null
 echo "  ✅ bedrock-claude/usage-worker:local"
+
+# Docker Desktop 4.34+는 K8s를 kind 기반으로 운영 — 호스트 Docker 이미지가
+# kind 노드(desktop-control-plane)의 containerd로 자동 동기화되지 않아
+# imagePullPolicy: Never가 ErrImageNeverPull로 실패함.
+# 'docker save | ctr import'로 k8s.io 네임스페이스에 명시적으로 적재.
+if docker ps --format '{{.Names}}' | grep -q '^desktop-control-plane$'; then
+    echo "  kind 노드에 이미지 적재 중 (Docker Desktop containerd k8s.io)..."
+    for img in bedrock-claude/auth-gateway:local bedrock-claude/claude-code-terminal:local; do
+        docker save "$img" \
+          | docker exec -i desktop-control-plane ctr -n k8s.io images import - > /dev/null 2>&1
+        echo "    ✅ $img → desktop-control-plane:k8s.io"
+    done
+fi
 echo ""
 
 # --- 3. K8s 리소스 생성 ---
@@ -73,8 +86,8 @@ echo "  DB seed (TEST001)..."
 DB_POD=$($K get pod -l app=local-db -n platform -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
 if [ -n "$DB_POD" ]; then
     $K exec "$DB_POD" -n platform -- psql -U bedrock_admin -d bedrock_platform -c "
-        INSERT INTO users (username, name, role, is_active, is_approved, pod_ttl, storage_retention, approved_at, created_at, updated_at)
-        VALUES ('TEST001', '테스트사용자', 'user', true, true, '4h', '30d', NOW(), NOW(), NOW())
+        INSERT INTO users (username, name, role, is_active, is_approved, pod_ttl, storage_retention, can_deploy_custom_auth, approved_at, created_at, updated_at)
+        VALUES ('TEST001', '테스트사용자', 'user', true, true, '4h', '30d', false, NOW(), NOW(), NOW())
         ON CONFLICT (username) DO NOTHING;
     " > /dev/null 2>&1
     echo "  ✅ TEST001 사용자 seed 완료"

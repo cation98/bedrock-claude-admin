@@ -35,6 +35,8 @@ class User(Base):
     app_slug = Column(String(16), unique=True, nullable=True, index=True)  # URL/K8s용 비식별 slug (8자 hex)
     security_policy = Column(JSON, nullable=True, default=None)
     infra_policy = Column(JSON, nullable=True, default=None)
+    # P2: 모델 티어 정책 — 'sonnet'(기본): 클라이언트 요청 모델 사용, 'haiku': 강제 다운그레이드
+    model_tier = Column(String(20), nullable=False, server_default="sonnet")
 
 
 class SecurityTemplate(Base):

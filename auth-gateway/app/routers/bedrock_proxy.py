@@ -67,6 +67,7 @@ MODEL_MAP: dict[str, str] = {
 }
 
 DEFAULT_MODEL = "global.anthropic.claude-sonnet-4-6"
+HAIKU_MODEL = "global.anthropic.claude-haiku-4-5-20251001-v1:0"
 
 
 def _resolve_model(anthropic_model_id: str, settings: Settings) -> str:
@@ -86,6 +87,36 @@ def _resolve_model(anthropic_model_id: str, settings: Settings) -> str:
             return val
     logger.warning("Unknown model '%s' — fallback to default", anthropic_model_id)
     return settings.bedrock_sonnet_model or DEFAULT_MODEL
+
+
+def _get_user_model_tier(db, username: str) -> str:
+    """사용자 model_tier 조회. DB miss 시 기본값 'sonnet'."""
+    from app.models.user import User
+
+    user = (
+        db.query(User)
+        .filter(User.username == username.upper())
+        .with_entities(User.model_tier)
+        .first()
+    )
+    if user and user.model_tier:
+        return user.model_tier
+    return "sonnet"
+
+
+def _apply_model_tier(resolved_model: str, tier: str, settings: Settings) -> str:
+    """서버 사이드 모델 티어 정책 적용.
+
+    'sonnet': 클라이언트 요청 모델 그대로 (기본)
+    'haiku' : 항상 Haiku로 강제 다운그레이드 (비용 절감)
+    'auto'  : 향후 확장 예약 — 현재는 'sonnet'과 동일
+    """
+    if tier == "haiku":
+        haiku = settings.bedrock_haiku_model or HAIKU_MODEL
+        if resolved_model != haiku:
+            logger.info("model_tier=haiku override: %s → %s", resolved_model, haiku)
+        return haiku
+    return resolved_model
 
 
 def _publish_usage_event(
@@ -167,6 +198,7 @@ async def messages(
     _db = SessionLocal()
     try:
         quota_info = _check_user_quota(_db, username)
+        user_model_tier = _get_user_model_tier(_db, username)
     finally:
         _db.close()
     if quota_info and quota_info["is_exceeded"] and not quota_info["is_unlimited"]:
@@ -186,6 +218,7 @@ async def messages(
 
     model_input = body.get("model", "claude-sonnet-4-6")
     bedrock_model = _resolve_model(model_input, settings)
+    bedrock_model = _apply_model_tier(bedrock_model, user_model_tier, settings)
     is_streaming = body.get("stream", False)
 
     # Bedrock 호환 요청 페이로드 구성
