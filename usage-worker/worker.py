@@ -31,6 +31,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+import uuid as _uuid_mod
 from datetime import datetime, timezone
 from decimal import Decimal
 from functools import lru_cache
@@ -51,12 +52,14 @@ REDIS_URL = os.environ["REDIS_URL"]
 DATABASE_URL = os.environ["DATABASE_URL"]
 
 STREAM_KEY = "stream:usage_events"
+DLQ_STREAM_KEY = "stream:usage_events_dlq"
 CONSUMER_GROUP = "usage-workers"
 CONSUMER_NAME = os.environ.get("HOSTNAME", "worker-0")
 
 BATCH_SIZE = 10
 BLOCK_MS = 1000
 RECONNECT_DELAY = 5
+MAX_RETRIES = 3
 
 # Dead consumer PEL 복구 설정
 # - idle > STALE_IDLE_MS 인 pending 메시지는 dead consumer 소유로 간주해 self로 claim.
@@ -184,9 +187,18 @@ def parse_event(fields: dict) -> dict | None:
         else:
             recorded_at = datetime.now(timezone.utc)
 
+        # ── request_id: 직접 제공 우선, 없으면 uuid4 생성 (legacy fallback) ──
+        raw_rid = fields.get("request_id", "").strip()
+        request_id = raw_rid if raw_rid else str(_uuid_mod.uuid4())
+
+        # ── source: 직접 제공 우선, 없으면 'legacy' ──
+        source = fields.get("source", "").strip() or "legacy"
+
         input_tokens = int(fields.get("input_tokens", 0))
         output_tokens = int(fields.get("output_tokens", 0))
         total_tokens = int(fields.get("total_tokens", 0)) or (input_tokens + output_tokens)
+        cache_creation_input_tokens = int(fields.get("cache_creation_input_tokens", 0))
+        cache_read_input_tokens = int(fields.get("cache_read_input_tokens", 0))
 
         # ── 비용: 직접 제공 우선, 없으면 모델 단가 기준 추정 ──
         model = fields.get("model", "unknown")
@@ -201,11 +213,16 @@ def parse_event(fields: dict) -> dict | None:
             cost_krw = int(float(cost_usd) * 1400)
 
         return {
+            "request_id": request_id,
+            "source": source,
             "username": username,
             "model": model,
+            "model_id": model,
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "total_tokens": total_tokens,
+            "cache_creation_input_tokens": cache_creation_input_tokens,
+            "cache_read_input_tokens": cache_read_input_tokens,
             "cost_usd": cost_usd,
             "cost_krw": cost_krw,
             "usage_date": recorded_at.date(),
@@ -217,6 +234,67 @@ def parse_event(fields: dict) -> dict | None:
         return None
 
 
+# ─── DLQ ──────────────────────────────────────────────────────────────────────
+
+def publish_to_dlq(r: redis.Redis, msg_id: str, fields: dict, reason: str) -> None:
+    """영구 실패 이벤트를 DLQ 스트림에 발행.
+
+    MAX_RETRIES 초과 시 호출 — 원본 필드 + 실패 메타데이터를 보존하여
+    운영자가 수동 재처리하거나 감사할 수 있도록 한다.
+    """
+    from datetime import datetime, timezone
+    payload = dict(fields)
+    payload["original_msg_id"] = str(msg_id)
+    payload["failed_at"] = datetime.now(timezone.utc).isoformat()
+    payload["dlq_reason"] = str(reason)[:500]
+    try:
+        r.xadd(DLQ_STREAM_KEY, payload, maxlen=10_000, approximate=True)
+        logger.error(
+            "Event sent to DLQ: msg_id=%s reason=%s", msg_id, reason
+        )
+    except Exception as e:
+        logger.error("DLQ publish failed: msg_id=%s err=%s", msg_id, e)
+
+
+# ─── 이벤트 idempotency 기록 ─────────────────────────────────────────────────
+
+def insert_event_or_skip(session, ev: dict) -> bool:
+    """TokenUsageEvent 테이블에 삽입 (request_id PK 기준 멱등).
+
+    동일 request_id로 이미 처리된 이벤트가 있으면 DO NOTHING — 중복 집계 방지.
+    at-least-once 재전달(Redis PEL 복구) 시 UPSERT가 두 번 실행되어도 안전.
+    Returns True if the row was inserted, False if skipped (duplicate).
+    """
+    result = session.execute(
+        text("""
+            INSERT INTO token_usage_event
+                (request_id, source, username, model_id,
+                 input_tokens, output_tokens,
+                 cache_creation_input_tokens, cache_read_input_tokens,
+                 cost_usd, recorded_at)
+            VALUES
+                (:request_id, :source, :username, :model_id,
+                 :input_tokens, :output_tokens,
+                 :cache_creation_input_tokens, :cache_read_input_tokens,
+                 :cost_usd, NOW())
+            ON CONFLICT (request_id) DO NOTHING
+            RETURNING request_id
+        """),
+        {
+            "request_id": ev["request_id"],
+            "source": ev["source"],
+            "username": ev["username"],
+            "model_id": ev["model_id"],
+            "input_tokens": ev["input_tokens"],
+            "output_tokens": ev["output_tokens"],
+            "cache_creation_input_tokens": ev["cache_creation_input_tokens"],
+            "cache_read_input_tokens": ev["cache_read_input_tokens"],
+            "cost_usd": ev["cost_usd"],
+        },
+    )
+    return result.fetchone() is not None
+
+
 # ─── DB UPSERT ────────────────────────────────────────────────────────────────
 
 def upsert_daily(session, events: list[dict]) -> None:
@@ -224,26 +302,35 @@ def upsert_daily(session, events: list[dict]) -> None:
         session.execute(
             text("""
                 INSERT INTO token_usage_daily
-                    (username, usage_date, input_tokens, output_tokens, total_tokens,
+                    (username, model_id, usage_date,
+                     input_tokens, output_tokens, total_tokens,
+                     cache_creation_input_tokens, cache_read_input_tokens,
                      cost_usd, cost_krw, last_activity_at, created_at, updated_at)
                 VALUES
-                    (:username, :usage_date, :input_tokens, :output_tokens, :total_tokens,
+                    (:username, :model_id, :usage_date,
+                     :input_tokens, :output_tokens, :total_tokens,
+                     :cache_creation_input_tokens, :cache_read_input_tokens,
                      :cost_usd, :cost_krw, NOW(), NOW(), NOW())
-                ON CONFLICT (username, usage_date) DO UPDATE SET
-                    input_tokens   = token_usage_daily.input_tokens  + EXCLUDED.input_tokens,
-                    output_tokens  = token_usage_daily.output_tokens + EXCLUDED.output_tokens,
-                    total_tokens   = token_usage_daily.total_tokens  + EXCLUDED.total_tokens,
-                    cost_usd       = token_usage_daily.cost_usd      + EXCLUDED.cost_usd,
-                    cost_krw       = token_usage_daily.cost_krw      + EXCLUDED.cost_krw,
-                    last_activity_at = GREATEST(token_usage_daily.last_activity_at, NOW()),
-                    updated_at     = NOW()
+                ON CONFLICT (username, model_id, usage_date) DO UPDATE SET
+                    input_tokens              = token_usage_daily.input_tokens  + EXCLUDED.input_tokens,
+                    output_tokens             = token_usage_daily.output_tokens + EXCLUDED.output_tokens,
+                    total_tokens              = token_usage_daily.total_tokens  + EXCLUDED.total_tokens,
+                    cache_creation_input_tokens = token_usage_daily.cache_creation_input_tokens + EXCLUDED.cache_creation_input_tokens,
+                    cache_read_input_tokens   = token_usage_daily.cache_read_input_tokens + EXCLUDED.cache_read_input_tokens,
+                    cost_usd                  = token_usage_daily.cost_usd + EXCLUDED.cost_usd,
+                    cost_krw                  = token_usage_daily.cost_krw + EXCLUDED.cost_krw,
+                    last_activity_at          = GREATEST(token_usage_daily.last_activity_at, NOW()),
+                    updated_at                = NOW()
             """),
             {
                 "username": ev["username"],
+                "model_id": ev["model_id"],
                 "usage_date": ev["usage_date"],
                 "input_tokens": ev["input_tokens"],
                 "output_tokens": ev["output_tokens"],
                 "total_tokens": ev["total_tokens"],
+                "cache_creation_input_tokens": ev["cache_creation_input_tokens"],
+                "cache_read_input_tokens": ev["cache_read_input_tokens"],
                 "cost_usd": ev["cost_usd"],
                 "cost_krw": ev["cost_krw"],
             },
@@ -255,26 +342,35 @@ def upsert_hourly(session, events: list[dict]) -> None:
         session.execute(
             text("""
                 INSERT INTO token_usage_hourly
-                    (username, usage_date, hour, slot, input_tokens, output_tokens,
-                     total_tokens, cost_usd, cost_krw)
+                    (username, model_id, usage_date, hour, slot,
+                     input_tokens, output_tokens, total_tokens,
+                     cache_creation_input_tokens, cache_read_input_tokens,
+                     cost_usd, cost_krw)
                 VALUES
-                    (:username, :usage_date, :hour, :slot, :input_tokens, :output_tokens,
-                     :total_tokens, :cost_usd, :cost_krw)
-                ON CONFLICT ON CONSTRAINT uq_slot_user_date_slot DO UPDATE SET
-                    input_tokens  = token_usage_hourly.input_tokens  + EXCLUDED.input_tokens,
-                    output_tokens = token_usage_hourly.output_tokens + EXCLUDED.output_tokens,
-                    total_tokens  = token_usage_hourly.total_tokens  + EXCLUDED.total_tokens,
-                    cost_usd      = token_usage_hourly.cost_usd      + EXCLUDED.cost_usd,
-                    cost_krw      = token_usage_hourly.cost_krw      + EXCLUDED.cost_krw
+                    (:username, :model_id, :usage_date, :hour, :slot,
+                     :input_tokens, :output_tokens, :total_tokens,
+                     :cache_creation_input_tokens, :cache_read_input_tokens,
+                     :cost_usd, :cost_krw)
+                ON CONFLICT ON CONSTRAINT uq_slot_user_date_slot_model DO UPDATE SET
+                    input_tokens                = token_usage_hourly.input_tokens  + EXCLUDED.input_tokens,
+                    output_tokens               = token_usage_hourly.output_tokens + EXCLUDED.output_tokens,
+                    total_tokens                = token_usage_hourly.total_tokens  + EXCLUDED.total_tokens,
+                    cache_creation_input_tokens = token_usage_hourly.cache_creation_input_tokens + EXCLUDED.cache_creation_input_tokens,
+                    cache_read_input_tokens     = token_usage_hourly.cache_read_input_tokens + EXCLUDED.cache_read_input_tokens,
+                    cost_usd                    = token_usage_hourly.cost_usd + EXCLUDED.cost_usd,
+                    cost_krw                    = token_usage_hourly.cost_krw + EXCLUDED.cost_krw
             """),
             {
                 "username": ev["username"],
+                "model_id": ev["model_id"],
                 "usage_date": ev["usage_date"],
                 "hour": ev["hour"],
                 "slot": ev["slot"],
                 "input_tokens": ev["input_tokens"],
                 "output_tokens": ev["output_tokens"],
                 "total_tokens": ev["total_tokens"],
+                "cache_creation_input_tokens": ev["cache_creation_input_tokens"],
+                "cache_read_input_tokens": ev["cache_read_input_tokens"],
                 "cost_usd": ev["cost_usd"],
                 "cost_krw": ev["cost_krw"],
             },
@@ -286,8 +382,9 @@ def process_batch(r: redis.Redis, message_ids: list[str], events: list[dict]) ->
         return
     with Session() as session:
         try:
-            upsert_daily(session, events)
-            upsert_hourly(session, events)
+            new_events = [ev for ev in events if insert_event_or_skip(session, ev)]
+            upsert_daily(session, new_events)
+            upsert_hourly(session, new_events)
             session.commit()
             r.xack(STREAM_KEY, CONSUMER_GROUP, *message_ids)
             logger.info("Processed %d events, ACKed %d", len(events), len(message_ids))
@@ -320,6 +417,9 @@ def run() -> None:
 def _consume_loop(r: redis.Redis) -> None:
     _recover_pending(r)
     last_claim_ts = time.monotonic()
+    # msg_id → 실패 횟수 (MAX_RETRIES 초과 시 DLQ 이동)
+    _retry_counts: dict[str, int] = {}
+    _msg_fields_cache: dict[str, dict] = {}
 
     while True:
         # 주기적으로 dead consumer pending 메시지 claim (at-least-once 보장 강화)
@@ -344,18 +444,50 @@ def _consume_loop(r: redis.Redis) -> None:
 
         message_ids = []
         events = []
+        raw_fields_map: dict[str, dict] = {}
         for _stream, messages in results:
             for msg_id, fields in messages:
+                _msg_fields_cache[msg_id] = fields
+                raw_fields_map[msg_id] = fields
                 ev = parse_event(fields)
                 if ev:
                     events.append(ev)
                     message_ids.append(msg_id)
                 else:
                     r.xack(STREAM_KEY, CONSUMER_GROUP, msg_id)
+                    _retry_counts.pop(msg_id, None)
                     logger.warning("Bad event ACKed without processing: id=%s", msg_id)
 
-        if message_ids:
+        if not message_ids:
+            continue
+
+        try:
             process_batch(r, message_ids, events)
+            # 성공 시 retry 카운터 정리
+            for mid in message_ids:
+                _retry_counts.pop(mid, None)
+                _msg_fields_cache.pop(mid, None)
+        except Exception as err:
+            # 실패한 배치의 retry 카운터 증가
+            dlq_ids: list[str] = []
+            retry_ids: list[str] = []
+            for mid in message_ids:
+                cnt = _retry_counts.get(mid, 0) + 1
+                _retry_counts[mid] = cnt
+                if cnt >= MAX_RETRIES:
+                    dlq_ids.append(mid)
+                else:
+                    retry_ids.append(mid)
+                    logger.warning(
+                        "Batch failed (attempt %d/%d): msg_id=%s err=%s",
+                        cnt, MAX_RETRIES, mid, err,
+                    )
+            # DLQ 이동: ACK하여 PEL 제거
+            for mid in dlq_ids:
+                publish_to_dlq(r, mid, _msg_fields_cache.get(mid, {}), str(err))
+                r.xack(STREAM_KEY, CONSUMER_GROUP, mid)
+                _retry_counts.pop(mid, None)
+                _msg_fields_cache.pop(mid, None)
 
 
 def _recover_pending(r: redis.Redis, max_recover: int = 100) -> None:
@@ -419,6 +551,29 @@ def _claim_stale_pending(r: redis.Redis) -> int:
         message_ids: list[str] = []
         events: list[dict] = []
         for msg_id, fields in messages:
+            # XAUTOCLAIM이 delivery_count를 이미 증가시켰으므로 XPENDING으로 현재 값 조회.
+            # delivery_count >= MAX_RETRIES 이면 영구 실패로 간주 → DLQ 이동.
+            try:
+                pending_info = r.xpending_range(
+                    STREAM_KEY, CONSUMER_GROUP, min=msg_id, max=msg_id, count=1
+                )
+                delivery_count = (
+                    pending_info[0]["times_delivered"] if pending_info else MAX_RETRIES
+                )
+            except Exception:
+                delivery_count = MAX_RETRIES  # 조회 실패 시 안전하게 DLQ 처리
+
+            if delivery_count >= MAX_RETRIES:
+                publish_to_dlq(
+                    r, msg_id, fields,
+                    f"exceeded MAX_RETRIES ({MAX_RETRIES}) — delivery_count={delivery_count}",
+                )
+                r.xack(STREAM_KEY, CONSUMER_GROUP, msg_id)
+                logger.warning(
+                    "DLQ: msg_id=%s delivery_count=%d", msg_id, delivery_count
+                )
+                continue
+
             ev = parse_event(fields)
             if ev:
                 events.append(ev)

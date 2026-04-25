@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+import uuid
 from typing import AsyncGenerator
 
 import boto3
@@ -32,13 +33,22 @@ import botocore.exceptions
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
+from prometheus_client import Counter
+
 from app.core.config import Settings, get_settings
 from app.core.database import SessionLocal
+from app.core.redis_client import get_redis
 from app.core.security import get_current_user
 from app.routers.admin import _check_user_quota
 
 router = APIRouter(prefix="/v1", tags=["bedrock-proxy"])
 logger = logging.getLogger(__name__)
+
+publish_drop_counter = Counter(
+    "bedrock_proxy_publish_drop_total",
+    "stream:usage_events publish 실패 횟수 (silent drop 방지용)",
+    ["reason"],
+)
 
 # ─── 모델 ID 매핑 (Anthropic model ID → Bedrock cross-region inference profile) ──
 # Claude Code CLI가 전달하는 Anthropic model ID를 Bedrock 호환 ID로 변환한다.
@@ -79,40 +89,60 @@ def _resolve_model(anthropic_model_id: str, settings: Settings) -> str:
 
 
 def _publish_usage_event(
+    *,
+    request_id: str,
+    source: str,
     username: str,
     model: str,
     input_tokens: int,
     output_tokens: int,
+    cache_creation_input_tokens: int = 0,
+    cache_read_input_tokens: int = 0,
     cost_usd: float,
     cost_krw: int,
 ) -> None:
-    """사용량 이벤트를 Redis Stream에 비동기 발행.
+    """사용량 이벤트를 Redis Stream에 publish.
 
-    Redis가 없거나 실패해도 무시 — usage 누락이 요청 실패보다 낫다.
+    silent drop 금지 — Redis 미가용/예외 시 publish_drop_counter 증가 + ERROR 로그.
+    measurement spec(§5.2)의 drop counter 의무 사항.
     """
-    try:
-        from app.core.redis_client import get_redis
-        from datetime import datetime, timezone
+    from datetime import datetime, timezone
 
+    try:
         r = get_redis()
         if not r:
+            publish_drop_counter.labels(reason="redis_unavailable").inc()
+            logger.error(
+                "usage publish dropped: Redis unavailable. request_id=%s username=%s",
+                request_id, username,
+            )
             return
 
         r.xadd(
             "stream:usage_events",
             {
+                "request_id": request_id,
+                "source": source,
                 "username": username,
                 "model": model,
                 "input_tokens": str(input_tokens),
                 "output_tokens": str(output_tokens),
+                "cache_creation_input_tokens": str(cache_creation_input_tokens),
+                "cache_read_input_tokens": str(cache_read_input_tokens),
                 "total_tokens": str(input_tokens + output_tokens),
                 "cost_usd": f"{cost_usd:.6f}",
                 "cost_krw": str(cost_krw),
                 "recorded_at": datetime.now(timezone.utc).isoformat(),
             },
+            maxlen=100_000,
+            approximate=True,
         )
     except Exception as e:
-        logger.warning("Usage event publish failed (non-critical): %s", e)
+        publish_drop_counter.labels(reason="exception").inc()
+        logger.error(
+            "usage publish failed: %s, request_id=%s username=%s",
+            e, request_id, username,
+        )
 
 
 # ─── Anthropic-compatible /v1/messages endpoint ───────────────────────────────
@@ -203,6 +233,7 @@ async def _invoke_bedrock(
     """비스트리밍 Bedrock 호출 + usage 이벤트 발행."""
     import asyncio
 
+    request_id = str(uuid.uuid4())
     loop = asyncio.get_event_loop()
     response = await loop.run_in_executor(
         None,
@@ -216,19 +247,29 @@ async def _invoke_bedrock(
 
     result = json.loads(response["body"].read())
 
-    # usage 집계
-    usage = result.get("usage", {})
-    input_tokens = usage.get("input_tokens", 0)
-    output_tokens = usage.get("output_tokens", 0)
-    cost_usd = _estimate_cost_usd(model_id, input_tokens, output_tokens)
+    usage = result.get("usage", {}) or {}
+    input_tokens   = usage.get("input_tokens", 0)
+    output_tokens  = usage.get("output_tokens", 0)
+    cache_creation = usage.get("cache_creation_input_tokens", 0)
+    cache_read     = usage.get("cache_read_input_tokens", 0)
+
+    from app.core.pricing import KRW_RATE
+    cost_usd = _estimate_cost_usd(
+        model_id, input_tokens, output_tokens, cache_creation, cache_read,
+    )
+    cost_krw = int(cost_usd * KRW_RATE)
 
     _publish_usage_event(
+        request_id=request_id,
+        source="console-cli",
         username=username,
         model=model_id,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
+        cache_creation_input_tokens=cache_creation,
+        cache_read_input_tokens=cache_read,
         cost_usd=cost_usd,
-        cost_krw=int(cost_usd * 1400),  # 환율 1 USD = 1400 KRW (근사값)
+        cost_krw=cost_krw,
     )
 
     return result
@@ -239,7 +280,9 @@ async def _stream_bedrock(
 ) -> AsyncGenerator[bytes, None]:
     """스트리밍 Bedrock 호출 — Server-Sent Events 형식으로 전달."""
     import asyncio
+    from app.core.pricing import KRW_RATE
 
+    request_id = str(uuid.uuid4())
     loop = asyncio.get_event_loop()
     response = await loop.run_in_executor(
         None,
@@ -251,8 +294,10 @@ async def _stream_bedrock(
         ),
     )
 
-    input_tokens = 0
+    input_tokens  = 0
     output_tokens = 0
+    cache_creation = 0
+    cache_read     = 0
 
     for event in response["body"]:
         chunk = event.get("chunk", {})
@@ -261,43 +306,57 @@ async def _stream_bedrock(
         raw = chunk.get("bytes", b"")
         if raw:
             data = json.loads(raw)
-            # 토큰 사용량 누적 (message_delta 또는 message_start에서)
             if data.get("type") == "message_start":
-                usage = data.get("message", {}).get("usage", {})
-                input_tokens += usage.get("input_tokens", 0)
+                usage = data.get("message", {}).get("usage", {}) or {}
+                input_tokens   += usage.get("input_tokens", 0)
+                cache_creation += usage.get("cache_creation_input_tokens", 0)
+                cache_read     += usage.get("cache_read_input_tokens", 0)
             elif data.get("type") == "message_delta":
-                usage = data.get("usage", {})
-                output_tokens += usage.get("output_tokens", 0)
+                usage = data.get("usage", {}) or {}
+                output_tokens  += usage.get("output_tokens", 0)
+                cache_creation += usage.get("cache_creation_input_tokens", 0)
+                cache_read     += usage.get("cache_read_input_tokens", 0)
 
             yield f"data: {json.dumps(data)}\n\n".encode()
 
     # 스트림 종료 후 사용량 이벤트 발행
-    cost_usd = _estimate_cost_usd(model_id, input_tokens, output_tokens)
+    cost_usd = _estimate_cost_usd(
+        model_id, input_tokens, output_tokens, cache_creation, cache_read,
+    )
+    cost_krw = int(cost_usd * KRW_RATE)
     _publish_usage_event(
+        request_id=request_id,
+        source="console-cli",
         username=username,
         model=model_id,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
+        cache_creation_input_tokens=cache_creation,
+        cache_read_input_tokens=cache_read,
         cost_usd=cost_usd,
-        cost_krw=int(cost_usd * 1400),
+        cost_krw=cost_krw,
     )
 
     yield b"data: [DONE]\n\n"
 
 
-def _estimate_cost_usd(model_id: str, input_tokens: int, output_tokens: int) -> float:
-    """모델별 토큰 비용 추정 (USD).
+def _estimate_cost_usd(
+    model_id: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_creation: int = 0,
+    cache_read: int = 0,
+) -> float:
+    """모델별 4분기 토큰 비용 추정 (USD).
 
-    가격표 (2026-04 기준, Bedrock on-demand):
-    - claude-sonnet-4-6: input $3/MTok, output $15/MTok
-    - claude-haiku-4-5:  input $0.80/MTok, output $4/MTok
-    - claude-opus-4-6:   input $15/MTok, output $75/MTok
+    pricing.py 단일 출처 사용 — 가격 변경 시 pricing.py만 수정하면 됨.
+    cache_creation은 input의 1.25배, cache_read는 input의 0.10배 단가.
     """
-    if "haiku" in model_id:
-        in_price, out_price = 0.80, 4.00
-    elif "opus" in model_id:
-        in_price, out_price = 15.00, 75.00
-    else:  # sonnet (기본)
-        in_price, out_price = 3.00, 15.00
-
-    return (input_tokens * in_price + output_tokens * out_price) / 1_000_000
+    from app.core.pricing import get_price_table
+    p = get_price_table(model_id)
+    return (
+        input_tokens   * p["input"]
+        + output_tokens  * p["output"]
+        + cache_creation * p["cache_creation"]
+        + cache_read     * p["cache_read"]
+    ) / 1_000_000

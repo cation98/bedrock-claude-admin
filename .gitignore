@@ -41,3 +41,4 @@ infra/k8s/platform/secrets.yaml
 file::memory:
 **/file::memory:
 .worktrees/
+.superpowers/

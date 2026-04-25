@@ -30,6 +30,8 @@ import time
 import uuid
 from typing import Any
 
+from app.routers.bedrock_proxy import _publish_usage_event  # noqa: F401 (patch target)
+
 logger = logging.getLogger(__name__)
 
 
@@ -146,13 +148,45 @@ def anthropic_to_openai_response(
     anthropic_resp: dict,
     *,
     request_model: str,
+    username: str,
 ) -> dict:
-    """비스트리밍 Anthropic Messages 응답 → OpenAI chat.completion 응답."""
+    """비스트리밍 Anthropic Messages 응답 → OpenAI chat.completion 응답.
+
+    + Redis stream:usage_events에 publish (source='onlyoffice', request_id 자동 생성).
+    """
+    from app.routers.bedrock_proxy import _estimate_cost_usd, MODEL_MAP
+    from app.core.pricing import KRW_RATE
+
     content_blocks = anthropic_resp.get("content") or []
     text = "".join(
         b.get("text", "") for b in content_blocks if b.get("type") == "text"
     )
     usage = anthropic_resp.get("usage") or {}
+
+    input_tokens   = usage.get("input_tokens", 0)
+    output_tokens  = usage.get("output_tokens", 0)
+    cache_creation = usage.get("cache_creation_input_tokens", 0)
+    cache_read     = usage.get("cache_read_input_tokens", 0)
+
+    bedrock_model = MODEL_MAP.get(request_model, request_model)
+    cost_usd = _estimate_cost_usd(
+        bedrock_model, input_tokens, output_tokens, cache_creation, cache_read,
+    )
+    cost_krw = int(cost_usd * KRW_RATE)
+
+    _publish_usage_event(
+        request_id=str(uuid.uuid4()),
+        source="onlyoffice",
+        username=username,
+        model=bedrock_model,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_creation_input_tokens=cache_creation,
+        cache_read_input_tokens=cache_read,
+        cost_usd=cost_usd,
+        cost_krw=cost_krw,
+    )
+
     return {
         "id": "chatcmpl-" + uuid.uuid4().hex[:24],
         "object": "chat.completion",
@@ -166,9 +200,9 @@ def anthropic_to_openai_response(
             }
         ],
         "usage": {
-            "prompt_tokens": usage.get("input_tokens", 0),
-            "completion_tokens": usage.get("output_tokens", 0),
-            "total_tokens": usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
+            "prompt_tokens": input_tokens,
+            "completion_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
         },
     }
 
@@ -222,9 +256,9 @@ def anthropic_stream_event_to_openai_chunks(
 
     if etype == "message_start":
         usage = event.get("message", {}).get("usage", {})
-        state["input_tokens"] = state.get("input_tokens", 0) + usage.get(
-            "input_tokens", 0
-        )
+        state["input_tokens"] = state.get("input_tokens", 0) + usage.get("input_tokens", 0)
+        state["cache_creation_input_tokens"] = state.get("cache_creation_input_tokens", 0) + usage.get("cache_creation_input_tokens", 0)
+        state["cache_read_input_tokens"] = state.get("cache_read_input_tokens", 0) + usage.get("cache_read_input_tokens", 0)
         # 첫 chunk: role delta
         ch = _base_chunk()
         ch["choices"][0]["delta"] = {"role": "assistant", "content": ""}
@@ -242,9 +276,9 @@ def anthropic_stream_event_to_openai_chunks(
     elif etype == "message_delta":
         # usage 누적 + stop_reason 캡처
         usage = event.get("usage") or {}
-        state["output_tokens"] = state.get("output_tokens", 0) + usage.get(
-            "output_tokens", 0
-        )
+        state["output_tokens"] = state.get("output_tokens", 0) + usage.get("output_tokens", 0)
+        state["cache_creation_input_tokens"] = state.get("cache_creation_input_tokens", 0) + usage.get("cache_creation_input_tokens", 0)
+        state["cache_read_input_tokens"] = state.get("cache_read_input_tokens", 0) + usage.get("cache_read_input_tokens", 0)
         delta = event.get("delta") or {}
         if delta.get("stop_reason"):
             state["stop_reason"] = delta["stop_reason"]
@@ -263,7 +297,13 @@ def anthropic_stream_event_to_openai_chunks(
 
 
 def new_stream_state() -> dict:
-    return {"input_tokens": 0, "output_tokens": 0, "stop_reason": None}
+    return {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "stop_reason": None,
+    }
 
 
 def make_chunk_id() -> str:

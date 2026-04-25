@@ -1,0 +1,117 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: conversation-archiver-sa
+  namespace: platform
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::680877507363:role/bedrock-claude-conversation-archiver
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: conversation-archiver
+  namespace: platform
+spec:
+  schedule: "0 17 * * *"   # 매일 02:00 KST (UTC 17:00)
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: conversation-archiver-sa
+          restartPolicy: OnFailure
+          containers:
+            - name: archiver
+              image: amazon/aws-cli:latest
+              resources:
+                requests:
+                  cpu: "100m"
+                  memory: "128Mi"
+                limits:
+                  cpu: "500m"
+                  memory: "512Mi"
+              env:
+                - name: AWS_REGION
+                  value: ap-northeast-2
+                - name: TELEGRAM_BOT_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: conversation-archiver-telegram
+                      key: bot_token
+                - name: ADMIN_CHAT_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: conversation-archiver-telegram
+                      key: admin_chat_id
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  BUCKET="bedrock-conversation-archives-680877507363"
+                  EFS_USERS="/efs/users"
+                  START_TIME=$(date +%s)
+
+                  send_telegram() {
+                    local msg="$1"
+                    curl -s -X POST \
+                      "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+                      -d "chat_id=${ADMIN_CHAT_ID}" \
+                      -d "parse_mode=Markdown" \
+                      --data-urlencode "text=${msg}" > /dev/null 2>&1 || true
+                  }
+
+                  echo "[$(date -u)] Archive start"
+
+                  UPLOADED=0
+                  USER_COUNT=0
+                  ERRORS=0
+
+                  for user_dir in "$EFS_USERS"/*/; do
+                    [ -d "$user_dir" ] || continue
+                    username=$(basename "$user_dir")
+                    backup_dir="$user_dir/.claude-backup"
+                    USER_COUNT=$((USER_COUNT + 1))
+
+                    if [ -d "$backup_dir/projects" ]; then
+                      BEFORE=$(aws s3 ls "s3://$BUCKET/conversations/$username/projects/" --recursive 2>/dev/null | wc -l || echo 0)
+                      aws s3 sync \
+                        "$backup_dir/projects/" \
+                        "s3://$BUCKET/conversations/$username/projects/" \
+                        --storage-class INTELLIGENT_TIERING \
+                        --no-progress \
+                        --region ap-northeast-2 2>&1 | grep "^upload:" | wc -l | xargs -I{} sh -c 'UPLOADED=$((UPLOADED + {}))' || true
+                    fi
+
+                    if [ -f "$backup_dir/history.jsonl" ]; then
+                      aws s3 cp \
+                        "$backup_dir/history.jsonl" \
+                        "s3://$BUCKET/conversations/$username/history.jsonl" \
+                        --storage-class INTELLIGENT_TIERING \
+                        --no-progress \
+                        --region ap-northeast-2 2>/dev/null || ERRORS=$((ERRORS + 1))
+                    fi
+                  done
+
+                  END_TIME=$(date +%s)
+                  ELAPSED=$((END_TIME - START_TIME))
+                  TOTAL_FILES=$(aws s3 ls "s3://$BUCKET/conversations/" --recursive 2>/dev/null | grep "\.jsonl$" | wc -l || echo "?")
+                  DATE_KST=$(date -u -d '+9 hours' '+%Y-%m-%d %H:%M' 2>/dev/null || date -u '+%Y-%m-%d %H:%M')
+
+                  echo "[$(date -u)] Archive complete — users=${USER_COUNT}, total_s3=${TOTAL_FILES}, elapsed=${ELAPSED}s"
+
+                  MSG=$(printf '[대화 아카이브 완료]\n\n사용자: %s명\nS3 총 파일: %s개\n소요 시간: %s초\n오류: %s건\n실행 시각: %s KST\n\n버킷: bedrock-conversation-archives-680877507363' \
+                    "$USER_COUNT" "$TOTAL_FILES" "$ELAPSED" "$ERRORS" "$DATE_KST")
+
+                  send_telegram "$MSG"
+              volumeMounts:
+                - name: efs-users
+                  mountPath: /efs
+                  readOnly: true
+          volumes:
+            - name: efs-users
+              persistentVolumeClaim:
+                claimName: efs-audit-reader-pvc

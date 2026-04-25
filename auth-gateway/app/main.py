@@ -17,7 +17,10 @@ from sqlalchemy import text
 
 from app.core.config import get_settings
 from app.core.database import Base, engine
-from app.core.scheduler import idle_checker_loop, token_snapshot_loop, prompt_audit_loop, storage_cleanup_loop
+from app.core.scheduler import (
+    idle_checker_loop, token_snapshot_loop, prompt_audit_loop,
+    storage_cleanup_loop, event_retention_loop,
+)
 from app.models.app import DeployedApp, AppACL, AppView, AppLike  # noqa: F401 — create_all이 테이블 생성하도록 import
 from app.models.survey import SurveyTemplate, SurveyAssignment, SurveyResponse  # noqa: F401
 from app.models.file_share import SharedDataset, FileShareACL  # noqa: F401 — create_all이 테이블 생성하도록 import
@@ -360,12 +363,14 @@ async def lifespan(app: FastAPI):
     snapshot_task = asyncio.create_task(token_snapshot_loop(settings))
     audit_task = asyncio.create_task(prompt_audit_loop(settings))
     storage_task = asyncio.create_task(storage_cleanup_loop(settings))
+    retention_task = asyncio.create_task(event_retention_loop(settings))
     logger.info(f"{settings.app_name} started")
     yield
     idle_task.cancel()
     snapshot_task.cancel()
     audit_task.cancel()
     storage_task.cancel()
+    retention_task.cancel()
     try:
         await idle_task
     except asyncio.CancelledError:
@@ -380,6 +385,10 @@ async def lifespan(app: FastAPI):
         pass
     try:
         await storage_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await retention_task
     except asyncio.CancelledError:
         pass
     logger.info(f"{settings.app_name} shutdown")

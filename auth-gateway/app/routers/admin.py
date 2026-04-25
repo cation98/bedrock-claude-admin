@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.core.database import get_db
+from app.core import pricing as _pricing
 from app.core.security import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -54,10 +55,7 @@ class TokenUsageResponse(BaseModel):
     collected_at: str
 
 
-# Bedrock Claude Sonnet pricing
-INPUT_PRICE = 3.0 / 1_000_000
-OUTPUT_PRICE = 15.0 / 1_000_000
-KRW_RATE = 1530
+_LEGACY_PRICE = _pricing.get_price_table("claude-sonnet-4-6")
 
 
 def _collect_tokens_from_pod(v1: client.CoreV1Api, pod_name: str, namespace: str) -> tuple[int, int]:
@@ -113,8 +111,13 @@ async def get_token_usage(
 
         input_tokens, output_tokens = _collect_tokens_from_pod(v1, pod_name, namespace)
         total = input_tokens + output_tokens
-        cost_usd = round(input_tokens * INPUT_PRICE + output_tokens * OUTPUT_PRICE, 4)
-        cost_krw = round(cost_usd * KRW_RATE)
+        # T20 활성화 전 legacy snapshot 경로 — 모델 정보 없어 Sonnet 가격으로 추정
+        cost_usd = round(
+            (input_tokens * _LEGACY_PRICE["input"]
+             + output_tokens * _LEGACY_PRICE["output"]) / 1_000_000,
+            6,
+        )
+        cost_krw = round(cost_usd * _pricing.KRW_RATE)
 
         user_usages.append(UserTokenUsage(
             username=username,
@@ -1558,8 +1561,13 @@ def do_snapshot(db, settings: Settings) -> dict:
         username = pod_name.replace("claude-terminal-", "").upper()
         input_t, output_t = _collect_tokens_from_pod(v1, pod_name, namespace)
         total = input_t + output_t
-        cost_usd = round(input_t * INPUT_PRICE + output_t * OUTPUT_PRICE, 4)
-        cost_krw = round(float(cost_usd) * KRW_RATE)
+        # T20 활성화 전 legacy snapshot 경로 — 모델 정보 없어 Sonnet 가격으로 추정
+        cost_usd = round(
+            (input_t * _LEGACY_PRICE["input"]
+             + output_t * _LEGACY_PRICE["output"]) / 1_000_000,
+            6,
+        )
+        cost_krw = round(float(cost_usd) * _pricing.KRW_RATE)
 
         # 세션 시간 계산
         session = db.query(TerminalSession).filter(
@@ -2393,6 +2401,7 @@ async def get_storage_usage(
             "7d": timedelta(days=7),
             "30d": timedelta(days=30),
             "90d": timedelta(days=90),
+            "180d": timedelta(days=180),
         }
 
         result = []

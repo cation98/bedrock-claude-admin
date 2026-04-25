@@ -46,7 +46,7 @@ class UserResponse(BaseModel):
     pod_ttl: str
     app_slug: str | None = None
     can_deploy_apps: bool = False
-    storage_retention: str = "30d"
+    storage_retention: str = "180d"
     security_level: str | None = None
     is_presenter: bool = False
     approved_at: datetime | None

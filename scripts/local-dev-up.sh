@@ -38,6 +38,10 @@ echo "  ✅ bedrock-claude/auth-gateway:local"
 echo "  container-image..."
 docker build -q -t bedrock-claude/claude-code-terminal:local "${PROJECT_DIR}/container-image/" > /dev/null
 echo "  ✅ bedrock-claude/claude-code-terminal:local"
+
+echo "  usage-worker..."
+docker build -q -t bedrock-claude/usage-worker:local "${PROJECT_DIR}/usage-worker/" > /dev/null
+echo "  ✅ bedrock-claude/usage-worker:local"
 echo ""
 
 # --- 3. K8s 리소스 생성 ---
@@ -55,11 +59,13 @@ $K apply -f "${LOCAL_DEV_DIR}/02-secrets.yaml" > /dev/null
 $K apply -f "${LOCAL_DEV_DIR}/03-service-account.yaml" > /dev/null
 echo "  ✅ auth-gateway-secrets, platform-admin-sa"
 
-echo "[6/8] Auth Gateway..."
+echo "[6/8] Auth Gateway + Usage Worker..."
 $K apply -f "${LOCAL_DEV_DIR}/04-auth-gateway.yaml" > /dev/null
+$K apply -f "${LOCAL_DEV_DIR}/05-usage-worker.yaml" > /dev/null
 echo "  대기 중..."
 $K wait --for=condition=Ready pod -l app=auth-gateway -n platform --timeout=90s > /dev/null 2>&1 || true
 echo "  ✅ auth-gateway deployment + service"
+echo "  ✅ usage-worker deployment"
 
 # --- 3.5. DB Seed — 테스트 사용자 생성 ---
 echo "  DB seed (TEST001)..."

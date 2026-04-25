@@ -54,6 +54,8 @@ class TestClaimStalePending:
         r.xautoclaim.side_effect = [
             ("0-0", [("1234-0", fields), ("1234-1", fields)], []),
         ]
+        # delivery_count=1 (< MAX_RETRIES=3) → DLQ 경유 없이 정상 처리
+        r.xpending_range.return_value = [{"times_delivered": 1}]
 
         with patch("worker.process_batch") as pb:
             count = worker._claim_stale_pending(r)
@@ -72,6 +74,8 @@ class TestClaimStalePending:
         r.xautoclaim.side_effect = [
             ("0-0", [("9999-0", bad_fields)], []),
         ]
+        # delivery_count=1 (< MAX_RETRIES) → DLQ 경유 없이 parse 시도 → parse 실패 → ACK
+        r.xpending_range.return_value = [{"times_delivered": 1}]
 
         with patch("worker.process_batch") as pb:
             count = worker._claim_stale_pending(r)
@@ -88,6 +92,8 @@ class TestClaimStalePending:
             ("200-0", [("100-0", fields)], []),
             ("0-0", [("200-0", fields)], []),
         ]
+        # 모든 메시지 delivery_count=1 → 정상 처리
+        r.xpending_range.return_value = [{"times_delivered": 1}]
 
         with patch("worker.process_batch") as pb:
             count = worker._claim_stale_pending(r)
@@ -102,6 +108,8 @@ class TestClaimStalePending:
         fields = _make_event_fields()
         # 3-tuple 이 아닌 2-tuple
         r.xautoclaim.return_value = ("0-0", [("500-0", fields)])
+        # delivery_count=1 → 정상 처리
+        r.xpending_range.return_value = [{"times_delivered": 1}]
 
         with patch("worker.process_batch") as pb:
             count = worker._claim_stale_pending(r)
@@ -120,3 +128,19 @@ class TestClaimStalePending:
         assert kwargs["min_idle_time"] == worker.STALE_IDLE_MS
         assert kwargs["start_id"] == "0-0"
         assert kwargs["count"] == worker.CLAIM_BATCH
+
+    def test_dlq_triggered_when_delivery_count_exceeds_max_retries(self):
+        """delivery_count >= MAX_RETRIES → publish_to_dlq + xack, process_batch 호출 없음."""
+        r = MagicMock()
+        fields = _make_event_fields()
+        r.xautoclaim.return_value = ("0-0", [("777-0", fields)], [])
+        # delivery_count=MAX_RETRIES → DLQ 이동
+        r.xpending_range.return_value = [{"times_delivered": worker.MAX_RETRIES}]
+
+        with patch("worker.process_batch") as pb, patch("worker.publish_to_dlq") as dlq:
+            count = worker._claim_stale_pending(r)
+
+        assert count == 0
+        pb.assert_not_called()
+        dlq.assert_called_once()
+        r.xack.assert_called_once_with(worker.STREAM_KEY, worker.CONSUMER_GROUP, "777-0")

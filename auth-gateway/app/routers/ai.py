@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 
 import boto3
 import botocore.exceptions
@@ -99,7 +100,9 @@ async def chat_completions(
         )
         return JSONResponse(
             content=anthropic_to_openai_response(
-                anthropic_resp, request_model=request_model
+                anthropic_resp,
+                request_model=request_model,
+                username=username,
             )
         )
     except botocore.exceptions.ClientError as e:
@@ -128,17 +131,24 @@ async def _invoke_non_streaming(
     )
     result = json.loads(response["body"].read())
 
-    usage = result.get("usage", {})
-    in_tok = usage.get("input_tokens", 0)
-    out_tok = usage.get("output_tokens", 0)
-    cost = _estimate_cost_usd(model_id, in_tok, out_tok)
+    usage = result.get("usage", {}) or {}
+    in_tok   = usage.get("input_tokens", 0)
+    out_tok  = usage.get("output_tokens", 0)
+    cache_cr = usage.get("cache_creation_input_tokens", 0)
+    cache_rd = usage.get("cache_read_input_tokens", 0)
+    from app.core.pricing import KRW_RATE
+    cost = _estimate_cost_usd(model_id, in_tok, out_tok, cache_cr, cache_rd)
     _publish_usage_event(
+        request_id=str(uuid.uuid4()),
+        source="onlyoffice",
         username=username,
         model=model_id,
         input_tokens=in_tok,
         output_tokens=out_tok,
+        cache_creation_input_tokens=cache_cr,
+        cache_read_input_tokens=cache_rd,
         cost_usd=cost,
-        cost_krw=int(cost * 1400),
+        cost_krw=int(cost * KRW_RATE),
     )
     return result
 
@@ -213,14 +223,25 @@ async def _stream_openai_compat(
             pass
 
         # usage 기록 (aborted 포함 — 이미 소비된 토큰만 집계)
-        cost = _estimate_cost_usd(model_id, state["input_tokens"], state["output_tokens"])
+        from app.core.pricing import KRW_RATE
+        cost = _estimate_cost_usd(
+            model_id,
+            state["input_tokens"],
+            state["output_tokens"],
+            state.get("cache_creation_input_tokens", 0),
+            state.get("cache_read_input_tokens", 0),
+        )
         _publish_usage_event(
+            request_id=str(uuid.uuid4()),
+            source="onlyoffice",
             username=username,
             model=model_id,
             input_tokens=state["input_tokens"],
             output_tokens=state["output_tokens"],
+            cache_creation_input_tokens=state.get("cache_creation_input_tokens", 0),
+            cache_read_input_tokens=state.get("cache_read_input_tokens", 0),
             cost_usd=cost,
-            cost_krw=int(cost * 1400),
+            cost_krw=int(cost * KRW_RATE),
         )
         if aborted:
             logger.info(

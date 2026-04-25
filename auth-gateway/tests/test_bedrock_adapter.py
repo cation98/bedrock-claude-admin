@@ -142,6 +142,7 @@ class TestAnthropicToOpenAIResponse:
                 "usage": {"input_tokens": 10, "output_tokens": 5},
             },
             request_model="claude-sonnet-4-6",
+            username="test-user",
         )
         assert resp["object"] == "chat.completion"
         assert resp["model"] == "claude-sonnet-4-6"
@@ -161,6 +162,7 @@ class TestAnthropicToOpenAIResponse:
                 "usage": {"input_tokens": 10, "output_tokens": 100},
             },
             request_model="claude-haiku-4-5",
+            username="test-user",
         )
         assert resp["choices"][0]["finish_reason"] == "length"
 
@@ -168,6 +170,7 @@ class TestAnthropicToOpenAIResponse:
         resp = A.anthropic_to_openai_response(
             {"content": [{"type": "text", "text": "x"}]},
             request_model="claude-sonnet-4-6",
+            username="test-user",
         )
         assert resp["usage"]["prompt_tokens"] == 0
         assert resp["usage"]["completion_tokens"] == 0
@@ -182,6 +185,7 @@ class TestAnthropicToOpenAIResponse:
                 "stop_reason": "end_turn",
             },
             request_model="claude-sonnet-4-6",
+            username="test-user",
         )
         assert resp["choices"][0]["message"]["content"] == "첫 둘째"
 
