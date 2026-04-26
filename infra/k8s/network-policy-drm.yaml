@@ -73,5 +73,14 @@ spec:
         - port: 6379
           protocol: TCP
 
+    # Gitea 내부 git 서버 (사용자 코드 push/pull — 외부 git push 대신 내부로 유도)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gitea
+      ports:
+        - port: 3000
+          protocol: TCP
+
     # HTTPS 외부 접근 — CONNECT 프록시 경유만 허용
     # (직접 443/80 차단됨 → auth-gateway proxy:3128 통해서만 npm/pip/github 접근 가능)
