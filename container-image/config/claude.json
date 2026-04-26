@@ -11,6 +11,16 @@
       "type": "stdio",
       "command": "uvx",
       "args": ["--from", "git+https://github.com/oraios/serena", "serena", "start-mcp-server"]
+    },
+    "hwpx-editor": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@dayoooun/hwpx-mcp"]
+    },
+    "hwp-reader": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["--from", "hwp-mcp", "hwp-mcp"]
     }
   },
   "projects": {
