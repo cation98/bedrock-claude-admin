@@ -143,6 +143,8 @@ export interface Session {
   pod_status: string;
   session_type: string;
   started_at: string;
+  terminated_at: string | null;
+  terminate_reason: string | null;
   terminal_url: string | null;
   files_url: string | null;
   hub_url: string | null;

@@ -29,6 +29,9 @@ class TerminalSession(Base):
     terminated_at = Column(DateTime(timezone=True))
     last_active_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
+    # 세션 종료 사유 — 자동 reconcile / TTL 만료 / 수동 종료 추적
+    terminate_reason = Column(String(200), nullable=True)
+
     # 프록시 인증용 비밀 토큰 — Pod 환경변수로 주입, CONNECT 요청 시 검증
     proxy_secret = Column(String(64), nullable=True)
 

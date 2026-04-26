@@ -284,6 +284,7 @@ def _to_response(session: TerminalSession, settings: Settings, ttl_seconds: int 
         hub_url=hub_url,
         started_at=session.started_at,
         terminated_at=session.terminated_at,
+        terminate_reason=session.terminate_reason,
         expires_at=expires_at,
         last_active_at=session.last_active_at,
         idle_minutes=idle_minutes,
@@ -328,6 +329,7 @@ async def create_session(
                 )
                 existing.pod_status = "terminated"
                 existing.terminated_at = datetime.now(timezone.utc)
+                existing.terminate_reason = f"k8s phase={pod_info['phase']} (auto reconcile)"
                 db.commit()
                 try:
                     k8s.delete_pod(existing.pod_name)
@@ -342,6 +344,7 @@ async def create_session(
                 )
                 existing.pod_status = "terminated"
                 existing.terminated_at = datetime.now(timezone.utc)
+                existing.terminate_reason = "k8s=disappeared (auto reconcile)"
                 db.commit()
                 existing = None
             # Pending 상태: 스케줄링 대기 중 — 기존 세션 유지
@@ -476,6 +479,7 @@ async def list_my_sessions(
                 )
                 session.pod_status = "terminated"
                 session.terminated_at = datetime.now(timezone.utc)
+                session.terminate_reason = f"k8s phase={pod_status['phase']} (auto reconcile)"
                 try:
                     k8s.delete_pod(session.pod_name)
                 except Exception:
@@ -487,6 +491,7 @@ async def list_my_sessions(
                     session.username, session.pod_name,
                 )
                 session.pod_status = "terminated"
+                session.terminate_reason = "k8s=disappeared (auto reconcile)"
                 session.terminated_at = datetime.now(timezone.utc)
     db.commit()
 
