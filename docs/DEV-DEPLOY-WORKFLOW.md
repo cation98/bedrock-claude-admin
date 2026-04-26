@@ -59,8 +59,36 @@ aws sso login
 | 계정 | TEST001 / test2026 |
 | 터미널 | `http://localhost/terminal/claude-terminal-test001/` |
 | 파일관리 | `http://localhost/files/claude-terminal-test001/` |
+| Admin Dashboard | `http://localhost:3000` (별도 실행 필요 — 1-3 참고) |
 
-### 1-3. SSM 터널 (프로덕션 DB 연결 — 선택)
+### 1-3. Admin Dashboard 로컬 실행 (선택)
+
+Admin Dashboard(`admin-dashboard/`)는 `local-dev-up.sh`에 포함되지 않습니다.  
+별도 dev server로 실행해야 합니다.
+
+**최초 설정 (1회):**
+```bash
+cd admin-dashboard
+cp .env.example .env.local   # NEXT_PUBLIC_API_URL=http://localhost:8000 로컬 설정
+npm install
+```
+
+**실행:**
+```bash
+# 터미널 1: auth-gateway port-forward (8000 포트 — admin dashboard API 통신용)
+kubectl --context=docker-desktop port-forward -n platform svc/auth-gateway 8000:8000
+
+# 터미널 2: admin dashboard dev server
+cd admin-dashboard
+npm run dev
+```
+
+**접속:** `http://localhost:3000`
+
+> **주의:** `.env.local`의 `NEXT_PUBLIC_API_URL`이 `http://localhost:8000`이어야 합니다.  
+> 프로덕션 URL(`https://claude.skons.net`)로 되어 있으면 로컬 auth-gateway에 연결되지 않습니다.
+
+### 1-4. SSM 터널 (프로덕션 DB 연결 — 선택)
 
 로컬에서 프로덕션 DB(`safety-prod`, `aiagentdb`)를 읽어야 할 때 사용합니다.  
 `local-dev-up.sh` **이후** 실행합니다.
@@ -91,7 +119,7 @@ kubectl rollout restart deployment/auth-gateway -n platform --context docker-des
 > kubectl rollout restart deployment/auth-gateway -n platform --context docker-desktop
 > ```
 
-### 1-4. 환경 종료
+### 1-5. 환경 종료
 
 ```bash
 ./scripts/local-dev-down.sh
@@ -353,8 +381,12 @@ aws amplify list-jobs \
 ```bash
 ./scripts/local-dev-down.sh
 ./scripts/local-dev-up.sh
-./scripts/ssm-tunnels.sh start
+./scripts/ssm-tunnels.sh start           # 프로덕션 DB 필요 시
 kubectl rollout restart deployment/auth-gateway -n platform --context docker-desktop
+
+# Admin Dashboard 로컬 확인이 필요한 경우 (별도 터미널):
+kubectl --context=docker-desktop port-forward -n platform svc/auth-gateway 8000:8000 &
+cd admin-dashboard && npm run dev        # → http://localhost:3000
 ```
 
 ### 프로덕션 전체 배포 순서 (코드 변경 후)
