@@ -177,6 +177,53 @@ async def get_token_usage(
     )
 
 
+# ==================== Pricing Reference ====================
+
+class ModelPricing(BaseModel):
+    model_id: str
+    display_name: str
+    input_usd: float
+    output_usd: float
+    cache_creation_usd: float
+    cache_read_usd: float
+    input_krw: int
+    output_krw: int
+
+
+class PricingResponse(BaseModel):
+    models: list[ModelPricing]
+    krw_rate: int
+    unit: str = "per 1M tokens"
+    as_of: str
+
+
+@router.get("/pricing", response_model=PricingResponse)
+async def get_pricing(_admin: dict = Depends(_require_admin)):
+    """Return current Bedrock model pricing table."""
+    _DISPLAY = {
+        "claude-sonnet-4-6": "Claude Sonnet 4.6",
+        "claude-haiku-4-5": "Claude Haiku 4.5",
+        "claude-opus-4-6": "Claude Opus 4.6",
+    }
+    models = []
+    for model_id, prices in _pricing.PRICE_TABLE.items():
+        models.append(ModelPricing(
+            model_id=model_id,
+            display_name=_DISPLAY.get(model_id, model_id),
+            input_usd=prices["input"],
+            output_usd=prices["output"],
+            cache_creation_usd=prices["cache_creation"],
+            cache_read_usd=prices["cache_read"],
+            input_krw=round(prices["input"] * _pricing.KRW_RATE),
+            output_krw=round(prices["output"] * _pricing.KRW_RATE),
+        ))
+    return PricingResponse(
+        models=models,
+        krw_rate=_pricing.KRW_RATE,
+        as_of="2026-04-25",
+    )
+
+
 # ==================== Infrastructure ====================
 
 class PodInfo(BaseModel):

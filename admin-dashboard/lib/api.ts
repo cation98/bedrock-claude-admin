@@ -1759,3 +1759,27 @@ export function createTaxonomyMapping(body: {
 export function deleteTaxonomyMapping(id: number): Promise<void> {
   return request<void>(`/api/v1/knowledge/taxonomy/${id}`, { method: "DELETE" });
 }
+
+// ==================== Pricing ====================
+
+export interface ModelPricing {
+  model_id: string;
+  display_name: string;
+  input_usd: number;
+  output_usd: number;
+  cache_creation_usd: number;
+  cache_read_usd: number;
+  input_krw: number;
+  output_krw: number;
+}
+
+export interface PricingResponse {
+  models: ModelPricing[];
+  krw_rate: number;
+  unit: string;
+  as_of: string;
+}
+
+export function getPricingTable(): Promise<PricingResponse> {
+  return request<PricingResponse>("/api/v1/admin/pricing");
+}

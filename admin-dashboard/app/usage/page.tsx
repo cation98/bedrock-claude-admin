@@ -10,6 +10,7 @@ import {
   getTokenUsageDailyTrend,
   getTokenUsageMonthlyTrend,
   takeTokenSnapshot,
+  getPricingTable,
   type TokenUsageResponse,
   type DailyUsageResponse,
   type MonthlyUsageResponse,
@@ -19,6 +20,7 @@ import {
   type DailyUsageUser,
   getUserUsageHistory,
   type UserUsageHistory,
+  type PricingResponse,
 } from "@/lib/api";
 import { isAuthenticated } from "@/lib/auth";
 import StatsCard from "@/components/stats-card";
@@ -244,6 +246,7 @@ export default function UsagePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [snapshotMsg, setSnapshotMsg] = useState("");
+  const [pricing, setPricing] = useState<PricingResponse | null>(null);
 
   // 개인별 일별 추이
   const [detailUser, setDetailUser] = useState<string | null>(null);
@@ -344,6 +347,12 @@ export default function UsagePage() {
     if (tab === "monthly") {
       getTokenUsageMonthlyTrend("2026-03").then(res => setMonthlyTrendData(res.trend)).catch(() => {});
     }
+
+    // Pricing table (fetch once)
+    if (!pricing) {
+      getPricingTable().then(setPricing).catch(() => {});
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, selectedDate, selectedMonth, router, fetchRealtime, fetchDaily, fetchMonthly]);
 
   // Auto-refresh only for realtime tab
@@ -708,6 +717,62 @@ export default function UsagePage() {
               />
               </>
             )}
+          </div>
+        )}
+        {/* Pricing Reference */}
+        {pricing && (
+          <div className="mt-6 rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-sm">
+            <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
+              <div>
+                <h2 className="text-sm font-semibold text-[var(--text-primary)]">Bedrock 모델 가격표</h2>
+                <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+                  {pricing.unit} · 기준일 {pricing.as_of} · 1 USD = {pricing.krw_rate.toLocaleString()}원
+                </p>
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-[var(--border)]">
+                <thead className="bg-[var(--bg)]">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase text-[var(--text-muted)]">모델</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium uppercase text-[var(--text-muted)]">Input (USD)</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium uppercase text-[var(--text-muted)]">Output (USD)</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium uppercase text-[var(--text-muted)]">Cache Write</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium uppercase text-[var(--text-muted)]">Cache Read</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium uppercase text-[var(--text-muted)]">Input (KRW)</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium uppercase text-[var(--text-muted)]">Output (KRW)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border)]">
+                  {pricing.models.map((m) => (
+                    <tr key={m.model_id} className="hover:bg-[var(--bg)]">
+                      <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-[var(--text-primary)]">
+                        {m.display_name}
+                        <span className="ml-2 text-xs text-[var(--text-muted)] font-normal">{m.model_id}</span>
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums text-[var(--text-secondary)]">
+                        ${m.input_usd.toFixed(2)}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums text-[var(--text-secondary)]">
+                        ${m.output_usd.toFixed(2)}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums text-[var(--text-muted)]">
+                        ${m.cache_creation_usd.toFixed(2)}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums text-[var(--text-muted)]">
+                        ${m.cache_read_usd.toFixed(2)}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums text-[var(--text-secondary)]">
+                        {m.input_krw.toLocaleString()}원
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right text-sm tabular-nums text-[var(--text-secondary)]">
+                        {m.output_krw.toLocaleString()}원
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </main>
