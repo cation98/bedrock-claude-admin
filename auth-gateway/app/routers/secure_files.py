@@ -205,6 +205,9 @@ async def secure_put(
     )
     db.add(governed)
 
+    # Records an upload *attempt*, not a confirmed S3 write.  The row exists
+    # even if finalize_drm_upload later fails, so callers must not treat its
+    # presence as proof the file is retrievable.
     audit = FileAuditLog(
         username=username,
         action="vault_upload",
