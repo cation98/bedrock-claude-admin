@@ -160,31 +160,33 @@ async def secure_put(
     file_data = await file.read()
     file_size = len(file_data)
 
-    # 1. S3 DRM 업로드 (AES-256-GCM envelope encryption)
     vault_svc = _get_vault_service()
+
+    # 1. Prepare: generate vault_id + KMS-encrypt DEK (no S3 upload yet)
     try:
-        result = vault_svc.upload_file_drm(
+        meta = vault_svc.prepare_drm_upload(
             username=username,
             filename=filename,
-            file_data=file_data,
             ttl_days=ttl_days,
         )
     except Exception as exc:
-        logger.error("Vault upload error for %s: %s", username, exc)
-        raise HTTPException(status_code=500, detail=f"Vault upload failed: {exc}")
+        logger.error("Vault prepare error for %s: %s", username, exc)
+        raise HTTPException(status_code=500, detail=f"Vault prepare failed: {exc}")
 
-    vault_id = result["vault_id"]
-    s3_key = result["s3_key"]
-    expires_at_str = result["expires_at"]
-    encrypted_dek = result["encrypted_dek"]
+    vault_id = meta["vault_id"]
+    s3_key = meta["s3_key"]
+    expires_at_str = meta["expires_at"]
+    encrypted_dek = meta["encrypted_dek"]
+    plaintext_dek = meta["plaintext_dek"]
 
-    # expires_at → datetime 파싱
     try:
         expires_at = datetime.fromisoformat(expires_at_str)
     except ValueError:
         expires_at = datetime.now(timezone.utc) + timedelta(days=ttl_days)
 
-    # 2. GovernedFile 레코드 생성 (DRM 메타데이터 포함)
+    # 2. Write GovernedFile + DEK to DB FIRST (crash-safe: DEK committed before S3 upload)
+    # If DB commit fails, no S3 object is created — consistent state.
+    # If S3 upload later fails, GovernedFile is an orphan with no S3 object — tolerable.
     governed = GovernedFile(
         username=username,
         filename=filename,
@@ -203,7 +205,6 @@ async def secure_put(
     )
     db.add(governed)
 
-    # 3. 감사 로그
     audit = FileAuditLog(
         username=username,
         action="vault_upload",
@@ -214,6 +215,21 @@ async def secure_put(
     )
     db.add(audit)
     db.commit()
+
+    # 3. Upload AES-256-GCM ciphertext to S3 (DEK already safe in DB)
+    try:
+        vault_svc.finalize_drm_upload(
+            s3_key=s3_key,
+            vault_id=vault_id,
+            username=username,
+            filename=filename,
+            file_data=file_data,
+            plaintext_dek=plaintext_dek,
+            expires_at_iso=expires_at_str,
+        )
+    except Exception as exc:
+        logger.error("Vault S3 finalize error for %s vault_id=%s: %s", username, vault_id, exc)
+        raise HTTPException(status_code=500, detail=f"Vault S3 upload failed: {exc}")
 
     logger.info("Secure put: user=%s vault_id=%s filename=%s", username, vault_id, filename)
     return {"vault_id": vault_id, "expires_at": expires_at_str}

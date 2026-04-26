@@ -109,17 +109,37 @@ def _claim_batch(conn, batch_size: int) -> list:
     return rows
 
 
-def _mark_encrypted(engine, file_id: int, encrypted_dek_b64: str) -> None:
+def _save_dek_before_s3(engine, file_id: int, encrypted_dek_b64: str) -> None:
+    """Persist encrypted DEK to DB while state stays 'encrypting'.
+
+    Called BEFORE s3.put_object to eliminate the crash window where S3 holds
+    ciphertext but the DEK is only in memory. If the process dies after this
+    and before put_object, S3 still has plaintext — is_drm_encrypted() → False
+    → plain download path works. If the process dies after put_object but before
+    _mark_encrypted, the DEK is in DB and download_file() decrypts correctly.
+    """
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE governed_files "
+                "SET encrypted_dek = :dek, "
+                "    updated_at = NOW() "
+                "WHERE id = :id"
+            ).bindparams(id=file_id, dek=encrypted_dek_b64)
+        )
+
+
+def _mark_encrypted(engine, file_id: int) -> None:
+    """Set encryption_state=encrypted after S3 overwrite succeeds."""
     with engine.begin() as conn:
         conn.execute(
             text(
                 "UPDATE governed_files "
                 "SET encryption_state = 'encrypted', "
-                "    encrypted_dek = :dek, "
                 "    backfill_completed_at = NOW(), "
                 "    updated_at = NOW() "
                 "WHERE id = :id"
-            ).bindparams(id=file_id, dek=encrypted_dek_b64)
+            ).bindparams(id=file_id)
         )
 
 
@@ -128,38 +148,59 @@ def _mark_encrypted(engine, file_id: int, encrypted_dek_b64: str) -> None:
 # S3 encrypt-in-place
 # ---------------------------------------------------------------------------
 
-def _encrypt_row(s3, kms, bucket: str, kms_key_id: str, row) -> str | None:
+def _encrypt_row(s3, kms, engine, bucket: str, kms_key_id: str, row) -> bool:
     """Download plain S3 object, re-encrypt with AES-256-GCM, overwrite in-place.
 
-    Returns encrypted_dek_b64 on success, None on any error.
+    Crash-safe ordering:
+      1. Generate DEK via KMS
+      2. Persist encrypted_dek to DB (state stays 'encrypting')  ← point of no return
+      3. Put ciphertext to S3
+    If crash between steps 1-2: S3 still plain → plain-path download works.
+    If crash between steps 2-3: S3 still plain, DEK in DB → still plain-path works.
+    If crash between steps 3-?: S3 has ciphertext, DEK in DB → download_file decrypts.
+
+    Returns True on success, False on any error.
     """
     vault_id: str = row.vault_id
     s3_key: str = row.file_path
 
-    # Download
+    # Download current S3 object
     try:
         obj = s3.get_object(Bucket=bucket, Key=s3_key)
         raw: bytes = obj["Body"].read()
         existing_meta: dict = obj.get("Metadata", {})
     except ClientError as exc:
         logger.error("S3 get_object failed id=%d key=%s: %s", row.id, s3_key, exc)
-        return None
+        return False
 
-    # Guard: already DRM-encrypted (data inconsistency)
+    # Guard: already DRM-encrypted (data inconsistency — state mismatch)
     if is_drm_encrypted(raw):
         logger.warning(
-            "id=%d already DRM-encrypted but state=PLAIN — marking FAILED for manual review",
+            "id=%d already DRM-encrypted but state=PLAIN — skipping for manual review",
             row.id,
         )
-        return None
+        return False
 
-    # Generate DEK + encrypt
+    # Generate DEK via KMS
     try:
         plaintext_dek, encrypted_dek_b64 = _kms_encrypt_dek(kms, kms_key_id, vault_id, s3_key)
+    except Exception as exc:
+        logger.error("KMS encrypt_dek failed id=%d vault_id=%s: %s", row.id, vault_id, exc)
+        return False
+
+    # Persist DEK to DB BEFORE S3 overwrite (eliminates permanent-inaccessibility window)
+    try:
+        _save_dek_before_s3(engine, row.id, encrypted_dek_b64)
+    except Exception as exc:
+        logger.error("DB DEK write failed id=%d: %s — aborting S3 overwrite", row.id, exc)
+        return False
+
+    # Encrypt plaintext
+    try:
         ciphertext = _encrypt_file(raw, plaintext_dek, vault_id, s3_key)
     except Exception as exc:
-        logger.error("KMS/AES encrypt failed id=%d vault_id=%s: %s", row.id, vault_id, exc)
-        return None
+        logger.error("AES encrypt failed id=%d vault_id=%s: %s", row.id, vault_id, exc)
+        return False
 
     # Overwrite S3 object with ciphertext
     upload_meta = {k: v for k, v in existing_meta.items() if k != "drm-version"}
@@ -175,13 +216,14 @@ def _encrypt_row(s3, kms, bucket: str, kms_key_id: str, row) -> str | None:
         )
     except ClientError as exc:
         logger.error("S3 put_object failed id=%d key=%s: %s", row.id, s3_key, exc)
-        return None
+        # DEK is in DB; S3 still has plaintext. download_file plain-path still works.
+        return False
 
     logger.info(
         "Encrypted id=%d user=%s vault_id=%s size=%d→%d",
         row.id, row.username, vault_id, len(raw), len(ciphertext),
     )
-    return encrypted_dek_b64
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -246,9 +288,9 @@ def cmd_apply(engine, s3, kms, bucket: str, kms_key_id: str, batch_size: int) ->
         logger.info("Batch %d: claimed %d rows for encryption", batch_num, len(rows))
 
         for row in rows:
-            encrypted_dek_b64 = _encrypt_row(s3, kms, bucket, kms_key_id, row)
-            if encrypted_dek_b64 is not None:
-                _mark_encrypted(engine, row.id, encrypted_dek_b64)
+            ok = _encrypt_row(s3, kms, engine, bucket, kms_key_id, row)
+            if ok:
+                _mark_encrypted(engine, row.id)
                 total_encrypted += 1
             else:
                 logger.warning("id=%d left in ENCRYPTING state — run --reset-stale to retry", row.id)
