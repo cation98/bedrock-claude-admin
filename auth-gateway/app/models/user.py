@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from sqlalchemy import Column, String, DateTime, Boolean, Integer, JSON
+from sqlalchemy.orm import validates
 
 from app.core.database import Base
 
@@ -12,6 +13,10 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     username = Column(String(50), unique=True, nullable=False, index=True)  # 사번 (e.g. N1102359)
+
+    @validates("username")
+    def _upper_username(self, _key: str, value: str) -> str:
+        return value.upper() if value else value
     name = Column(String(100))  # 표시 이름 (first_name)
     phone_number = Column(String(20))
     region_name = Column(String(50))  # 담당 (e.g. AT/DT추진담당)

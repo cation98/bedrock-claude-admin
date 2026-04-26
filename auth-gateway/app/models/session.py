@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from sqlalchemy import Column, String, DateTime, Integer, ForeignKey
+from sqlalchemy.orm import validates
 
 from app.core.database import Base
 
@@ -13,6 +14,10 @@ class TerminalSession(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     username = Column(String(50), nullable=False)
+
+    @validates("username")
+    def _upper_username(self, _key: str, value: str) -> str:
+        return value.upper() if value else value
 
     # K8s Pod 정보
     pod_name = Column(String(100), unique=True)

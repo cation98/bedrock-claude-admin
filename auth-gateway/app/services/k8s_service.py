@@ -19,6 +19,7 @@ import secrets
 import tempfile
 import uuid
 from datetime import datetime, timezone
+from typing import NamedTuple
 
 import io
 import tarfile
@@ -36,6 +37,13 @@ logger = logging.getLogger(__name__)
 class K8sServiceError(Exception):
     """K8s 작업 실패."""
     pass
+
+
+class PodCreationResult(NamedTuple):
+    """create_pod() 반환값. NamedTuple이므로 기존 tuple unpacking과 호환."""
+    pod_name: str
+    proxy_secret: str | None     # None = 기존 Pod 재사용, 새 secret 불필요
+    pod_token_hash: str | None   # None = 기존 Pod 재사용
 
 
 class K8sService:
@@ -360,7 +368,7 @@ class K8sService:
         target_node: str | None = None,
         security_policy: dict | None = None,
         infra_policy: dict | None = None,
-    ) -> tuple[str, str | None, str | None]:
+    ) -> PodCreationResult:
         """사용자용 Claude Code 터미널 Pod 생성.
 
         Args:
@@ -370,8 +378,9 @@ class K8sService:
             ttl_seconds: Pod 수명(초). 0이면 unlimited (activeDeadlineSeconds 미설정).
 
         Returns:
-            (pod_name, proxy_secret, pod_token_hash): 생성된 Pod 이름, 프록시 인증 시크릿,
-            Pod 토큰의 SHA-256 해시. Pod 재사용 시 proxy_secret과 pod_token_hash는 None.
+            PodCreationResult(pod_name, proxy_secret, pod_token_hash).
+            proxy_secret/pod_token_hash는 Pod 재사용 시 None.
+            직접 호출 금지 — sessions.py의 create_session/bulk_create_sessions API 사용.
         """
         pod_name = self._pod_name(username)
 
@@ -385,7 +394,7 @@ class K8sService:
         existing = self.get_pod_status(pod_name)
         if existing and existing.get("phase") in ("Pending", "Running"):
             logger.info(f"Pod {pod_name} already exists, reusing")
-            return pod_name, None, None
+            return PodCreationResult(pod_name, None, None)
 
         # 인프라 정책 기반 Pod 리소스 결정 (DB에서 관리, 하드코딩 제거)
         from app.models.infra_policy import INFRA_TEMPLATES
@@ -580,14 +589,14 @@ class K8sService:
         except ApiException as e:
             if e.status == 409:  # Already exists
                 logger.info(f"Pod {pod_name} already exists")
-                return pod_name, None, None
+                return PodCreationResult(pod_name, None, None)
             logger.error(f"Failed to create pod {pod_name}: {e}")
             raise K8sServiceError(f"Failed to create pod: {e.reason}")
 
         # Pod에 대한 Service + Ingress 생성 (터미널 + 파일 서버 접근)
         self._create_pod_service(pod_name, username)
         self._create_pod_ingress(pod_name, username)
-        return pod_name, proxy_secret, pod_token_hash
+        return PodCreationResult(pod_name, proxy_secret, pod_token_hash)
 
     def _create_pod_service(self, pod_name: str, username: str):
         """Pod을 위한 K8s Service 생성."""
