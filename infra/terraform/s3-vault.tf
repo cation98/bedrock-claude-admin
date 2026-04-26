@@ -143,6 +143,40 @@ resource "aws_s3_bucket_lifecycle_configuration" "vault" {
       noncurrent_days = 1
     }
   }
+
+  rule {
+    id     = "drm-export-auto-expire"
+    status = "Enabled"
+
+    # object_type=drm_export 태그가 달린 임시 수출 객체: 1일 후 자동 만료.
+    # Phase 3 TTL 데몬이 정상 동작 시 먼저 삭제하지만, 데몬 장애 시 백스톱 역할.
+    filter {
+      tag {
+        key   = "object_type"
+        value = "drm_export"
+      }
+    }
+
+    expiration {
+      days = 1
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 1
+    }
+  }
+}
+
+# ----- 오브젝트 소유권: BucketOwnerEnforced -----
+# ACL을 완전히 비활성화하고 버킷 소유자가 모든 객체를 소유.
+# 크로스 계정 PutObject 시 ACL grant 없이도 소유권 보장.
+
+resource "aws_s3_bucket_ownership_controls" "vault" {
+  bucket = aws_s3_bucket.vault.id
+
+  rule {
+    object_ownership = "BucketOwnerEnforced"
+  }
 }
 
 # ----- 버킷 정책: 비암호화 업로드 거부 -----

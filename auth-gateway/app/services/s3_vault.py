@@ -15,8 +15,10 @@ class S3VaultService:
 
     def __init__(self, bucket_name: str, kms_key_id: str, region: str = "ap-northeast-2"):
         self.s3 = boto3.client("s3", region_name=region)
+        self.kms = boto3.client("kms", region_name=region)
         self.bucket_name = bucket_name
         self.kms_key_id = kms_key_id
+        self.region = region
 
     # ------------------------------------------------------------------
     # Upload
@@ -71,12 +73,172 @@ class S3VaultService:
             "expires_at": expires_at.isoformat(),
         }
 
+    def upload_file_drm(
+        self,
+        username: str,
+        filename: str,
+        file_data: bytes,
+        ttl_days: int = 7,
+    ) -> dict:
+        """AES-256-GCM envelope encrypt, then upload to S3.
+
+        Returns:
+            {"vault_id": str, "s3_key": str, "expires_at": str, "encrypted_dek": str}
+        """
+        from app.core.dek_utils import encrypt_file, kms_encrypt_dek
+
+        vault_id = hashlib.sha256(
+            f"{username}/{filename}/{datetime.now(timezone.utc).isoformat()}".encode()
+        ).hexdigest()[:16]
+
+        s3_key = f"vault/{username}/{vault_id}/{filename}"
+        expires_at = datetime.now(timezone.utc) + timedelta(days=ttl_days)
+
+        plaintext_dek, encrypted_dek_b64 = kms_encrypt_dek(
+            kms_client=self.kms,
+            kms_key_id=self.kms_key_id,
+            vault_id=vault_id,
+            s3_key=s3_key,
+        )
+        ciphertext = encrypt_file(file_data, plaintext_dek, vault_id, s3_key)
+
+        try:
+            self.s3.put_object(
+                Bucket=self.bucket_name,
+                Key=s3_key,
+                Body=ciphertext,
+                ServerSideEncryption="aws:kms",
+                SSEKMSKeyId=self.kms_key_id,
+                Metadata={
+                    "owner": username,
+                    "vault-id": vault_id,
+                    "original-filename": filename,
+                    "expires-at": expires_at.isoformat(),
+                    "drm-version": "1",
+                },
+                Tagging=(
+                    f"owner={username}"
+                    f"&classification=sensitive"
+                    f"&expires={expires_at.strftime('%Y-%m-%d')}"
+                ),
+            )
+        except ClientError as exc:
+            logger.error("S3 DRM upload failed for %s/%s: %s", username, filename, exc)
+            raise
+
+        logger.info("Vault DRM upload: user=%s vault_id=%s key=%s", username, vault_id, s3_key)
+        return {
+            "vault_id": vault_id,
+            "s3_key": s3_key,
+            "expires_at": expires_at.isoformat(),
+            "encrypted_dek": encrypted_dek_b64,
+        }
+
+    def prepare_drm_upload(
+        self,
+        username: str,
+        filename: str,
+        ttl_days: int = 7,
+    ) -> dict:
+        """Generate vault_id and KMS-encrypted DEK. Does NOT upload to S3.
+
+        Returns:
+            {
+                "vault_id": str,
+                "s3_key": str,
+                "expires_at": str (ISO-8601),
+                "encrypted_dek": str (base64),
+                "plaintext_dek": bytes,  # kept in-memory only, never persisted
+            }
+
+        Callers MUST commit encrypted_dek to DB before calling finalize_drm_upload,
+        so a crash between the two leaves the file in plain state (not inaccessible).
+        """
+        from app.core.dek_utils import kms_encrypt_dek
+
+        vault_id = hashlib.sha256(
+            f"{username}/{filename}/{datetime.now(timezone.utc).isoformat()}".encode()
+        ).hexdigest()[:16]
+        s3_key = f"vault/{username}/{vault_id}/{filename}"
+        expires_at = datetime.now(timezone.utc) + timedelta(days=ttl_days)
+
+        plaintext_dek, encrypted_dek_b64 = kms_encrypt_dek(
+            kms_client=self.kms,
+            kms_key_id=self.kms_key_id,
+            vault_id=vault_id,
+            s3_key=s3_key,
+        )
+        return {
+            "vault_id": vault_id,
+            "s3_key": s3_key,
+            "expires_at": expires_at.isoformat(),
+            "encrypted_dek": encrypted_dek_b64,
+            "plaintext_dek": plaintext_dek,
+        }
+
+    def finalize_drm_upload(
+        self,
+        s3_key: str,
+        vault_id: str,
+        username: str,
+        filename: str,
+        file_data: bytes,
+        plaintext_dek: bytes,
+        expires_at_iso: str,
+    ) -> None:
+        """AES-256-GCM encrypt file_data and upload to S3.
+
+        Must be called AFTER prepare_drm_upload's encrypted_dek is committed to DB.
+        If this raises ClientError, the DB record exists with encrypted_dek but no S3
+        object — file is safely inaccessible rather than encrypted-but-unrecoverable.
+        """
+        from app.core.dek_utils import encrypt_file
+
+        ciphertext = encrypt_file(file_data, plaintext_dek, vault_id, s3_key)
+        expires_date = expires_at_iso[:10]  # "YYYY-MM-DD"
+
+        try:
+            self.s3.put_object(
+                Bucket=self.bucket_name,
+                Key=s3_key,
+                Body=ciphertext,
+                ServerSideEncryption="aws:kms",
+                SSEKMSKeyId=self.kms_key_id,
+                Metadata={
+                    "owner": username,
+                    "vault-id": vault_id,
+                    "original-filename": filename,
+                    "expires-at": expires_at_iso,
+                    "drm-version": "1",
+                },
+                Tagging=(
+                    f"owner={username}"
+                    f"&classification=sensitive"
+                    f"&expires={expires_date}"
+                ),
+            )
+        except ClientError as exc:
+            logger.error("S3 DRM finalize upload failed key=%s: %s", s3_key, exc)
+            raise
+
+        logger.info("Vault DRM finalize: vault_id=%s key=%s", vault_id, s3_key)
+
     # ------------------------------------------------------------------
     # Download
     # ------------------------------------------------------------------
 
-    def download_file(self, username: str, vault_id: str) -> tuple[bytes, dict]:
+    def download_file(
+        self,
+        username: str,
+        vault_id: str,
+        encrypted_dek: str | None = None,
+        file_id: int | None = None,
+    ) -> tuple[bytes, dict]:
         """S3에서 파일 다운로드 (소유자 확인).
+
+        encrypted_dek, file_id 가 제공되고 S3 오브젝트에 DRM1 magic이 있으면
+        AES-256-GCM 복호화 후 plaintext를 반환한다.
+        PLAIN 파일(magic 없음)이거나 두 인수가 None이면 raw bytes를 그대로 반환한다.
 
         Returns:
             (file_bytes, metadata_dict)
@@ -108,7 +270,31 @@ class S3VaultService:
             raise
 
         metadata = obj.get("Metadata", {})
-        return obj["Body"].read(), metadata
+        raw_data = obj["Body"].read()
+
+        from app.core.dek_utils import is_drm_encrypted
+
+        if is_drm_encrypted(raw_data):
+            if not encrypted_dek or file_id is None:
+                raise RuntimeError(
+                    f"DRM-encrypted vault file {vault_id} found but key metadata is missing"
+                )
+            from app.core.dek_cache import get_or_decrypt_dek
+            from app.core.dek_utils import decrypt_file, kms_decrypt_dek
+
+            plaintext_dek = get_or_decrypt_dek(
+                file_id=file_id,
+                encrypted_dek_b64=encrypted_dek,
+                decrypt_fn=lambda edek: kms_decrypt_dek(
+                    kms_client=self.kms,
+                    encrypted_dek_b64=edek,
+                    vault_id=vault_id,
+                    s3_key=s3_key,
+                ),
+            )
+            raw_data = decrypt_file(raw_data, plaintext_dek, vault_id, s3_key)
+
+        return raw_data, metadata
 
     # ------------------------------------------------------------------
     # Delete

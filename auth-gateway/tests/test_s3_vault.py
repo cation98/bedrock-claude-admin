@@ -5,10 +5,10 @@ Covers:
 2. test_download_from_vault           -- download returns file content
 3. test_vault_list_files              -- list returns user's files
 4. test_secure_put_endpoint           -- API endpoint works
-5. test_secure_get_endpoint           -- API endpoint returns file
+5. test_secure_get_endpoint           -- API endpoint returns 403 (DRM block)
 6. test_secure_put_creates_governed_file -- upload creates GovernedFile record
 7. test_secure_put_creates_audit_log  -- upload creates FileAuditLog record
-8. test_secure_get_not_found          -- 404 on missing vault_id
+8. test_secure_get_not_found          -- 403 regardless of vault_id (DRM block)
 """
 
 import base64
@@ -221,6 +221,13 @@ def _mock_vault_svc(upload_result=None, download_result=None, list_result=None):
     mock_svc = MagicMock(spec=S3VaultService)
     if upload_result is not None:
         mock_svc.upload_file.return_value = upload_result
+        # prepare_drm_upload is the new split-interface method used by secure_put.
+        # It returns the same dict plus a plaintext_dek bytes field (kept in-memory only).
+        mock_svc.prepare_drm_upload.return_value = {
+            **upload_result,
+            "plaintext_dek": b"\x00" * 32,
+        }
+        # finalize_drm_upload returns None — MagicMock default is fine.
     if download_result is not None:
         mock_svc.download_file.return_value = download_result
     if list_result is not None:
@@ -234,6 +241,7 @@ def test_secure_put_endpoint(db_session):
         "vault_id": "abc123def456abcd",
         "s3_key": "vault/TESTUSER01/abc123def456abcd/secret.csv",
         "expires_at": "2026-04-16T00:00:00+00:00",
+        "encrypted_dek": "dGVzdC1lbmNyeXB0ZWQtZGVr",
     }
 
     with patch(
@@ -254,50 +262,27 @@ def test_secure_put_endpoint(db_session):
 
 
 def test_secure_get_endpoint(db_session):
-    """POST /api/v1/secure/get returns file content as base64."""
-    file_content = b"secret file content"
-    metadata = {
-        "owner": "TESTUSER01",
-        "vault-id": "abc123def456abcd",
-        "original-filename": "secret.csv",
-        "expires-at": "2026-04-16T00:00:00+00:00",
-    }
+    """POST /api/v1/secure/get returns 403 — DRM policy blocks direct download."""
+    client = _make_vault_client(db_session)
+    response = client.post(
+        "/api/v1/secure/get",
+        json={"vault_id": "abc123def456abcd", "duration_minutes": 60},
+    )
 
-    with patch(
-        "app.routers.secure_files._get_vault_service",
-        return_value=_mock_vault_svc(download_result=(file_content, metadata)),
-    ):
-        client = _make_vault_client(db_session)
-        response = client.post(
-            "/api/v1/secure/get",
-            json={"vault_id": "abc123def456abcd", "duration_minutes": 60},
-        )
-
-    assert response.status_code == 200, response.text
-    data = response.json()
-    assert data["filename"] == "secret.csv"
-    assert data["size"] == len(file_content)
-    assert "expires_in" in data
-    assert "content_b64" in data
-
-    # Verify content round-trips correctly
-    decoded = base64.b64decode(data["content_b64"])
-    assert decoded == file_content
+    assert response.status_code == 403, response.text
+    detail = response.json().get("detail", "")
+    assert "view" in detail.lower()
 
 
 def test_secure_get_not_found(db_session):
-    """POST /api/v1/secure/get returns 404 when vault_id does not exist."""
-    mock_svc = MagicMock(spec=S3VaultService)
-    mock_svc.download_file.side_effect = FileNotFoundError("not found")
+    """POST /api/v1/secure/get returns 403 regardless of vault_id — DRM block."""
+    client = _make_vault_client(db_session)
+    response = client.post(
+        "/api/v1/secure/get",
+        json={"vault_id": "nonexistent000000"},
+    )
 
-    with patch("app.routers.secure_files._get_vault_service", return_value=mock_svc):
-        client = _make_vault_client(db_session)
-        response = client.post(
-            "/api/v1/secure/get",
-            json={"vault_id": "nonexistent000000"},
-        )
-
-    assert response.status_code == 404, response.text
+    assert response.status_code == 403, response.text
 
 
 def test_secure_put_creates_governed_file(db_session):
@@ -306,6 +291,7 @@ def test_secure_put_creates_governed_file(db_session):
         "vault_id": "aabbccdd11223344",
         "s3_key": "vault/TESTUSER01/aabbccdd11223344/private.pdf",
         "expires_at": "2026-04-16T00:00:00+00:00",
+        "encrypted_dek": "dGVzdC1lbmNyeXB0ZWQtZGVr",
     }
 
     with patch(
@@ -338,6 +324,7 @@ def test_secure_put_creates_audit_log(db_session):
         "vault_id": "1122334455667788",
         "s3_key": "vault/TESTUSER01/1122334455667788/data.csv",
         "expires_at": "2026-04-16T00:00:00+00:00",
+        "encrypted_dek": "dGVzdC1lbmNyeXB0ZWQtZGVr",
     }
 
     with patch(
@@ -357,3 +344,40 @@ def test_secure_put_creates_audit_log(db_session):
     assert audit is not None
     assert audit.filename == "data.csv"
     assert "vault_id" in audit.detail
+
+
+def test_secure_put_governs_file_before_s3(db_session):
+    """GovernedFile with encrypted_dek is committed before S3 upload.
+
+    If finalize_drm_upload raises (S3 failure), the DB row must already exist
+    with encrypted_dek set — that is the commit-before-S3 ordering invariant.
+    """
+    upload_result = {
+        "vault_id": "deadbeef00112233",
+        "s3_key": "vault/TESTUSER01/deadbeef00112233/crash.txt",
+        "expires_at": "2026-04-16T00:00:00+00:00",
+        "encrypted_dek": "dGVzdC1lbmNyeXB0ZWQtZGVr",
+    }
+    mock_svc = _mock_vault_svc(upload_result=upload_result)
+    mock_svc.finalize_drm_upload.side_effect = RuntimeError("simulated S3 failure")
+
+    with patch(
+        "app.routers.secure_files._get_vault_service",
+        return_value=mock_svc,
+    ):
+        client = _make_vault_client(db_session)
+        response = client.post(
+            "/api/v1/secure/put",
+            files={"file": ("crash.txt", b"data", "text/plain")},
+            data={"ttl_days": "7"},
+        )
+
+    assert response.status_code == 500
+
+    # Despite S3 failure, GovernedFile must be in DB with encrypted_dek committed.
+    governed = db_session.query(GovernedFile).filter(
+        GovernedFile.username == "TESTUSER01",
+        GovernedFile.vault_id == "deadbeef00112233",
+    ).first()
+    assert governed is not None, "GovernedFile must be committed before S3 upload"
+    assert governed.encrypted_dek == "dGVzdC1lbmNyeXB0ZWQtZGVr", "encrypted_dek must be persisted"

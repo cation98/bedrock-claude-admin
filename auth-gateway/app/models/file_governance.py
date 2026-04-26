@@ -2,6 +2,7 @@
 
 GovernedFile: Pod 에이전트가 보고한 파일 정보 + 자동 분류 결과
 FileClassification / FileStatus: str Enum — 코드 가독성 + 테스트 계약.
+EncryptionState: DRM Phase 2 암호화 FSM 상태 (PLAIN → ENCRYPTING → ENCRYPTED / FAILED).
 """
 
 from datetime import datetime, timezone
@@ -27,6 +28,21 @@ class FileStatus(str, Enum):
     QUARANTINE = "quarantine"
     EXPIRED = "expired"
     DELETED = "deleted"
+
+
+class EncryptionState(str, Enum):
+    """암호화 FSM 상태.
+
+    PLAIN       → 미암호화 (기본값, 백필 대상)
+    ENCRYPTING  → 백필 작업자가 소유권 획득 후 진행 중 (10분 타임아웃)
+    ENCRYPTED   → AES-256-GCM 암호화 완료, vault_id/encrypted_dek 유효
+    FAILED      → 암호화 실패 (재시도 대상)
+    """
+
+    PLAIN = "plain"
+    ENCRYPTING = "encrypting"
+    ENCRYPTED = "encrypted"
+    FAILED = "failed"
 
 
 class GovernedFile(Base):
@@ -65,3 +81,14 @@ class GovernedFile(Base):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+
+    # ----- DRM Phase 2: AES-256-GCM Envelope Encryption -----
+    vault_id = Column(String(500), nullable=True)
+    encrypted_dek = Column(Text, nullable=True)
+    encryption_state = Column(
+        String(20),
+        nullable=False,
+        default=EncryptionState.PLAIN.value,
+        server_default="plain",
+    )
+    backfill_completed_at = Column(DateTime(timezone=True), nullable=True)

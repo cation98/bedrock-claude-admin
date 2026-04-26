@@ -459,6 +459,7 @@ def _build_onlyoffice_config(
     document_key: str | None = None,
     file_download_url: str | None = None,
     file_owner_username: str | None = None,
+    drm_mode: bool = False,
 ) -> dict:
     """OnlyOffice config dict 생성 (config API + HTML viewer 공용).
 
@@ -471,6 +472,7 @@ def _build_onlyoffice_config(
         document_key: 외부에서 계산한 key. 제공되지 않으면 기존 방식(fallback)으로 계산
         file_download_url: Document Server가 원본 파일을 다운로드할 URL. None이면 기본 규칙으로 생성
         file_owner_username: 파일 소유자(공유 파일의 경우 현재 사용자와 다름). token 발급 시 사용
+        drm_mode: True이면 모든 permissions 비활성화 + 우클릭/우측메뉴 숨김 (DRM 보호 뷰어)
     """
     ext = os.path.splitext(filename)[1].lower()
     doc_type = _onlyoffice_doc_type(ext)
@@ -494,25 +496,46 @@ def _build_onlyoffice_config(
     if editable and ext not in EDITABLE_EXTENSIONS:
         editable = False
 
-    permissions = {
-        "download": editable,   # 편집 중이면 다운로드 허용 (편집자 UX)
-        "edit": editable,
-        "print": editable,
-        "review": editable,
-        "comment": editable,
-        "fillForms": editable,
-        "modifyFilter": editable,
-        "modifyContentControl": editable,
-    }
-
-    customization = {
-        "toolbarNoTabs": not editable,        # 편집 시 탭 표시
-        "compactHeader": not editable,
-        "hideRightMenu": not editable,
-        "chat": bool(shared and editable),    # 공유 co-editing에서만 채팅
-        "comments": bool(editable),
-        "forcesave": bool(editable),          # 편집 시 Ctrl+S/명시적 저장 활성
-    }
+    if drm_mode:
+        permissions = {
+            "download": False,
+            "edit": False,
+            "print": False,
+            "review": False,
+            "comment": False,
+            "copy": False,
+            "fillForms": False,
+            "modifyFilter": False,
+            "modifyContentControl": False,
+        }
+        customization = {
+            "toolbarNoTabs": True,
+            "compactHeader": True,
+            "hideRightMenu": True,
+            "chat": False,
+            "comments": False,
+            "forcesave": False,
+            "help": False,
+        }
+    else:
+        permissions = {
+            "download": editable,   # 편집 중이면 다운로드 허용 (편집자 UX)
+            "edit": editable,
+            "print": editable,
+            "review": editable,
+            "comment": editable,
+            "fillForms": editable,
+            "modifyFilter": editable,
+            "modifyContentControl": editable,
+        }
+        customization = {
+            "toolbarNoTabs": not editable,        # 편집 시 탭 표시
+            "compactHeader": not editable,
+            "hideRightMenu": not editable,
+            "chat": bool(shared and editable),    # 공유 co-editing에서만 채팅
+            "comments": bool(editable),
+            "forcesave": bool(editable),          # 편집 시 Ctrl+S/명시적 저장 활성
+        }
 
     config: dict = {
         "document": {
