@@ -1,0 +1,48 @@
+name: deploy admin dashboard to Amplify
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "admin-dashboard/**"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: ap-northeast-2
+      AMPLIFY_APP_ID: d3n19scky0a5sa
+
+    steps:
+      - name: Trigger Amplify build
+        run: |
+          aws amplify start-job \
+            --app-id "$AMPLIFY_APP_ID" \
+            --branch-name main \
+            --job-type RELEASE
+
+      - name: Wait for build to complete
+        run: |
+          echo "Waiting for Amplify build..."
+          for i in $(seq 1 30); do
+            BUILD_STATUS=$(aws amplify list-jobs \
+              --app-id "$AMPLIFY_APP_ID" \
+              --branch-name main \
+              --max-items 1 \
+              --query 'jobSummaries[0].status' \
+              --output text)
+            echo "[$i/30] Build status: $BUILD_STATUS"
+            if [ "$BUILD_STATUS" = "SUCCEED" ]; then
+              echo "Amplify build succeeded"
+              exit 0
+            elif [ "$BUILD_STATUS" = "FAILED" ]; then
+              echo "Amplify build failed"
+              exit 1
+            fi
+            sleep 30
+          done
+          echo "Timeout waiting for build (15 min)"
+          exit 1
