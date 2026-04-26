@@ -11,22 +11,22 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
+      AMPLIFY_APP_ID: d3n19scky0a5sa
+      AMPLIFY_WEBHOOK_URL: ${{ secrets.AMPLIFY_WEBHOOK_URL }}
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       AWS_DEFAULT_REGION: ap-northeast-2
-      AMPLIFY_APP_ID: d3n19scky0a5sa
 
     steps:
-      - name: Trigger Amplify build
+      - name: Trigger Amplify build via webhook
         run: |
-          aws amplify start-job \
-            --app-id "$AMPLIFY_APP_ID" \
-            --branch-name main \
-            --job-type RELEASE
+          curl -sS -X POST "$AMPLIFY_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d '{}'
 
       - name: Wait for build to complete
         run: |
-          echo "Waiting for Amplify build..."
+          echo "Waiting for Amplify build to complete..."
           for i in $(seq 1 30); do
             BUILD_STATUS=$(aws amplify list-jobs \
               --app-id "$AMPLIFY_APP_ID" \
@@ -34,7 +34,7 @@ jobs:
               --max-items 1 \
               --query 'jobSummaries[0].status' \
               --output text)
-            echo "[$i/30] Build status: $BUILD_STATUS"
+            echo "[$i/30] $BUILD_STATUS"
             if [ "$BUILD_STATUS" = "SUCCEED" ]; then
               echo "Amplify build succeeded"
               exit 0
@@ -44,5 +44,5 @@ jobs:
             fi
             sleep 30
           done
-          echo "Timeout waiting for build (15 min)"
+          echo "Timeout (15 min)"
           exit 1
