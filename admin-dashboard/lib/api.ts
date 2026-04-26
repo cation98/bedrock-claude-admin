@@ -1783,3 +1783,36 @@ export interface PricingResponse {
 export function getPricingTable(): Promise<PricingResponse> {
   return request<PricingResponse>("/api/v1/admin/pricing");
 }
+
+// ==================== Model Breakdown ====================
+
+export interface ModelBreakdownItem {
+  model_id: string;
+  display_name: string;
+  model_key: string;
+  event_count: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_tokens: number;
+  cache_read_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+  cost_krw: number;
+  user_count: number;
+  token_pct: number;
+  cost_pct: number;
+}
+
+export interface ModelBreakdownResponse {
+  days: number;
+  total_tokens: number;
+  total_cost_usd: number;
+  total_cost_krw: number;
+  breakdown: ModelBreakdownItem[];
+  source: string;
+  note: string;
+}
+
+export function getModelBreakdown(days = 30): Promise<ModelBreakdownResponse> {
+  return request<ModelBreakdownResponse>(`/api/v1/admin/token-usage/model-breakdown?days=${days}`);
+}

@@ -11,6 +11,7 @@ import {
   getTokenUsageMonthlyTrend,
   takeTokenSnapshot,
   getPricingTable,
+  getModelBreakdown,
   type TokenUsageResponse,
   type DailyUsageResponse,
   type MonthlyUsageResponse,
@@ -21,6 +22,7 @@ import {
   getUserUsageHistory,
   type UserUsageHistory,
   type PricingResponse,
+  type ModelBreakdownResponse,
 } from "@/lib/api";
 import { isAuthenticated } from "@/lib/auth";
 import StatsCard from "@/components/stats-card";
@@ -247,6 +249,7 @@ export default function UsagePage() {
   const [error, setError] = useState("");
   const [snapshotMsg, setSnapshotMsg] = useState("");
   const [pricing, setPricing] = useState<PricingResponse | null>(null);
+  const [modelBreakdown, setModelBreakdown] = useState<ModelBreakdownResponse | null>(null);
 
   // 개인별 일별 추이
   const [detailUser, setDetailUser] = useState<string | null>(null);
@@ -348,9 +351,12 @@ export default function UsagePage() {
       getTokenUsageMonthlyTrend("2026-03").then(res => setMonthlyTrendData(res.trend)).catch(() => {});
     }
 
-    // Pricing table (fetch once)
+    // Pricing table + model breakdown (fetch once)
     if (!pricing) {
       getPricingTable().then(setPricing).catch(() => {});
+    }
+    if (!modelBreakdown) {
+      getModelBreakdown(30).then(setModelBreakdown).catch(() => {});
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, selectedDate, selectedMonth, router, fetchRealtime, fetchDaily, fetchMonthly]);
@@ -719,6 +725,60 @@ export default function UsagePage() {
             )}
           </div>
         )}
+        {/* Model Breakdown — Haiku Ratio Report */}
+        {modelBreakdown && (
+          <div className="mt-6 rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-sm">
+            <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
+              <div>
+                <h2 className="text-sm font-semibold text-[var(--text-primary)]">모델별 사용량 분류 (Haiku 비율)</h2>
+                <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+                  최근 {modelBreakdown.days}일 · T20 proxy 경유 이벤트 기준 · 총 {modelBreakdown.total_tokens.toLocaleString()} 토큰
+                </p>
+              </div>
+              <div className="text-right">
+                <div className="text-sm font-semibold text-[var(--text-primary)]">${modelBreakdown.total_cost_usd.toFixed(2)}</div>
+                <div className="text-xs text-[var(--text-muted)]">{modelBreakdown.total_cost_krw.toLocaleString()}원</div>
+              </div>
+            </div>
+            {modelBreakdown.breakdown.length === 0 ? (
+              <div className="flex items-center justify-center py-8 text-[var(--text-muted)] text-sm">
+                T20 proxy 이벤트 데이터 없음 (사용자 세션 발생 후 집계됩니다)
+              </div>
+            ) : (
+              <div className="p-4 space-y-3">
+                {modelBreakdown.breakdown.map((m) => {
+                  const barColor = m.model_key === "haiku"
+                    ? "#10b981"
+                    : m.model_key === "opus"
+                      ? "#7c3aed"
+                      : "#2563eb";
+                  return (
+                    <div key={m.model_id}>
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center gap-2">
+                          <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ backgroundColor: barColor }} />
+                          <span className="text-sm font-medium text-[var(--text-primary)]">{m.display_name}</span>
+                          <span className="text-xs text-[var(--text-muted)]">{m.event_count.toLocaleString()}건 · {m.user_count}명</span>
+                        </div>
+                        <div className="flex items-center gap-4 text-xs tabular-nums text-[var(--text-secondary)]">
+                          <span>{m.total_tokens.toLocaleString()} tok</span>
+                          <span className="font-semibold text-[var(--text-primary)]">{m.token_pct}%</span>
+                          <span>${m.cost_usd.toFixed(2)}</span>
+                          <span className="font-semibold text-[var(--text-primary)]">{m.cost_pct}%</span>
+                        </div>
+                      </div>
+                      <div className="h-2 rounded-full bg-[var(--bg)] overflow-hidden">
+                        <div className="h-full rounded-full transition-all" style={{ width: `${m.token_pct}%`, backgroundColor: barColor, opacity: 0.8 }} />
+                      </div>
+                    </div>
+                  );
+                })}
+                <p className="mt-2 text-xs text-[var(--text-muted)]">{modelBreakdown.note}</p>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Pricing Reference */}
         {pricing && (
           <div className="mt-6 rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-sm">

@@ -1955,6 +1955,94 @@ async def get_monthly_trend(
     }
 
 
+@router.get("/token-usage/model-breakdown")
+async def get_model_breakdown(
+    days: int = 30,
+    _admin: dict = Depends(_require_admin),
+):
+    """모델별 토큰 사용량 분류 — Haiku 비율 리포트.
+
+    T20 proxy 활성화(2026-04-12) 이후 쌓인 per-model_id 데이터를 집계.
+    legacy-aggregate 행은 모델 불명이므로 별도 분류.
+    """
+    from app.core.database import SessionLocal
+    from app.models.token_usage import TokenUsageEvent
+    from sqlalchemy import func
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    db = SessionLocal()
+
+    # token_usage_event는 T20 proxy 경유 이벤트만 기록 (정확한 model_id 보유)
+    records = db.query(
+        TokenUsageEvent.model_id,
+        func.count().label("event_count"),
+        func.sum(TokenUsageEvent.input_tokens).label("input_tokens"),
+        func.sum(TokenUsageEvent.output_tokens).label("output_tokens"),
+        func.sum(TokenUsageEvent.cache_creation_input_tokens).label("cache_creation_tokens"),
+        func.sum(TokenUsageEvent.cache_read_input_tokens).label("cache_read_tokens"),
+        func.sum(TokenUsageEvent.cost_usd).label("cost_usd"),
+        func.count(func.distinct(TokenUsageEvent.username)).label("user_count"),
+    ).filter(
+        TokenUsageEvent.recorded_at >= cutoff,
+    ).group_by(TokenUsageEvent.model_id).all()
+    db.close()
+
+    _DISPLAY = {
+        "claude-sonnet-4-6": "Claude Sonnet 4.6",
+        "claude-haiku-4-5": "Claude Haiku 4.5",
+        "claude-opus-4-6": "Claude Opus 4.6",
+    }
+
+    def _short(mid: str) -> str:
+        lid = mid.lower()
+        if "haiku" in lid:
+            return "haiku"
+        if "opus" in lid:
+            return "opus"
+        return "sonnet"
+
+    breakdown = []
+    total_tokens = 0
+    total_cost = 0.0
+    for r in records:
+        t = int((r.input_tokens or 0) + (r.output_tokens or 0))
+        c = float(r.cost_usd or 0)
+        total_tokens += t
+        total_cost += c
+        breakdown.append({
+            "model_id": r.model_id,
+            "display_name": _DISPLAY.get(_short(r.model_id) and r.model_id, r.model_id),
+            "model_key": _short(r.model_id),
+            "event_count": r.event_count,
+            "input_tokens": int(r.input_tokens or 0),
+            "output_tokens": int(r.output_tokens or 0),
+            "cache_creation_tokens": int(r.cache_creation_tokens or 0),
+            "cache_read_tokens": int(r.cache_read_tokens or 0),
+            "total_tokens": t,
+            "cost_usd": round(c, 4),
+            "cost_krw": round(c * _pricing.KRW_RATE),
+            "user_count": r.user_count,
+        })
+
+    # token 기준 내림차순 정렬
+    breakdown.sort(key=lambda x: x["total_tokens"], reverse=True)
+
+    # 비율 계산
+    for item in breakdown:
+        item["token_pct"] = round(item["total_tokens"] / total_tokens * 100, 1) if total_tokens else 0.0
+        item["cost_pct"] = round(item["cost_usd"] / total_cost * 100, 1) if total_cost else 0.0
+
+    return {
+        "days": days,
+        "total_tokens": total_tokens,
+        "total_cost_usd": round(total_cost, 4),
+        "total_cost_krw": round(total_cost * _pricing.KRW_RATE),
+        "breakdown": breakdown,
+        "source": "token_usage_event",
+        "note": "T20 proxy 경유 이벤트만 집계. 2026-04-12 이전 legacy-aggregate 데이터 미포함.",
+    }
+
+
 @router.get("/token-usage/user/{username}")
 async def get_user_usage_history(
     username: str,
