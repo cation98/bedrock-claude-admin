@@ -346,15 +346,19 @@ resource "aws_eks_node_group" "ingress" {
   ]
 }
 
-# ----- 1:1 전용 Node Group (t3.large) -----
-# 2026-04-17: t3.medium → t3.large 상향 (2 vCPU / 8 GiB)
-# 사용자별 노드 1대 전용 할당 — Pod 간 리소스 간섭 원천 제거
-# Pod Anti-Affinity(k8s_service.py)와 함께 1-node-1-pod 모델 구현
+# ----- 1:1 전용 Node Group (t3.xlarge) -----
+# 2026-04-17: t3.medium → t3.large, 2026-04-20: t3.large → t3.xlarge (4 vCPU / 16 GiB)
+# 사용자별 노드 1대 전용 할당 — Pod 간 리소스 간섭 원천 제거 (1-node-1-pod 정책)
+# Pod Anti-Affinity(k8s_service.py)와 함께 구현. infra_policy.py standard 템플릿 참조.
 # Phase 2 (2000명): 개발자 200명 × 50% 동시 접속 = 100 max
+#
+# 주의: 기존 AWS 리소스(bedrock-claude-dedicated-xlarge-nodes) import 후 적용
+#   terraform import aws_eks_node_group.dedicated \
+#     bedrock-claude-eks:bedrock-claude-dedicated-xlarge-nodes
 
 resource "aws_eks_node_group" "dedicated" {
   cluster_name    = aws_eks_cluster.main.name
-  node_group_name = "${var.project_name}-dedicated-nodes"
+  node_group_name = "${var.project_name}-dedicated-xlarge-nodes"
   node_role_arn   = aws_iam_role.eks_nodes.arn
   subnet_ids      = aws_subnet.eks_private[*].id
 

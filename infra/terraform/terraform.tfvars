@@ -31,9 +31,11 @@ eks_node_desired_size   = 6
 eks_node_min_size       = 0
 eks_node_max_size       = 12
 
-# ----- 1:1 전용 노드그룹 (t3.large) — 2026-04-17 medium→large 상향 -----
-eks_dedicated_node_instance_types = ["t3.large"]
-eks_dedicated_node_desired_size   = 2
+# ----- 1:1 전용 노드그룹 (t3.xlarge) — 2026-04-17: t3.medium→t3.large, 2026-04-20: →t3.xlarge -----
+# desired_size: lifecycle ignore_changes 적용 → CA가 동적 관리 (tfvars 값은 초기 배포 시에만 사용)
+# import 필요: terraform import aws_eks_node_group.dedicated bedrock-claude-eks:bedrock-claude-dedicated-xlarge-nodes
+eks_dedicated_node_instance_types = ["t3.xlarge"]
+eks_dedicated_node_desired_size   = 0
 eks_dedicated_node_min_size       = 0
 eks_dedicated_node_max_size       = 55
 

@@ -91,18 +91,21 @@ variable "eks_node_max_size" {
   default     = 15
 }
 
-# ----- 1:1 전용 노드그룹 (t3.large, 사용자별 1 node) -----
+# ----- 1:1 전용 노드그룹 (t3.xlarge, 사용자별 1 node) -----
+# 2026-04-17: t3.medium → t3.large → 2026-04-20: t3.large → t3.xlarge (4 vCPU / 16 GiB)
+# 현재 운용 nodegroup: bedrock-claude-dedicated-xlarge-nodes
+# 구 nodegroup(bedrock-claude-dedicated-nodes, t3.large)은 CA scale-down 후 terraform 관리로 전환 예정
 
 variable "eks_dedicated_node_instance_types" {
-  description = "1:1 전용 노드 인스턴스 타입 (2026-04-17 t3.medium→t3.large 상향)"
+  description = "1:1 전용 노드 인스턴스 타입"
   type        = list(string)
-  default     = ["t3.large"]
+  default     = ["t3.xlarge"]
 }
 
 variable "eks_dedicated_node_desired_size" {
-  description = "1:1 전용 노드 희망 개수"
+  description = "1:1 전용 노드 희망 개수 (CA가 동적 조정 — lifecycle ignore_changes 적용)"
   type        = number
-  default     = 2
+  default     = 0
 }
 
 variable "eks_dedicated_node_min_size" {
