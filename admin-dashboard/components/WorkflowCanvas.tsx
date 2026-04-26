@@ -12,7 +12,6 @@ import {
   type Edge as FlowEdge,
   type Connection,
 } from "@xyflow/react";
-// @ts-expect-error — no type declarations for CSS side-effect import
 import "@xyflow/react/dist/style.css";
 import type { WorkflowTemplateData, WorkflowTemplateIn } from "@/lib/api";
 
