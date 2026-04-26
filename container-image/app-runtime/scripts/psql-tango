@@ -1,0 +1,17 @@
+#!/bin/sh
+# psql-tango: TANGO 알람 DB (aiagentdb) 접속 래퍼
+# URL 파싱으로 특수문자 패스워드 대응 — exec psql "$TANGO_DATABASE_URL" 직접 사용 시 인증 실패 방지
+if [ -z "${TANGO_DATABASE_URL:-}" ]; then
+    echo "TANGO DB 접근 권한이 없습니다. (TANGO_DATABASE_URL 미설정)" >&2
+    exit 1
+fi
+exec python3 -c "
+import os, sys, subprocess, urllib.parse
+r = urllib.parse.urlparse(os.environ['TANGO_DATABASE_URL'])
+env = os.environ.copy()
+if r.password:
+    env['PGPASSWORD'] = urllib.parse.unquote(r.password)
+cmd = ['psql', '-h', r.hostname or '', '-p', str(r.port or 5432),
+       '-U', r.username or '', r.path.lstrip('/') or 'postgres'] + sys.argv[1:]
+sys.exit(subprocess.run(cmd, env=env).returncode)
+" -- "$@"

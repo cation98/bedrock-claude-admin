@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     python3-venv \
     curl \
+    postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
@@ -52,6 +53,16 @@ EXPOSE 3000
 # OWASP Top 10 대응: rate limiting, security headers, upload validation
 # ---------------------------------------------------------------------------
 COPY security_middleware.py /usr/local/lib/python3.11/dist-packages/security_middleware.py
+
+# ---------------------------------------------------------------------------
+# psql 래퍼 스크립트 — subprocess로 DB 접근하는 앱을 위한 CLI 툴
+#   psql-tango : TANGO 알람 DB ($TANGO_DATABASE_URL)
+#   psql-safety: Safety 안전관리 DB ($DATABASE_URL)
+# URL 파싱으로 특수문자 패스워드를 PGPASSWORD로 분리하여 인증 실패 방지
+# ---------------------------------------------------------------------------
+COPY scripts/psql-tango /usr/local/bin/psql-tango
+COPY scripts/psql-safety /usr/local/bin/psql-safety
+RUN chmod +x /usr/local/bin/psql-tango /usr/local/bin/psql-safety
 
 # ---------------------------------------------------------------------------
 # 엔트리포인트 -- 앱 타입 자동 감지 후 실행

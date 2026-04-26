@@ -239,14 +239,15 @@ class AppDeployService:
                             limits={"cpu": "500m", "memory": "1Gi"},
                         ),
                         readiness_probe=client.V1Probe(
-                            http_get=client.V1HTTPGetAction(path="/", port=app_port),
+                            tcp_socket=client.V1TCPSocketAction(port=app_port),
                             initial_delay_seconds=5,
                             period_seconds=10,
                         ),
                         liveness_probe=client.V1Probe(
                             http_get=client.V1HTTPGetAction(path="/", port=app_port),
-                            initial_delay_seconds=10,
+                            initial_delay_seconds=15,
                             period_seconds=30,
+                            timeout_seconds=5,
                         ),
                         volume_mounts=[
                             # 앱 소스 코드 (current symlink → 특정 버전)
