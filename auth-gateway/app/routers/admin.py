@@ -688,6 +688,7 @@ async def terminate_pod(
     if session:
         session.pod_status = "terminated"
         session.terminated_at = datetime.now(timezone.utc)
+        session.terminate_reason = "admin forced termination"
     db.commit()
     db.close()
 

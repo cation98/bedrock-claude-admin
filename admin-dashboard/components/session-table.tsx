@@ -86,6 +86,7 @@ export default function SessionTable({
   const paginatedSessions = filteredSessions.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   const hasExpiry = sessions.some((s) => s.expires_at != null);
+  const hasTerminateReason = sessions.some((s) => s.terminate_reason != null);
   useEffect(() => {
     if (!hasExpiry) return;
     const timer = setInterval(() => setTick((t) => t + 1), 1_000);
@@ -145,6 +146,11 @@ export default function SessionTable({
             <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
               남은시간
             </th>
+            {hasTerminateReason && (
+              <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
+                종료 사유
+              </th>
+            )}
             {onTerminate && (
               <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
                 관리
@@ -206,6 +212,17 @@ export default function SessionTable({
                     {countdown.text}
                   </span>
                 </td>
+                {hasTerminateReason && (
+                  <td className="px-4 py-3 text-sm text-[var(--text-muted)] max-w-[180px]">
+                    {s.terminate_reason ? (
+                      <span className="truncate block" title={s.terminate_reason}>
+                        {s.terminate_reason}
+                      </span>
+                    ) : (
+                      <span className="text-[var(--text-muted)] opacity-40">—</span>
+                    )}
+                  </td>
+                )}
                 {onTerminate && (
                   <td className="whitespace-nowrap px-4 py-3 text-sm">
                     {s.pod_status !== "terminated" && (
