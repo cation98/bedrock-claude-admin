@@ -1,0 +1,23 @@
+# fluent-bit DaemonSet CPU limit 인하: 200m → 100m
+# 측정값 ~30m, limit 200m은 과도. t3.xlarge 노드 마진 확보 목적.
+#
+# 적용 방법:
+#   kubectl patch daemonset fluent-bit -n amazon-cloudwatch \
+#     --type strategic --patch-file infra/k8s/observability/fluent-bit-patch.yaml
+#
+# 적용 후 검증:
+#   kubectl get daemonset fluent-bit -n amazon-cloudwatch \
+#     -o jsonpath='{.spec.template.spec.containers[0].resources}'
+#   kubectl rollout status daemonset/fluent-bit -n amazon-cloudwatch
+spec:
+  template:
+    spec:
+      containers:
+        - name: fluent-bit
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
